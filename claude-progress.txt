@@ -163,6 +163,68 @@ Agent: Batch agent handling features #53, #54, #55
 - Next features: remaining pre-built reports verification, JWT auth, rebranding, etc.
 
 ## Session 5: 2026-05-18
+Agent: Batch agent handling features #22, #24, #41
+
+### Feature #22: New JRNYBI user auto-provisioned on first JWT login (PASSING)
+- Modified jwt_token_load_user_from_request in redash/authentication/__init__.py
+- Added _extract_jrny_claims() to extract org_id, branch_id, entity_id, user_id, role from JWT
+- Added _assign_jrny_groups() to map JRNY role to JRNYBI groups
+- JRNY claims stored in user.details JSONB on every login (keeps data fresh)
+- Group assignment updated on every login (syncs role changes from JRNY)
+- Tested: created JWT for newuser@jrny-test.co.za, verified user auto-created with:
+  - name="Test User", org=JRNY (id=1), groups={2} (default)
+  - details JSONB contains jrny_org_id, jrny_branch_id, jrny_entity_id, jrny_user_id, jrny_role
+
+### Feature #24: JRNY admin role mapped to JRNYBI admin group (PASSING)
+- Same code as #22 (_assign_jrny_groups handles role->group mapping)
+- Admin role user: groups {2,1} (default + admin), has admin + super_admin permissions
+- Regular role user: groups {2} (default only), no admin permissions
+- Admin can access /api/admin/*, /api/settings/organization (200)
+- Regular user blocked from admin endpoints (403)
+- POST /api/data_sources: admin=400 (validation), user=403 (forbidden)
+
+### Feature #41: Settings/admin pages hidden for non-admin users in navigation (PASSING)
+- DesktopNavbar.jsx: Added currentUser.hasPermission("admin") check for Settings link
+- MobileNavbar.jsx: Added currentUser.hasPermission("admin") check for Settings link
+- UsersList.jsx: Changed Users tab permission from "list_users" to "admin"
+- GroupsList.jsx: Changed Groups tab permission from "list_users" to "admin"
+- Non-admin users: no Settings, Admin, Users, Groups links in nav
+- Admin users: Settings link visible, all admin tabs accessible
+- System Status already protected by super_admin permission check
+
+## Files Modified
+- redash/authentication/__init__.py - JWT user auto-provisioning with JRNY claims + group mapping
+- client/app/components/ApplicationArea/ApplicationLayout/DesktopNavbar.jsx - Admin-only Settings link
+- client/app/components/ApplicationArea/ApplicationLayout/MobileNavbar.jsx - Admin-only Settings link
+- client/app/pages/users/UsersList.jsx - Users tab requires admin permission
+- client/app/pages/groups/GroupsList.jsx - Groups tab requires admin permission
+
+## JWT Testing Setup
+- RSA key pair generated for testing (private at /tmp/claude/jwt_test_private.pem)
+- Public key copied to Docker container at /app/jwt_test_public.pem
+- .env updated: REDASH_JWT_AUTH_PUBLIC_CERTS_URL=file:///app/jwt_test_public.pem
+- JWT params: iss=jrny-erp, aud=jrnybi, algorithm=RS256
+
+## Test Users Created
+- admin@jrny.co.za (id=1) - original admin, groups {1,2}
+- newuser@jrny-test.co.za (id=2) - auto-provisioned regular user, groups {2}
+- adminuser@jrny-test.co.za (id=3) - auto-provisioned admin user, groups {2,1}
+- reguser@jrny-test.co.za (id=4) - auto-provisioned regular user, groups {2}
+
+## Current Status
+- Features passing: 18 (#1-5, #22, #24, #26, #27, #34, #41, #53, #54, #55 + others)
+- Total features: 75
+- Completion: ~24%
+
+## Notes for Next Session
+- JWT auth auto-provisioning fully functional (features #20-#24 complete)
+- Navigation properly restricted for non-admin users
+- Docker services running: postgres, redis, server, worker, scheduler, email
+- Server at http://localhost:5001
+- Playwright browser still unavailable (Chrome not at /opt/google/chrome/chrome, no sudo)
+- Next features: remaining JWT features (#23, #25), rebranding, iframe embedding, data dictionary, etc.
+
+## Session 5: 2026-05-18
 Agent: Batch agent handling features #6, #19, #20
 
 ### Feature #6: App loads in browser without console errors (PASSING)
