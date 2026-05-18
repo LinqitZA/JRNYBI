@@ -32,3 +32,5 @@ import "./settings/OrganizationSettings";
 
 import "./users/UsersList";
 import "./users/UserProfile";
+
+import "./jrny/DataDictionary";

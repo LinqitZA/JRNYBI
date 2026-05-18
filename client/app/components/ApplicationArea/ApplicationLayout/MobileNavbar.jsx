@@ -44,6 +44,9 @@ export default function MobileNavbar({ getPopupContainer }) {
                   <Link href="alerts">Alerts</Link>
                 </Menu.Item>
               )}
+              <Menu.Item key="data-dictionary">
+                <Link href="jrny/data-dictionary">Data Dictionary</Link>
+              </Menu.Item>
               <Menu.Item key="profile">
                 <Link href="users/me">Edit Profile</Link>
               </Menu.Item>

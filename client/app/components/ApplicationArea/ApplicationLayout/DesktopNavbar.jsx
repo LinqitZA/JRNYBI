@@ -16,6 +16,7 @@ import AlertOutlinedIcon from "@ant-design/icons/AlertOutlined";
 import PlusOutlinedIcon from "@ant-design/icons/PlusOutlined";
 import QuestionCircleOutlinedIcon from "@ant-design/icons/QuestionCircleOutlined";
 import SettingOutlinedIcon from "@ant-design/icons/SettingOutlined";
+import BookOutlinedIcon from "@ant-design/icons/BookOutlined";
 import VersionInfo from "./VersionInfo";
 
 import "./DesktopNavbar.less";
@@ -49,6 +50,7 @@ function useNavbarActiveState() {
       ),
       dataSources: includes(["DataSources.List"], currentRoute.id),
       alerts: includes(["Alerts.List", "Alerts.New", "Alerts.View", "Alerts.Edit"], currentRoute.id),
+      dataDictionary: includes(["JRNY.DataDictionary"], currentRoute.id),
     }),
     [currentRoute.id]
   );
@@ -96,6 +98,12 @@ export default function DesktopNavbar() {
               </Link>
             </Menu.Item>
           )}
+          <Menu.Item key="data-dictionary" className={activeState.dataDictionary ? "navbar-active-item" : null}>
+            <Link href="jrny/data-dictionary">
+              <BookOutlinedIcon aria-label="Data Dictionary navigation button" />
+              <span className="desktop-navbar-label">Data Dictionary</span>
+            </Link>
+          </Menu.Item>
         </Menu>
       </div>
 

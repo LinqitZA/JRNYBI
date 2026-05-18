@@ -11,17 +11,31 @@
  *
  * API: GET /api/jrny/data-dictionary
  *
- * TODO: Implement component (this is a placeholder for project structure)
+ * TODO: Implement full component (this is a minimal placeholder for route registration)
  */
 
 import React from "react";
+import routeWithUserSession from "@/components/ApplicationArea/routeWithUserSession";
+import routes from "@/services/routes";
 
-export default function DataDictionary() {
-  // TODO: Implement Data Dictionary page
+import "./DataDictionary.less";
+
+function DataDictionary() {
   return (
-    <div className="jrny-data-dictionary">
+    <div className="jrny-data-dictionary container p-t-15">
       <h2>Data Dictionary</h2>
-      <p>Coming soon - schema browser for JRNY ERP data.</p>
+      <p>Schema browser for JRNY ERP data. Coming soon.</p>
     </div>
   );
 }
+
+routes.register(
+  "JRNY.DataDictionary",
+  routeWithUserSession({
+    path: "/jrny/data-dictionary",
+    title: "Data Dictionary",
+    render: (pageProps) => <DataDictionary {...pageProps} />,
+  })
+);
+
+export default DataDictionary;
