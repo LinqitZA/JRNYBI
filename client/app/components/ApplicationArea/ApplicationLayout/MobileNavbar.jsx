@@ -8,7 +8,7 @@ import Menu from "antd/lib/menu";
 import Link from "@/components/Link";
 import { Auth, currentUser } from "@/services/auth";
 import settingsMenu from "@/services/settingsMenu";
-import logoUrl from "@/assets/images/redash_icon_small.png";
+import logoUrl from "@/assets/images/jrnybi_logo.svg";
 
 import "./MobileNavbar.less";
 
@@ -19,7 +19,7 @@ export default function MobileNavbar({ getPopupContainer }) {
     <div className="mobile-navbar">
       <div className="mobile-navbar-logo">
         <Link href="./">
-          <img src={logoUrl} alt="Redash" />
+          <img src={logoUrl} alt="JRNYBI" />
         </Link>
       </div>
       <div>
