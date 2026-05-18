@@ -12,7 +12,7 @@
  * API: GET /api/jrny/data-dictionary
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Input from "antd/lib/input";
 import Tooltip from "antd/lib/tooltip";
 import Spin from "antd/lib/spin";
@@ -33,12 +33,20 @@ import routes from "@/services/routes";
 import "./DataDictionary.less";
 
 // Schema node component (top level)
-function SchemaNode({ schema, expandedSchemas, expandedTables, toggleSchema, toggleTable, searchTerm }) {
+function SchemaNode({ schema, expandedSchemas, expandedTables, toggleSchema, toggleTable, searchTerm, focusedNodeId, nodeRefs }) {
   const isExpanded = expandedSchemas[schema.name];
+  const nodeId = `schema:${schema.name}`;
+  const isFocused = focusedNodeId === nodeId;
 
   return (
-    <div className="dd-schema-node">
-      <div className="dd-node-header dd-schema-header" onClick={() => toggleSchema(schema.name)}>
+    <div className="dd-schema-node" role="treeitem" aria-expanded={isExpanded} aria-label={`${schema.name} schema, ${schema.tables.length} tables`}>
+      <div
+        className={`dd-node-header dd-schema-header${isFocused ? " dd-focused" : ""}`}
+        onClick={() => toggleSchema(schema.name)}
+        ref={(el) => { if (nodeRefs) nodeRefs.current[nodeId] = el; }}
+        tabIndex={isFocused ? 0 : -1}
+        data-node-id={nodeId}
+      >
         <span className="dd-expand-icon">
           {isExpanded ? <DownOutlined /> : <RightOutlined />}
         </span>
@@ -47,7 +55,7 @@ function SchemaNode({ schema, expandedSchemas, expandedTables, toggleSchema, tog
         <span className="dd-node-count">{schema.tables.length} tables</span>
       </div>
       {isExpanded && (
-        <div className="dd-children">
+        <div className="dd-children" role="group">
           {schema.tables.map((table) => (
             <TableNode
               key={`${schema.name}.${table.name}`}
@@ -56,6 +64,8 @@ function SchemaNode({ schema, expandedSchemas, expandedTables, toggleSchema, tog
               expandedTables={expandedTables}
               toggleTable={toggleTable}
               searchTerm={searchTerm}
+              focusedNodeId={focusedNodeId}
+              nodeRefs={nodeRefs}
             />
           ))}
         </div>
@@ -65,9 +75,11 @@ function SchemaNode({ schema, expandedSchemas, expandedTables, toggleSchema, tog
 }
 
 // Table node component (second level)
-function TableNode({ schema, table, expandedTables, toggleTable, searchTerm }) {
+function TableNode({ schema, table, expandedTables, toggleTable, searchTerm, focusedNodeId, nodeRefs }) {
   const tableKey = `${schema.name}.${table.name}`;
   const isExpanded = expandedTables[tableKey];
+  const nodeId = `table:${tableKey}`;
+  const isFocused = focusedNodeId === nodeId;
 
   const handleCopyQuery = useCallback(
     (e) => {
@@ -96,8 +108,14 @@ function TableNode({ schema, table, expandedTables, toggleTable, searchTerm }) {
   );
 
   return (
-    <div className="dd-table-node">
-      <div className="dd-node-header dd-table-header" onClick={() => toggleTable(tableKey)}>
+    <div className="dd-table-node" role="treeitem" aria-expanded={isExpanded} aria-label={`${table.name} ${table.type}, ${table.columns.length} columns`}>
+      <div
+        className={`dd-node-header dd-table-header${isFocused ? " dd-focused" : ""}`}
+        onClick={() => toggleTable(tableKey)}
+        ref={(el) => { if (nodeRefs) nodeRefs.current[nodeId] = el; }}
+        tabIndex={isFocused ? 0 : -1}
+        data-node-id={nodeId}
+      >
         <span className="dd-expand-icon">
           {isExpanded ? <DownOutlined /> : <RightOutlined />}
         </span>
@@ -111,12 +129,12 @@ function TableNode({ schema, table, expandedTables, toggleTable, searchTerm }) {
         <span className="dd-node-count">{table.columns.length} cols</span>
         <span className="dd-table-actions">
           <Tooltip title={`Copy: SELECT * FROM ${schema.name}.${table.name} LIMIT 100`}>
-            <button className="dd-action-btn" onClick={handleCopyQuery}>
+            <button className="dd-action-btn" onClick={handleCopyQuery} tabIndex={-1}>
               <CopyOutlined /> Copy query
             </button>
           </Tooltip>
           <Tooltip title="Open in Query Editor">
-            <button className="dd-action-btn" onClick={handleNewQuery}>
+            <button className="dd-action-btn" onClick={handleNewQuery} tabIndex={-1}>
               <EditOutlined /> New Query
             </button>
           </Tooltip>
@@ -126,8 +144,8 @@ function TableNode({ schema, table, expandedTables, toggleTable, searchTerm }) {
         <div className="dd-table-comment">{table.comment}</div>
       )}
       {isExpanded && (
-        <div className="dd-children">
-          <div className="dd-columns-header">
+        <div className="dd-children" role="group">
+          <div className="dd-columns-header" role="presentation">
             <span className="dd-col-name">Column</span>
             <span className="dd-col-type">Type</span>
             <span className="dd-col-nullable">Nullable</span>
@@ -170,6 +188,8 @@ function DataDictionary() {
   const [searchTerm, setSearchTerm] = useState("");
   const [expandedSchemas, setExpandedSchemas] = useState({});
   const [expandedTables, setExpandedTables] = useState({});
+  const [focusedNodeId, setFocusedNodeId] = useState(null);
+  const nodeRefs = useRef({});
 
   // Fetch data dictionary on mount
   useEffect(() => {
@@ -202,6 +222,133 @@ function DataDictionary() {
       [tableKey]: !prev[tableKey],
     }));
   }, []);
+
+  // Compute flat list of visible node IDs for keyboard navigation
+  const visibleNodeIds = useMemo(() => {
+    const ids = [];
+    filteredSchemas.forEach((schema) => {
+      ids.push(`schema:${schema.name}`);
+      if (expandedSchemas[schema.name]) {
+        schema.tables.forEach((table) => {
+          ids.push(`table:${schema.name}.${table.name}`);
+        });
+      }
+    });
+    return ids;
+  }, [filteredSchemas, expandedSchemas]);
+
+  // Keyboard navigation handler for the tree
+  const handleTreeKeyDown = useCallback(
+    (e) => {
+      const currentIndex = visibleNodeIds.indexOf(focusedNodeId);
+      let nextId = null;
+
+      switch (e.key) {
+        case "ArrowDown": {
+          e.preventDefault();
+          if (currentIndex < visibleNodeIds.length - 1) {
+            nextId = visibleNodeIds[currentIndex + 1];
+          } else if (currentIndex === -1 && visibleNodeIds.length > 0) {
+            nextId = visibleNodeIds[0];
+          }
+          break;
+        }
+        case "ArrowUp": {
+          e.preventDefault();
+          if (currentIndex > 0) {
+            nextId = visibleNodeIds[currentIndex - 1];
+          }
+          break;
+        }
+        case "ArrowRight": {
+          e.preventDefault();
+          if (focusedNodeId && focusedNodeId.startsWith("schema:")) {
+            const schemaName = focusedNodeId.substring(7);
+            if (!expandedSchemas[schemaName]) {
+              toggleSchema(schemaName);
+            } else if (currentIndex < visibleNodeIds.length - 1) {
+              // Already expanded, move to first child
+              nextId = visibleNodeIds[currentIndex + 1];
+            }
+          } else if (focusedNodeId && focusedNodeId.startsWith("table:")) {
+            const tableKey = focusedNodeId.substring(6);
+            if (!expandedTables[tableKey]) {
+              toggleTable(tableKey);
+            }
+          }
+          break;
+        }
+        case "ArrowLeft": {
+          e.preventDefault();
+          if (focusedNodeId && focusedNodeId.startsWith("table:")) {
+            const tableKey = focusedNodeId.substring(6);
+            if (expandedTables[tableKey]) {
+              toggleTable(tableKey);
+            } else {
+              // Move to parent schema
+              const schemaName = tableKey.split(".")[0];
+              nextId = `schema:${schemaName}`;
+            }
+          } else if (focusedNodeId && focusedNodeId.startsWith("schema:")) {
+            const schemaName = focusedNodeId.substring(7);
+            if (expandedSchemas[schemaName]) {
+              toggleSchema(schemaName);
+            }
+          }
+          break;
+        }
+        case "Enter":
+        case " ": {
+          e.preventDefault();
+          if (focusedNodeId && focusedNodeId.startsWith("schema:")) {
+            toggleSchema(focusedNodeId.substring(7));
+          } else if (focusedNodeId && focusedNodeId.startsWith("table:")) {
+            toggleTable(focusedNodeId.substring(6));
+          }
+          break;
+        }
+        case "Home": {
+          e.preventDefault();
+          if (visibleNodeIds.length > 0) {
+            nextId = visibleNodeIds[0];
+          }
+          break;
+        }
+        case "End": {
+          e.preventDefault();
+          if (visibleNodeIds.length > 0) {
+            nextId = visibleNodeIds[visibleNodeIds.length - 1];
+          }
+          break;
+        }
+        default:
+          return; // Don't prevent default for other keys
+      }
+
+      if (nextId) {
+        setFocusedNodeId(nextId);
+        if (nodeRefs.current[nextId]) {
+          nodeRefs.current[nextId].focus();
+        }
+      }
+    },
+    [focusedNodeId, visibleNodeIds, expandedSchemas, expandedTables, toggleSchema, toggleTable]
+  );
+
+  // Handle focus entering the tree (Tab into it)
+  const handleTreeFocus = useCallback(
+    (e) => {
+      // Only handle focus on the tree container itself, not bubbled focus from children
+      if (e.target === e.currentTarget && visibleNodeIds.length > 0) {
+        const firstId = focusedNodeId && visibleNodeIds.includes(focusedNodeId) ? focusedNodeId : visibleNodeIds[0];
+        setFocusedNodeId(firstId);
+        if (nodeRefs.current[firstId]) {
+          nodeRefs.current[firstId].focus();
+        }
+      }
+    },
+    [focusedNodeId, visibleNodeIds]
+  );
 
   // Filter schemas/tables/columns based on search term
   const filteredSchemas = useMemo(() => {

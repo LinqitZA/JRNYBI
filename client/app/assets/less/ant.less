@@ -38,6 +38,7 @@
 @import "~antd/lib/typography/style/index";
 @import "~antd/lib/descriptions/style/index";
 @import "inc/ant-variables";
+@import "jrny-theme";
 
 // Increase z-indexes to avoid conflicts with some other libraries (e.g. Plotly)
 @zindex-modal: 2000;
@@ -248,11 +249,11 @@
   &-item {
     // custom rule
     &.selected {
-      background-color: #f6f8f9;
+      background-color: #f8fafc;
     }
 
     &.disabled {
-      background-color: fade(#f6f8f9, 40%);
+      background-color: fade(#f8fafc, 40%);
 
       & > * {
         opacity: 0.4;
