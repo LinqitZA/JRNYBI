@@ -481,3 +481,25 @@ Agent: Batch agent handling features #12, #14, #21
 - For RS256 production: change REDASH_JWT_AUTH_ALGORITHMS and PUBLIC_CERTS_URL
 - All rebranding complete - no user-visible "Redash" text remains
 - Server at http://localhost:5001, admin API key: BBw0fb0ZdZ3iip5Xkd90bCQPOJP7hcTo5JtOwZMI
+
+## Session 11: 2026-05-18
+Agent: Batch agent handling features #8, #9, #10
+
+### Feature #8: Health endpoint returns database connection status (PASSING)
+- Verified GET /ping returns HTTP 200 with "PONG." body
+- Verified GET /status.json returns HTTP 200 with database_metrics
+
+### Feature #9: version.py displays JRNYBI version string (PASSING)
+- Updated __version__ to "JRNYBI-26.05.0-dev"
+- Verified in /api/session and /status.json responses
+- Committed as cfd76a6a
+
+### Feature #10: All logo image files replaced with JRNY branding (PASSING)
+- All PNG logo files replaced with JRNY branding
+- All code references updated to use jrnybi_logo.svg
+- CSS loading indicator colors updated to JRNY blue
+- Changes overlapped with parallel agent session 10
+
+## Current Status
+- Features passing: 33+ (44%+ complete)
+- Total features: 75
