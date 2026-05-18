@@ -38,7 +38,7 @@ const isHotReloadingEnabled =
 const redashBackend = process.env.REDASH_BACKEND || "http://localhost:5001";
 const baseHref = CONFIG.baseHref || "/";
 const staticPath = CONFIG.staticPath || "/static/";
-const htmlTitle = CONFIG.title || "Redash";
+const htmlTitle = CONFIG.title || "JRNYBI";
 
 const basePath = path.join(__dirname, "client");
 const appPath = path.join(__dirname, "client", "app");
@@ -95,7 +95,7 @@ const config = {
     }
   },
   plugins: [
-    new WebpackBuildNotifierPlugin({ title: "Redash" }),
+    new WebpackBuildNotifierPlugin({ title: "JRNYBI" }),
     // bundle only default `moment` locale (`en`)
     new webpack.ContextReplacementPlugin(/moment[\/\\]locale$/, /en/),
     new HtmlWebpackPlugin({
