@@ -54,7 +54,7 @@ def send_failure_report(user_id):
             "base_url": base_url(user.org),
         }
 
-        subject = f"Redash failed to execute {len(unique_errors.keys())} of your scheduled queries"
+        subject = f"JRNYBI failed to execute {len(unique_errors.keys())} of your scheduled queries"
         html, text = [
             render_template("emails/failures.{}".format(f), context)
             for f in ["html", "txt"]

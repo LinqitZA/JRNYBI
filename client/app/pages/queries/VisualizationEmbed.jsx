@@ -36,7 +36,7 @@ function VisualizationEmbedHeader({ queryName, queryDescription, visualization }
   return (
     <div className="embed-heading p-b-10 p-r-15 p-l-15">
       <h3>
-        <img src={logoUrl} alt="Redash Logo" style={{ height: "24px", verticalAlign: "text-bottom" }} />
+        <img src={logoUrl} alt="JRNYBI Logo" style={{ height: "24px", verticalAlign: "text-bottom" }} />
         <VisualizationName visualization={visualization} /> {queryName}
         {queryDescription && (
           <small>
@@ -118,10 +118,10 @@ function VisualizationEmbedFooter({
       )}
       {queryUrl && (
         <span className="hidden-print">
-          <Tooltip title="Open in Redash">
+          <Tooltip title="Open in JRNYBI">
             <Link.Button className="icon-button" href={queryUrl} target="_blank">
               <i className="fa fa-external-link" aria-hidden="true" />
-              <span className="sr-only">Open in Redash</span>
+              <span className="sr-only">Open in JRNYBI</span>
             </Link.Button>
           </Tooltip>
           {!query.hasParameters() && (

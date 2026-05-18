@@ -233,7 +233,7 @@ class ElasticSearch2(BaseHTTPQueryRunner):
 
                 result_rows.append(row)
         else:
-            raise Exception("Redash failed to parse the results it got from Elasticsearch.")
+            raise Exception("JRNYBI failed to parse the results it got from Elasticsearch.")
 
         return {"columns": result_columns, "rows": result_rows}
 

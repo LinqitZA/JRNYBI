@@ -2,16 +2,322 @@
  * JRNYBI Data Dictionary Styles
  *
  * Styles for the Data Dictionary page including:
- * - Tree view layout and expand/collapse animations
+ * - Tree view layout and expand/collapse
  * - Search bar styling
- * - Column detail cards
+ * - Column detail rows
  * - Copy/New Query action buttons
- *
- * TODO: Implement styles (this is a placeholder for project structure)
  */
+
+@import "../../assets/less/inc/variables";
+
+@dd-primary: #2563eb;
+@dd-border: #e2e8f0;
+@dd-bg-light: #f8fafc;
+@dd-bg-hover: #f1f5f9;
+@dd-schema-color: #1e293b;
+@dd-table-color: #334155;
+@dd-column-color: #475569;
+@dd-type-color: #7c3aed;
+@dd-comment-color: #64748b;
 
 .jrny-data-dictionary {
   padding: 20px;
   max-width: 1170px;
   margin: 0 auto;
+
+  .dd-header {
+    margin-bottom: 20px;
+
+    h2 {
+      margin: 0 0 4px 0;
+      font-size: 24px;
+      font-weight: 600;
+      color: @dd-schema-color;
+    }
+
+    .dd-subtitle {
+      margin: 0;
+      color: @dd-comment-color;
+      font-size: 14px;
+    }
+  }
+
+  .dd-search-bar {
+    margin-bottom: 16px;
+
+    .ant-input-affix-wrapper {
+      border-radius: 8px;
+      border-color: @dd-border;
+
+      &:hover,
+      &:focus,
+      &-focused {
+        border-color: @dd-primary;
+        box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+      }
+    }
+  }
+
+  .dd-stats {
+    margin-bottom: 16px;
+    padding: 8px 12px;
+    background: @dd-bg-light;
+    border-radius: 6px;
+    font-size: 13px;
+    color: @dd-comment-color;
+
+    .dd-stats-sep {
+      margin: 0 8px;
+      color: @dd-border;
+    }
+  }
+
+  .dd-loading {
+    text-align: center;
+    padding: 60px 20px;
+
+    p {
+      margin-top: 16px;
+      color: @dd-comment-color;
+    }
+  }
+
+  .dd-error {
+    padding: 20px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    color: #dc2626;
+  }
+
+  .dd-empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: @dd-comment-color;
+    font-size: 14px;
+  }
+
+  // Tree structure
+  .dd-tree {
+    border: 1px solid @dd-border;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .dd-node-header {
+    display: flex;
+    align-items: center;
+    padding: 10px 12px;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.15s ease;
+
+    &:hover {
+      background: @dd-bg-hover;
+    }
+  }
+
+  .dd-expand-icon {
+    width: 16px;
+    margin-right: 8px;
+    font-size: 10px;
+    color: @dd-comment-color;
+    flex-shrink: 0;
+  }
+
+  .dd-node-icon {
+    margin-right: 8px;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .dd-node-name {
+    font-weight: 500;
+    flex-grow: 1;
+  }
+
+  .dd-node-count {
+    font-size: 12px;
+    color: @dd-comment-color;
+    margin-left: 8px;
+    flex-shrink: 0;
+  }
+
+  // Schema level
+  .dd-schema-node {
+    border-bottom: 1px solid @dd-border;
+
+    &:last-child {
+      border-bottom: none;
+    }
+  }
+
+  .dd-schema-header {
+    background: @dd-bg-light;
+    font-size: 14px;
+
+    .dd-schema-icon {
+      color: @dd-primary;
+    }
+
+    .dd-schema-name {
+      color: @dd-schema-color;
+      font-weight: 600;
+    }
+  }
+
+  // Table level
+  .dd-table-node {
+    border-top: 1px solid @dd-border;
+  }
+
+  .dd-table-header {
+    padding-left: 32px;
+    font-size: 13px;
+
+    .dd-table-icon {
+      color: #0891b2;
+    }
+
+    .dd-table-name {
+      color: @dd-table-color;
+    }
+
+    .dd-table-type {
+      font-size: 11px;
+      padding: 1px 6px;
+      margin-left: 6px;
+      background: #e0f2fe;
+      color: #0284c7;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+  }
+
+  .dd-table-actions {
+    display: flex;
+    gap: 4px;
+    margin-left: 8px;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+
+    .dd-table-header:hover & {
+      opacity: 1;
+    }
+  }
+
+  .dd-action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border: 1px solid @dd-border;
+    border-radius: 4px;
+    background: white;
+    color: @dd-primary;
+    font-size: 11px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+
+    &:hover {
+      background: @dd-primary;
+      color: white;
+      border-color: @dd-primary;
+    }
+  }
+
+  .dd-table-comment {
+    padding: 2px 12px 6px 56px;
+    font-size: 12px;
+    color: @dd-comment-color;
+    font-style: italic;
+  }
+
+  // Column level
+  .dd-children {
+    // nested children indentation handled by padding in headers
+  }
+
+  .dd-columns-header {
+    display: flex;
+    padding: 6px 12px 6px 56px;
+    font-size: 11px;
+    font-weight: 600;
+    color: @dd-comment-color;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: #f1f5f9;
+    border-top: 1px solid @dd-border;
+  }
+
+  .dd-column-row {
+    display: flex;
+    padding: 5px 12px 5px 56px;
+    font-size: 13px;
+    border-top: 1px solid #f1f5f9;
+    transition: background-color 0.15s ease;
+
+    &:hover {
+      background: @dd-bg-hover;
+    }
+
+    &.dd-highlighted {
+      background: #fef9c3;
+    }
+  }
+
+  .dd-col-name {
+    flex: 0 0 200px;
+    color: @dd-column-color;
+    font-weight: 500;
+  }
+
+  .dd-col-type {
+    flex: 0 0 160px;
+
+    code {
+      font-size: 12px;
+      padding: 1px 4px;
+      background: #f5f3ff;
+      color: @dd-type-color;
+      border-radius: 3px;
+    }
+  }
+
+  .dd-col-nullable {
+    flex: 0 0 80px;
+    font-size: 12px;
+    color: @dd-comment-color;
+  }
+
+  .dd-col-default {
+    flex: 0 0 180px;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    code {
+      font-size: 11px;
+      padding: 1px 4px;
+      background: #f0fdf4;
+      color: #16a34a;
+      border-radius: 3px;
+    }
+
+    .dd-null {
+      color: #cbd5e1;
+    }
+  }
+
+  .dd-col-comment {
+    flex: 1;
+    font-size: 12px;
+    color: @dd-comment-color;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
