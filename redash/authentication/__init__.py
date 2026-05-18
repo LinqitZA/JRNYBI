@@ -161,6 +161,41 @@ def api_key_load_user_from_request(request):
     return user
 
 
+def _extract_jrny_claims(payload):
+    """Extract JRNY-specific claims from a JWT payload.
+
+    Returns a dict of jrny_* keys suitable for storing in user.details.
+    """
+    claims = {}
+    # Map JWT claim names to user.details keys
+    claim_mapping = {
+        "org_id": "jrny_org_id",
+        "branch_id": "jrny_branch_id",
+        "entity_id": "jrny_entity_id",
+        "sub": "jrny_user_id",
+        "role": "jrny_role",
+    }
+    for jwt_key, details_key in claim_mapping.items():
+        value = payload.get(jwt_key)
+        if value is not None:
+            claims[details_key] = str(value)
+    return claims
+
+
+def _assign_jrny_groups(user, role, org):
+    """Assign user to JRNYBI groups based on their JRNY role claim.
+
+    admin role -> admin group + default group
+    any other role -> default group only
+    """
+    group_ids = [org.default_group.id]
+    if role and str(role).lower() == "admin":
+        admin_group = org.admin_group
+        if admin_group and admin_group.id not in group_ids:
+            group_ids.append(admin_group.id)
+    user.group_ids = group_ids
+
+
 def jwt_token_load_user_from_request(request):
     org = current_org._get_current_object()
 
@@ -202,11 +237,35 @@ def jwt_token_load_user_from_request(request):
         logger.info("No email field in token, refusing to login")
         return
 
+    jrny_claims = _extract_jrny_claims(payload)
+    jrny_role = payload.get("role", "user")
+    is_new_user = False
+
     try:
         user = models.User.get_by_email_and_org(payload["email"], org)
     except models.NoResultFound:
+        is_new_user = True
         user_name = payload.get("name", payload["email"])
         user = create_and_login_user(current_org, user_name, payload["email"])
+
+    if user is None:
+        return None
+
+    # Update JRNY claims in user.details on every login (keeps them fresh)
+    if jrny_claims:
+        if user.details is None:
+            user.details = {}
+        for key, value in jrny_claims.items():
+            user.details[key] = value
+
+    # Assign groups based on JRNY role (on every login to sync role changes)
+    _assign_jrny_groups(user, jrny_role, org)
+
+    try:
+        models.db.session.commit()
+    except Exception:
+        logger.exception("Failed to update JRNY user details for %s", user.email)
+        models.db.session.rollback()
 
     return user
 
