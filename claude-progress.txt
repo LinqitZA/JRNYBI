@@ -1096,3 +1096,51 @@ Agent: Batch agent handling features #66, #67, #68
 - Dashboard save now shows success/error toasts
 - Query execute has triple-layer duplicate prevention
 - Dashboard delete cascades to widget cleanup
+
+## Session 22: 2026-05-18
+Agent: Batch agent handling features #74, #75
+
+### Feature #74: Concurrent query executions handled without race conditions (PASSING)
+- DISCOVERED & FIXED critical RLS bug: Redash query deduplication shared results across users
+- Root cause: enqueue_query() used query_hash (text only) for deduplication lock
+  When two users submitted identical SQL, second user got first user's job+result
+  This meant User B could see User A's RLS-filtered data (cross-user data leak)
+- FIX: Added _is_rls_data_source() check in execution.py
+  For jrny_pg data sources, user_id is included in query hash
+  This ensures different users NEVER share cached results or deduplicate
+- Same-user deduplication still works (same hash for same user)
+- Verified with concurrent test:
+  * User A (org=11111111-...) and User B (org=660e8400-...) submitted same SQL simultaneously
+  * Before fix: both got User B's result (FAIL - cross-contamination)
+  * After fix: User A got org=11111111, User B got org=660e8400 (PASS - isolated)
+  * Different PIDs (1478 vs 1480) confirm separate PostgreSQL connections
+  * Different job IDs confirm separate RQ jobs
+- Also verified QueryExecutor uses matching RLS-aware hash for _unlock()
+
+### Feature #75: Query results exportable to CSV format (PASSING)
+- Verified existing Redash CSV export functionality works correctly
+- API endpoint: GET /api/query_results/{id}.csv returns proper CSV
+- Response headers: Content-Type: text/csv; charset=UTF-8, Content-Disposition: attachment
+- Column headers match query columns exactly
+- Data rows match JSON results
+- Special character handling verified:
+  * Commas in data: properly quoted with double quotes
+  * Quotes in data: escaped as doubled quotes ("")
+  * Unicode (café, résumé): UTF-8 encoding works correctly
+  * Apostrophes: handled correctly
+- UI: "Download as CSV File" button in QueryControlDropdown.jsx
+- QueryResultsLink generates /api/queries/{id}/results/{result_id}.csv URL
+- serialize_query_result_to_dsv uses Python csv.DictWriter for proper formatting
+
+## Files Modified
+- redash/tasks/queries/execution.py - User-aware query hash for RLS data sources
+
+## Current Status
+- Features passing: 75 (100% complete!)
+- Total features: 75
+- ALL FEATURES COMPLETE
+
+## Notes
+- Server at http://localhost:5001, admin API key: BBw0fb0ZdZ3iip5Xkd90bCQPOJP7hcTo5JtOwZMI
+- The RLS deduplication fix (feature #74) is a security-critical change
+- Committed as 4496267f
