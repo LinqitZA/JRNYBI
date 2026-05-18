@@ -244,10 +244,13 @@ class JRNYPostgreSQL(PostgreSQL):
         """
         Execute a query with SET LOCAL RLS context variables injected.
 
-        All SET LOCAL statements and the user query execute within psycopg2's
-        implicit transaction (autocommit=False by default), ensuring the
-        session variables are scoped to this query only and cannot leak to
-        other connections.
+        All SET LOCAL statements and the user query execute within an explicit
+        BEGIN/COMMIT transaction block. This is required because psycopg2 async
+        connections do not automatically wrap statements in a transaction, and
+        SET LOCAL only takes effect inside a transaction block.
+
+        The transaction scopes the session variables to this query only —
+        they cannot leak to other connections or subsequent queries.
 
         Args:
             query: The SQL query string to execute.
@@ -262,7 +265,12 @@ class JRNYPostgreSQL(PostgreSQL):
         cursor = connection.cursor()
 
         try:
-            # Inject RLS SET LOCAL statements within the implicit transaction
+            # Start an explicit transaction block so SET LOCAL takes effect.
+            # psycopg2 async connections don't auto-wrap in BEGIN/COMMIT.
+            cursor.execute("BEGIN")
+            _wait(connection)
+
+            # Inject RLS SET LOCAL statements within the transaction
             details = self._get_current_user_details(user)
             if details:
                 rls_statements = self._build_rls_statements(details)
@@ -302,6 +310,10 @@ class JRNYPostgreSQL(PostgreSQL):
             else:
                 error = "Query completed but it returned no data."
                 data = None
+
+            # Commit the transaction to cleanly end the block
+            cursor.execute("COMMIT")
+            _wait(connection)
         except ValueError as e:
             # RLS validation failure (invalid UUID or role format in JWT claims)
             error = str(e)
