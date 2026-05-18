@@ -27,6 +27,8 @@ import {
   SearchOutlined,
 } from "@ant-design/icons";
 import { axios } from "@/services/axios";
+import notification from "@/services/notification";
+import navigateTo from "@/components/ApplicationArea/navigateTo";
 import routeWithUserSession from "@/components/ApplicationArea/routeWithUserSession";
 import routes from "@/services/routes";
 
@@ -85,15 +87,34 @@ function TableNode({ schema, table, expandedTables, toggleTable, searchTerm, foc
     (e) => {
       e.stopPropagation();
       const query = `SELECT * FROM ${schema.name}.${table.name} LIMIT 100`;
-      navigator.clipboard.writeText(query).catch(() => {
-        // Fallback for older browsers
+      const showSuccess = () => {
+        notification.success(`Copied query for ${schema.name}.${table.name} to clipboard`);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(query).then(showSuccess).catch(() => {
+          // Fallback for older browsers or non-HTTPS contexts
+          const textArea = document.createElement("textarea");
+          textArea.value = query;
+          textArea.style.position = "fixed";
+          textArea.style.opacity = "0";
+          document.body.appendChild(textArea);
+          textArea.select();
+          document.execCommand("copy");
+          document.body.removeChild(textArea);
+          showSuccess();
+        });
+      } else {
+        // Fallback for browsers without clipboard API
         const textArea = document.createElement("textarea");
         textArea.value = query;
+        textArea.style.position = "fixed";
+        textArea.style.opacity = "0";
         document.body.appendChild(textArea);
         textArea.select();
         document.execCommand("copy");
         document.body.removeChild(textArea);
-      });
+        showSuccess();
+      }
     },
     [schema.name, table.name]
   );
@@ -102,7 +123,7 @@ function TableNode({ schema, table, expandedTables, toggleTable, searchTerm, foc
     (e) => {
       e.stopPropagation();
       const query = `SELECT * FROM ${schema.name}.${table.name} LIMIT 100`;
-      window.location.href = `/queries/new?query=${encodeURIComponent(query)}`;
+      navigateTo(`queries/new?query=${encodeURIComponent(query)}`);
     },
     [schema.name, table.name]
   );

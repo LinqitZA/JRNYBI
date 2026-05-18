@@ -6,7 +6,8 @@ import MenuOutlinedIcon from "@ant-design/icons/MenuOutlined";
 import Dropdown from "antd/lib/dropdown";
 import Menu from "antd/lib/menu";
 import Link from "@/components/Link";
-import { Auth, currentUser } from "@/services/auth";
+import ArrowLeftOutlinedIcon from "@ant-design/icons/ArrowLeftOutlined";
+import { Auth, currentUser, clientConfig } from "@/services/auth";
 import settingsMenu from "@/services/settingsMenu";
 import logoUrl from "@/assets/images/jrnybi_logo.svg";
 
@@ -69,6 +70,19 @@ export default function MobileNavbar({ getPopupContainer }) {
                   Help
                 </Link>
               </Menu.Item>
+              {clientConfig.jrnyErpUrl && clientConfig.jrnyErpUrl !== "/" && (
+                <Menu.Item
+                  key="back-to-jrny"
+                  onClick={() => {
+                    try {
+                      window.parent.location.href = clientConfig.jrnyErpUrl;
+                    } catch (e) {
+                      window.location.href = clientConfig.jrnyErpUrl;
+                    }
+                  }}>
+                  <ArrowLeftOutlinedIcon /> Back to JRNY
+                </Menu.Item>
+              )}
               <Menu.Item key="logout" onClick={() => Auth.logout()}>
                 Log out
               </Menu.Item>

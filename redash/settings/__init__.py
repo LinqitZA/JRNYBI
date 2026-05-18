@@ -78,6 +78,10 @@ ENFORCE_PRIVATE_ADDRESS_BLOCK = parse_boolean(os.environ.get("REDASH_ENFORCE_PRI
 # JRNYBI: Iframe embedding - read early since it affects cookie and CSP settings.
 JRNYBI_ALLOWED_FRAME_ANCESTOR = os.environ.get("JRNYBI_ALLOWED_FRAME_ANCESTOR", "")
 
+# JRNYBI: URL for "Back to JRNY" navigation button. Defaults to frame ancestor origin.
+# Set this to the JRNY ERP application URL that users should return to.
+JRNYBI_JRNY_ERP_URL = os.environ.get("JRNYBI_JRNY_ERP_URL", JRNYBI_ALLOWED_FRAME_ANCESTOR or "/")
+
 # Whether to use secure cookies by default.
 COOKIES_SECURE = parse_boolean(os.environ.get("REDASH_COOKIES_SECURE", str(ENFORCE_HTTPS)))
 # Whether the session cookie is set to secure.

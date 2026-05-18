@@ -290,6 +290,7 @@ def client_config():
         "pageSize": settings.PAGE_SIZE,
         "pageSizeOptions": settings.PAGE_SIZE_OPTIONS,
         "tableCellMaxJSONSize": settings.TABLE_CELL_MAX_JSON_SIZE,
+        "jrnyErpUrl": settings.JRNYBI_JRNY_ERP_URL,
     }
 
     client_config.update(defaults)

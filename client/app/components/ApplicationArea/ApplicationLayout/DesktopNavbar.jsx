@@ -6,7 +6,7 @@ import PlainButton from "@/components/PlainButton";
 import HelpTrigger from "@/components/HelpTrigger";
 import CreateDashboardDialog from "@/components/dashboards/CreateDashboardDialog";
 import { useCurrentRoute } from "@/components/ApplicationArea/Router";
-import { Auth, currentUser } from "@/services/auth";
+import { Auth, currentUser, clientConfig } from "@/services/auth";
 import settingsMenu from "@/services/settingsMenu";
 import logoUrl from "@/assets/images/jrnybi_logo.svg";
 
@@ -17,6 +17,7 @@ import PlusOutlinedIcon from "@ant-design/icons/PlusOutlined";
 import QuestionCircleOutlinedIcon from "@ant-design/icons/QuestionCircleOutlined";
 import SettingOutlinedIcon from "@ant-design/icons/SettingOutlined";
 import BookOutlinedIcon from "@ant-design/icons/BookOutlined";
+import ArrowLeftOutlinedIcon from "@ant-design/icons/ArrowLeftOutlined";
 import VersionInfo from "./VersionInfo";
 
 import "./DesktopNavbar.less";
@@ -192,6 +193,23 @@ export default function DesktopNavbar() {
             </Menu.Item>
           </Menu.SubMenu>
         </Menu>
+
+        {clientConfig.jrnyErpUrl && clientConfig.jrnyErpUrl !== "/" && (
+          <PlainButton
+            className="back-to-jrny-btn"
+            data-test="BackToJRNY"
+            onClick={() => {
+              try {
+                window.parent.location.href = clientConfig.jrnyErpUrl;
+              } catch (e) {
+                // Fallback if cross-origin restriction prevents parent access
+                window.location.href = clientConfig.jrnyErpUrl;
+              }
+            }}>
+            <ArrowLeftOutlinedIcon />
+            <span className="desktop-navbar-label">Back to JRNY</span>
+          </PlainButton>
+        )}
       </div>
     </nav>
   );
