@@ -264,3 +264,32 @@ Agent: Batch agent handling features #36, #61, #62
 - Read-replica (pg-replica) not available in dev - schema browser will be empty until connected
 - Server running at http://localhost:5001
 - Admin API key: BBw0fb0ZdZ3iip5Xkd90bCQPOJP7hcTo5JtOwZMI
+
+## Session 7: 2026-05-18
+Agent: Batch agent handling features #7, #43, #11
+
+### Feature #7: Desktop navigation bar renders correctly (PASSING)
+- Converted DesktopNavbar from vertical 80px sidebar to horizontal top bar
+- ApplicationLayout restructured: side-menu -> desktop-navbar (top-bar)
+- DesktopNavbar.less: background #1e293b, height 60px, width 100%, flex row
+- Active state uses bottom border instead of left box-shadow
+- Navigation: Dashboards, Queries, Alerts | Create, Help, Settings | Profile
+
+### Feature #43: Data Dictionary link added to main navigation menu (PASSING)
+- Added BookOutlined icon + "Data Dictionary" item in DesktopNavbar main nav
+- Added "Data Dictionary" link to MobileNavbar hamburger menu
+- Registered /jrny/data-dictionary route with routeWithUserSession
+- Added pages/index.js import for DataDictionary
+
+### Feature #11: DesktopNavbar displays JRNYBI logo and brand name (PASSING)
+- Created jrnybi_logo.svg (blue gradient "J" icon)
+- Updated Desktop + MobileNavbar imports from redash_icon_small.png to jrnybi_logo.svg
+- Alt text: "JRNYBI", brand text: "JRNYBI", left-aligned
+
+## Frontend Build
+- pnpm install + pnpm run build working (webpack production build)
+- Flask server at port 5001 serves assets from client/dist/
+
+## Current Status
+- Features passing: 21 (28% complete)
+- Total features: 75
