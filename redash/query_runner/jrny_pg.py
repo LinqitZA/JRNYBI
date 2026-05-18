@@ -302,6 +302,10 @@ class JRNYPostgreSQL(PostgreSQL):
             else:
                 error = "Query completed but it returned no data."
                 data = None
+        except ValueError as e:
+            # RLS validation failure (invalid UUID or role format in JWT claims)
+            error = str(e)
+            data = None
         except (select.error, OSError):
             error = "Query interrupted. Please retry."
             data = None
