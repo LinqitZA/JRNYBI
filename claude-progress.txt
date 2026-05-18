@@ -1012,3 +1012,52 @@ Agent: Batch agent handling features #63, #64, #65
 - Server at http://localhost:5001, admin API key: BBw0fb0ZdZ3iip5Xkd90bCQPOJP7hcTo5JtOwZMI
 - JWT dev mode: HS256 with key at .dev_jwt_key
 - All 3 features verified and passing
+
+## Session 21: 2026-05-18
+Agent: Batch agent handling features #66, #67, #68
+
+### Feature #66: Success/error toast notification on dashboard save (PASSING)
+- Added notification.success("Dashboard saved.") in updateDashboard success path
+- Added generic notification.error("Dashboard update failed", "Please try again.") for non-403/non-409 errors
+- Existing error toasts preserved: 403 (Permission Denied), 409 (concurrent edit)
+- Toast auto-dismisses after 3 seconds (Ant Design notification service default)
+- Ant Design notifications also include a close button for manual dismissal
+- Verified: "Dashboard saved." string compiled into production JS bundle
+
+### Feature #67: Double-click on query execute does not create duplicate jobs (PASSING)
+- Added synchronous ref-based guard (executionGuard) in useQueryExecute.js
+- Guard is set to true immediately when executeQuery() is called (synchronous, no React state delay)
+- Second click within the same tick is blocked by executionGuard.current check
+- Guard cleared only on query completion (both success and failure paths)
+- Three layers of protection:
+  1. Button disabled state: disabled={!canExecute || isQueryExecuting || areParametersDirty}
+  2. Callback guard: doExecuteQuery early-returns if isQueryExecuting
+  3. Synchronous ref guard: executionGuard.current blocks race condition window
+- Verified: guard variable present in compiled JS source map
+
+### Feature #68: Deleting a dashboard cascades and removes associated widgets (PASSING)
+- Added Widget.query.filter(Widget.dashboard_id == dashboard_id).delete() in dashboard delete handler
+- Tested end-to-end:
+  * Created dashboard 19 with 2 text widgets (IDs 33, 34)
+  * DELETE /api/dashboards/19 returned 200
+  * Database query confirmed 0 widgets remain for dashboard_id=19
+  * Widget IDs 33, 34 completely removed from widgets table
+  * Dashboard archived (is_archived=true), no longer in GET /api/dashboards list
+  * Zero orphaned widgets in database (LEFT JOIN check)
+- No mock data patterns detected in modified files
+
+## Files Modified
+- client/app/pages/dashboards/hooks/useDashboard.js - Success/error toast on dashboard save
+- client/app/pages/queries/hooks/useQueryExecute.js - Synchronous execution guard ref
+- redash/handlers/dashboards.py - Widget cascade delete on dashboard archive
+
+## Current Status
+- Features passing: 66 (88% complete)
+- Total features: 75
+
+## Notes for Next Session
+- Server at http://localhost:5001, admin API key: BBw0fb0ZdZ3iip5Xkd90bCQPOJP7hcTo5JtOwZMI
+- Frontend rebuild done, assets deployed to Docker container
+- Dashboard save now shows success/error toasts
+- Query execute has triple-layer duplicate prevention
+- Dashboard delete cascades to widget cleanup
