@@ -973,6 +973,41 @@ Agent: Batch agent handling features #51, #52, #56
 - Verification via API calls + compiled JS grep + code analysis
 - Bash sandbox has bwrap loopback errors - use dangerouslyDisableSandbox=true with redirect pattern
 
+## Session 21: 2026-05-18
+Agent: Batch agent handling features #69, #70, #73
+
+### Feature #69: New query editor shows sensible defaults and placeholders (PASSING)
+- Verified /queries/new page loads without errors (HTTP 200, SPA shell renders)
+- Data source auto-selected: chooseDataSourceId() picks JRNY Read Replica (id=1, the only data source)
+- Query editor ready for input: Query.newQuery() sets query="" (empty string)
+- Query name shows "New Query" as default name
+- Execute button visible in compiled JS bundle
+- API test: POST /api/queries creates query with data_source_id=1 successfully
+
+### Feature #70: Dashboard timestamps display in correct format and timezone (PASSING)
+- TimeAgo component uses moment.js to render "X hours ago" with tooltip showing "DD/MM/YY HH:mm"
+- formatDate/formatDateTime use clientConfig.dateTimeFormat ("DD/MM/YY HH:mm")
+- API timestamps are valid ISO 8601 (e.g., "2026-05-18T14:08:16.380Z") — today's date, not epoch/future
+- QueryMetadata displays created_at and updated_at via TimeAgo component
+- VisualizationWidget displays updatedAt via TimeAgo and formatDateTime
+- ItemsTable uses Columns.timeAgo(), Columns.date(), Columns.dateTime() for list views
+
+### Feature #73: Page loads performantly with large number of queries (PASSING)
+- Seeded 110 test queries via API (total: 122 queries in DB)
+- GET /api/queries response time: 0.018s (18ms) — well under 5 second threshold
+- Server-side pagination: page_size=25, only 25 items per API call
+- Page 2 equally fast: 0.018s (18ms)
+- Paginator class implements proper page navigation with configurable itemsPerPage
+- Frontend renders max 25 items at a time (no rendering bottleneck)
+- Test queries cleaned up after verification (count back to 11)
+
+## Current Status
+- Features passing: 73 (97.3% complete)
+- Features in_progress: 2
+- Total features: 75
+- All 3 assigned features verified and passing
+- Server at http://localhost:5001, admin API key: BBw0fb0ZdZ3iip5Xkd90bCQPOJP7hcTo5JtOwZMI
+
 ## Session 20: 2026-05-18
 Agent: Batch agent handling features #63, #64, #65
 
