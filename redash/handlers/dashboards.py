@@ -254,7 +254,7 @@ class DashboardResource(BaseResource):
     @require_permission("edit_dashboard")
     def delete(self, dashboard_id):
         """
-        Archives a dashboard.
+        Archives a dashboard and removes its associated widgets.
 
         :qparam number id: Id of dashboard to retrieve.
 
@@ -265,6 +265,10 @@ class DashboardResource(BaseResource):
         dashboard.record_changes(changed_by=self.current_user)
         models.db.session.add(dashboard)
         d = DashboardSerializer(dashboard, with_widgets=True, user=self.current_user).serialize()
+
+        # Cascade: remove all widgets associated with this dashboard
+        models.Widget.query.filter(models.Widget.dashboard_id == dashboard_id).delete()
+
         models.db.session.commit()
 
         self.record_event({"action": "archive", "object_id": dashboard.id, "object_type": "dashboard"})

@@ -30,14 +30,25 @@ export default function useQueryExecute(query) {
   });
 
   const queryResultInExecution = useRef(null);
+  // Synchronous guard to prevent duplicate executions from rapid clicks.
+  // React state (isExecuting) updates asynchronously, so a ref is needed
+  // to block the second click before the state update propagates.
+  const executionGuard = useRef(false);
   // Clear executing queryResult when component is unmounted to avoid errors
   useEffect(() => {
     return () => {
       queryResultInExecution.current = null;
+      executionGuard.current = false;
     };
   }, []);
 
   const executeQuery = useImmutableCallback((maxAge = 0, queryExecutor) => {
+    // Synchronous duplicate-execution guard
+    if (executionGuard.current) {
+      return;
+    }
+    executionGuard.current = true;
+
     let newQueryResult;
     if (queryExecutor) {
       newQueryResult = queryExecutor();
@@ -90,6 +101,7 @@ export default function useQueryExecute(query) {
             executionStatus: null,
           });
         }
+        executionGuard.current = false;
       })
       .catch(queryResult => {
         if (queryResultInExecution.current === newQueryResult) {
@@ -106,6 +118,7 @@ export default function useQueryExecute(query) {
             executionStatus: ExecutionStatus.FAILED,
           });
         }
+        executionGuard.current = false;
       });
   });
 

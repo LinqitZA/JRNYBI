@@ -78,6 +78,7 @@ function useDashboard(dashboardData) {
           if (has(data, "name")) {
             location.setPath(url.parse(updatedDashboard.url).pathname, true);
           }
+          notification.success("Dashboard saved.");
         })
         .catch((error) => {
           const status = get(error, "response.status");
@@ -89,6 +90,8 @@ function useDashboard(dashboardData) {
               "Please copy/backup your changes and reload this page.",
               { duration: null }
             );
+          } else {
+            notification.error("Dashboard update failed", "Please try again.");
           }
         });
     },
