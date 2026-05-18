@@ -733,3 +733,41 @@ Agent: Batch agent handling features #33, #35, #37
 - Features passing: 44 (#33, #35, #37 newly verified)
 - Total features: 75
 - Completion: ~58.7%
+
+## Session 16: 2026-05-18
+Agent: Batch agent handling features #38, #39, #40
+
+### Feature #38: CSP frame-ancestors header allows JRNY origin (PASSING)
+- Added JRNYBI_ALLOWED_FRAME_ANCESTOR env var support in settings/__init__.py
+- When set, CSP frame-ancestors includes 'self' + the configured origin
+- When set, X-Frame-Options is disabled (False) since CSP frame-ancestors takes precedence
+- Verified: Content-Security-Policy header includes "frame-ancestors 'self' https://app.jrny.co.za"
+- No blanket "frame-ancestors *" used - specific origin only
+
+### Feature #39: CORS Access-Control-Allow-Origin configured for JRNY origin (PASSING)
+- Added global CORS after_request handler in security.py (not just query_results.py)
+- All API endpoints now return CORS headers when Origin matches configured origin
+- Access-Control-Allow-Credentials: true (required for cookie auth in iframes)
+- OPTIONS preflight returns Access-Control-Allow-Methods and Access-Control-Allow-Headers
+- Unauthorized origins (e.g., https://evil.com) get NO CORS headers
+- No wildcard '*' when credentials are enabled
+
+### Feature #40: Cookie SameSite attribute configured for cross-origin iframe operation (PASSING)
+- Added SESSION_COOKIE_SAMESITE setting (defaults to "None" when iframe embedding enabled)
+- Flask app.config["SESSION_COOKIE_SAMESITE"] set in security.py init_app
+- SESSION_COOKIE_SECURE automatically set to True when iframe embedding enabled
+- Verified: Set-Cookie header shows "SameSite=None; Secure"
+- All cookie flags compatible with cross-origin iframe operation
+
+## Files Modified
+- redash/settings/__init__.py - JRNYBI_ALLOWED_FRAME_ANCESTOR, CSP, SameSite, CORS settings
+- redash/security.py - Global CORS handler, SESSION_COOKIE_SAMESITE config
+
+## Current Status
+- Features passing: 50 (66.7% complete)
+- Total features: 75
+
+## Notes for Next Session
+- All iframe embedding features (#38, #39, #40) complete and verified
+- Env vars configured in .env: JRNYBI_ALLOWED_FRAME_ANCESTOR, REDASH_CORS_ACCESS_CONTROL_ALLOW_ORIGIN
+- Server at http://localhost:5001, admin API key: BBw0fb0ZdZ3iip5Xkd90bCQPOJP7hcTo5JtOwZMI
