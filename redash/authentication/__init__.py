@@ -293,7 +293,7 @@ def log_user_logged_in(app, user):
 def redirect_to_login():
     is_xhr = request.headers.get("X-Requested-With") == "XMLHttpRequest"
     if is_xhr or "/api/" in request.path:
-        return {"message": "Couldn't find resource. Please login and try again."}, 404
+        return {"message": "Authentication required. Please login and try again."}, 401
 
     login_url = get_login_url(next=request.url, external=False)
 
