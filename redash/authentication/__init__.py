@@ -165,12 +165,23 @@ def jwt_token_load_user_from_request(request):
     org = current_org._get_current_object()
 
     payload = None
+    jwt_token = None
 
+    # Try cookie first (e.g., jrny_session cookie)
     if org_settings["auth_jwt_auth_cookie_name"]:
         jwt_token = request.cookies.get(org_settings["auth_jwt_auth_cookie_name"], None)
-    elif org_settings["auth_jwt_auth_header_name"]:
+
+    # Fall back to configured header name
+    if not jwt_token and org_settings["auth_jwt_auth_header_name"]:
         jwt_token = request.headers.get(org_settings["auth_jwt_auth_header_name"], None)
-    else:
+
+    # Fall back to standard Authorization: Bearer header
+    if not jwt_token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            jwt_token = auth_header[len("Bearer "):]
+
+    if not jwt_token:
         return None
 
     if jwt_token:
@@ -194,7 +205,8 @@ def jwt_token_load_user_from_request(request):
     try:
         user = models.User.get_by_email_and_org(payload["email"], org)
     except models.NoResultFound:
-        user = create_and_login_user(current_org, payload["email"], payload["email"])
+        user_name = payload.get("name", payload["email"])
+        user = create_and_login_user(current_org, user_name, payload["email"])
 
     return user
 
