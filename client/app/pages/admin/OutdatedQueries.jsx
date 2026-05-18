@@ -3,6 +3,7 @@ import React from "react";
 
 import Switch from "antd/lib/switch";
 import routeWithUserSession from "@/components/ApplicationArea/routeWithUserSession";
+import RequireAdmin from "@/components/ApplicationArea/RequireAdmin";
 import Link from "@/components/Link";
 import Paginator from "@/components/Paginator";
 import { QueryTagsControl } from "@/components/tags-control/TagsControl";
@@ -166,6 +167,10 @@ routes.register(
   routeWithUserSession({
     path: "/admin/queries/outdated",
     title: "Outdated Queries",
-    render: pageProps => <OutdatedQueriesPage {...pageProps} currentPage="outdated_queries" />,
+    render: pageProps => (
+      <RequireAdmin>
+        <OutdatedQueriesPage {...pageProps} currentPage="outdated_queries" />
+      </RequireAdmin>
+    ),
   })
 );

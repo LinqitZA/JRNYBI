@@ -3,6 +3,7 @@ import React from "react";
 import Button from "antd/lib/button";
 
 import routeWithUserSession from "@/components/ApplicationArea/routeWithUserSession";
+import RequireAdmin from "@/components/ApplicationArea/RequireAdmin";
 import navigateTo from "@/components/ApplicationArea/navigateTo";
 import Paginator from "@/components/Paginator";
 
@@ -213,6 +214,10 @@ routes.register(
   routeWithUserSession({
     path: "/groups/:groupId",
     title: "Group Members",
-    render: pageProps => <GroupMembersPage {...pageProps} currentPage="users" />,
+    render: pageProps => (
+      <RequireAdmin>
+        <GroupMembersPage {...pageProps} currentPage="users" />
+      </RequireAdmin>
+    ),
   })
 );

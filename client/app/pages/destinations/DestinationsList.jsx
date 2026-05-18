@@ -4,6 +4,7 @@ import PropTypes from "prop-types";
 
 import Button from "antd/lib/button";
 import routeWithUserSession from "@/components/ApplicationArea/routeWithUserSession";
+import RequireAdmin from "@/components/ApplicationArea/RequireAdmin";
 import navigateTo from "@/components/ApplicationArea/navigateTo";
 import CardsList from "@/components/cards-list/CardsList";
 import LoadingState from "@/components/items-list/components/LoadingState";
@@ -147,7 +148,11 @@ routes.register(
   routeWithUserSession({
     path: "/destinations",
     title: "Alert Destinations",
-    render: pageProps => <DestinationsListPage {...pageProps} />,
+    render: pageProps => (
+      <RequireAdmin>
+        <DestinationsListPage {...pageProps} />
+      </RequireAdmin>
+    ),
   })
 );
 routes.register(
@@ -155,6 +160,10 @@ routes.register(
   routeWithUserSession({
     path: "/destinations/new",
     title: "Alert Destinations",
-    render: pageProps => <DestinationsListPage {...pageProps} isNewDestinationPage />,
+    render: pageProps => (
+      <RequireAdmin>
+        <DestinationsListPage {...pageProps} isNewDestinationPage />
+      </RequireAdmin>
+    ),
   })
 );

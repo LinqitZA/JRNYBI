@@ -4,6 +4,7 @@ import PropTypes from "prop-types";
 
 import Modal from "antd/lib/modal";
 import routeWithUserSession from "@/components/ApplicationArea/routeWithUserSession";
+import RequireAdmin from "@/components/ApplicationArea/RequireAdmin";
 import navigateTo from "@/components/ApplicationArea/navigateTo";
 import LoadingState from "@/components/items-list/components/LoadingState";
 import DynamicForm from "@/components/dynamic-form/DynamicForm";
@@ -114,6 +115,10 @@ routes.register(
   routeWithUserSession({
     path: "/destinations/:destinationId",
     title: "Alert Destinations",
-    render: pageProps => <EditDestinationPage {...pageProps} />,
+    render: pageProps => (
+      <RequireAdmin>
+        <EditDestinationPage {...pageProps} />
+      </RequireAdmin>
+    ),
   })
 );

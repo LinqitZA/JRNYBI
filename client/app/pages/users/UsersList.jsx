@@ -4,6 +4,7 @@ import PropTypes from "prop-types";
 
 import Button from "antd/lib/button";
 import routeWithUserSession from "@/components/ApplicationArea/routeWithUserSession";
+import RequireAdmin from "@/components/ApplicationArea/RequireAdmin";
 import Link from "@/components/Link";
 import Paginator from "@/components/Paginator";
 import { UserPreviewCard } from "@/components/PreviewCard";
@@ -204,7 +205,11 @@ routes.register(
   routeWithUserSession({
     path: "/users",
     title: "Users",
-    render: pageProps => <UsersListPage {...pageProps} currentPage="active" />,
+    render: pageProps => (
+      <RequireAdmin>
+        <UsersListPage {...pageProps} currentPage="active" />
+      </RequireAdmin>
+    ),
   })
 );
 routes.register(
@@ -212,6 +217,10 @@ routes.register(
   routeWithUserSession({
     path: "/users/disabled",
     title: "Disabled Users",
-    render: pageProps => <UsersListPage {...pageProps} currentPage="disabled" />,
+    render: pageProps => (
+      <RequireAdmin>
+        <UsersListPage {...pageProps} currentPage="disabled" />
+      </RequireAdmin>
+    ),
   })
 );

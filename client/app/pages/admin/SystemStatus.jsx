@@ -3,6 +3,7 @@ import React from "react";
 import PropTypes from "prop-types";
 
 import routeWithUserSession from "@/components/ApplicationArea/routeWithUserSession";
+import RequireAdmin from "@/components/ApplicationArea/RequireAdmin";
 import Layout from "@/components/admin/Layout";
 import * as StatusBlock from "@/components/admin/StatusBlock";
 
@@ -87,6 +88,10 @@ routes.register(
   routeWithUserSession({
     path: "/admin/status",
     title: "System Status",
-    render: pageProps => <SystemStatus {...pageProps} />,
+    render: pageProps => (
+      <RequireAdmin>
+        <SystemStatus {...pageProps} />
+      </RequireAdmin>
+    ),
   })
 );

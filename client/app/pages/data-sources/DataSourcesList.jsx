@@ -4,6 +4,7 @@ import PropTypes from "prop-types";
 
 import Button from "antd/lib/button";
 import routeWithUserSession from "@/components/ApplicationArea/routeWithUserSession";
+import RequireAdmin from "@/components/ApplicationArea/RequireAdmin";
 import navigateTo from "@/components/ApplicationArea/navigateTo";
 import CardsList from "@/components/cards-list/CardsList";
 import LoadingState from "@/components/items-list/components/LoadingState";
@@ -174,7 +175,11 @@ routes.register(
   routeWithUserSession({
     path: "/data_sources",
     title: "Data Sources",
-    render: pageProps => <DataSourcesListPage {...pageProps} />,
+    render: pageProps => (
+      <RequireAdmin>
+        <DataSourcesListPage {...pageProps} />
+      </RequireAdmin>
+    ),
   })
 );
 routes.register(
@@ -182,6 +187,10 @@ routes.register(
   routeWithUserSession({
     path: "/data_sources/new",
     title: "Data Sources",
-    render: pageProps => <DataSourcesListPage {...pageProps} isNewDataSourcePage />,
+    render: pageProps => (
+      <RequireAdmin>
+        <DataSourcesListPage {...pageProps} isNewDataSourcePage />
+      </RequireAdmin>
+    ),
   })
 );

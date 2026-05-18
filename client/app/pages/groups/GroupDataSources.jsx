@@ -6,6 +6,7 @@ import Menu from "antd/lib/menu";
 import DownOutlinedIcon from "@ant-design/icons/DownOutlined";
 
 import routeWithUserSession from "@/components/ApplicationArea/routeWithUserSession";
+import RequireAdmin from "@/components/ApplicationArea/RequireAdmin";
 import navigateTo from "@/components/ApplicationArea/navigateTo";
 import Paginator from "@/components/Paginator";
 
@@ -250,6 +251,10 @@ routes.register(
   routeWithUserSession({
     path: "/groups/:groupId/data_sources",
     title: "Group Data Sources",
-    render: pageProps => <GroupDataSourcesPage {...pageProps} currentPage="datasources" />,
+    render: pageProps => (
+      <RequireAdmin>
+        <GroupDataSourcesPage {...pageProps} currentPage="datasources" />
+      </RequireAdmin>
+    ),
   })
 );

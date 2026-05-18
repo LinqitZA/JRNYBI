@@ -6,6 +6,7 @@ import Alert from "antd/lib/alert";
 import Tabs from "antd/lib/tabs";
 import * as Grid from "antd/lib/grid";
 import routeWithUserSession from "@/components/ApplicationArea/routeWithUserSession";
+import RequireAdmin from "@/components/ApplicationArea/RequireAdmin";
 import Layout from "@/components/admin/Layout";
 import { CounterCard, WorkersTable, QueuesTable, QueryJobsTable, OtherJobsTable } from "@/components/admin/RQStatus";
 
@@ -133,6 +134,10 @@ routes.register(
   routeWithUserSession({
     path: "/admin/queries/jobs",
     title: "RQ Status",
-    render: pageProps => <Jobs {...pageProps} />,
+    render: pageProps => (
+      <RequireAdmin>
+        <Jobs {...pageProps} />
+      </RequireAdmin>
+    ),
   })
 );
