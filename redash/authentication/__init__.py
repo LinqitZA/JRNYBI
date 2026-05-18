@@ -251,6 +251,11 @@ def jwt_token_load_user_from_request(request):
     if user is None:
         return None
 
+    # Update user name from JWT if changed (keeps display name in sync with JRNY)
+    jwt_name = payload.get("name")
+    if jwt_name and user.name != jwt_name:
+        user.name = jwt_name
+
     # Update JRNY claims in user.details on every login (keeps them fresh)
     if jrny_claims:
         if user.details is None:
