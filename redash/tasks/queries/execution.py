@@ -29,8 +29,28 @@ def _unlock(query_hash, data_source_id):
     redis_connection.delete(_job_lock_id(query_hash, data_source_id))
 
 
+def _is_rls_data_source(data_source):
+    """Check if a data source uses Row-Level Security (user-specific query context).
+
+    RLS data sources inject per-user SET LOCAL session variables, so query results
+    differ by user even for identical SQL text. These must NOT share cached results
+    or deduplicate across users.
+    """
+    return data_source.type == "jrny_pg"
+
+
 def enqueue_query(query, data_source, user_id, is_api_key=False, scheduled_query=None, metadata={}):
     query_hash = gen_query_hash(query)
+
+    # For RLS data sources, include user_id in the hash so different users
+    # never share cached results or deduplicate queries. The same SQL text
+    # can return different data per user due to SET LOCAL session variables.
+    if _is_rls_data_source(data_source) and user_id is not None:
+        query_hash = gen_query_hash(query + "::user_id=" + str(user_id))
+        logger.info(
+            "RLS data source detected; query hash includes user_id=%s", user_id
+        )
+
     logger.info("Inserting job for %s with metadata=%s", query_hash, metadata)
     try_count = 0
     job = None
@@ -176,6 +196,7 @@ class QueryExecutor:
         self.job = get_current_job()
         self.query = query
         self.data_source_id = data_source_id
+        self.user_id = user_id
         self.metadata = metadata
         self.data_source = self._load_data_source()
         self.query_id = metadata.get("query_id")
@@ -189,6 +210,13 @@ class QueryExecutor:
         # Close DB connection to prevent holding a connection for a long time while the query is executing.
         models.db.session.close()
         self.query_hash = gen_query_hash(self.query)
+
+        # For RLS data sources, include user_id in the hash to match the lock
+        # key used in enqueue_query. This ensures proper unlock and prevents
+        # different users from sharing cached query results.
+        if _is_rls_data_source(self.data_source) and user_id is not None:
+            self.query_hash = gen_query_hash(self.query + "::user_id=" + str(user_id))
+
         self.is_scheduled_query = is_scheduled_query
         if self.is_scheduled_query:
             # Load existing tracker or create a new one if the job was created before code update:
