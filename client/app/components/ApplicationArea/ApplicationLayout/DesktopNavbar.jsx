@@ -152,7 +152,7 @@ export default function DesktopNavbar() {
             </HelpTrigger>
           </Menu.Item>
 
-          {firstSettingsTab && (
+          {firstSettingsTab && currentUser.hasPermission("admin") && (
             <Menu.Item key="settings" className={activeState.dataSources ? "navbar-active-item" : null}>
               <Link href={firstSettingsTab.path} data-test="SettingsLink">
                 <SettingOutlinedIcon />

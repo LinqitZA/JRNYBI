@@ -130,7 +130,7 @@ class GroupsList extends React.Component {
 const GroupsListPage = wrapSettingsTab(
   "Groups.List",
   {
-    permission: "list_users",
+    permission: "admin",
     title: "Groups",
     path: "groups",
     order: 3,

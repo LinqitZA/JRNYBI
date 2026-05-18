@@ -51,7 +51,7 @@ export default function MobileNavbar({ getPopupContainer }) {
                 <Link href="users/me">Edit Profile</Link>
               </Menu.Item>
               <Menu.Divider />
-              {firstSettingsTab && (
+              {firstSettingsTab && currentUser.hasPermission("admin") && (
                 <Menu.Item key="settings">
                   <Link href={firstSettingsTab.path}>Settings</Link>
                 </Menu.Item>

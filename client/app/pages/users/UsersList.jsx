@@ -252,7 +252,7 @@ class UsersList extends React.Component {
 const UsersListPage = wrapSettingsTab(
   "Users.List",
   {
-    permission: "list_users",
+    permission: "admin",
     title: "Users",
     path: "users",
     isActive: path => path.startsWith("/users") && path !== "/users/me",
