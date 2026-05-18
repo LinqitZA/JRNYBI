@@ -706,3 +706,30 @@ Agent: Batch agent handling features #18, #72
 - Server at http://localhost:5001, admin API key: BBw0fb0ZdZ3iip5Xkd90bCQPOJP7hcTo5JtOwZMI
 - Playwright browser unavailable (no Chrome installed)
 - Bash sandbox intermittently blocks; use redirect-to-file pattern: `cmd > /tmp/claude/out.txt 2>&1 && cat /dev/null`
+
+## Session 14: 2026-05-18
+Agent: Batch agent handling features #33, #35, #37
+
+### Feature #33: Invalid role value in JWT rejected with descriptive error (PASSING)
+- Verified _safe_role() in jrny_pg.py correctly validates role with ^[a-zA-Z0-9_]+$ regex
+- _build_rls_statements() raises ValueError with message "Invalid role format for app.current_user_role. Query execution blocked for security."
+- run_query() catches ValueError and returns user-friendly error string (no stack trace)
+- API test confirmed: user with malicious role "admin; DROP TABLE users;--" received clean error on query execution (status 4 = failed)
+- Malicious string never injected into SQL - validation happens before SET LOCAL is constructed
+
+### Feature #35: Data source creation UI restricted to super-admin users only (PASSING)
+- Backend: @require_admin decorator on all 7 data source endpoints (POST create, POST update, DELETE, pause, resume, test, list types)
+- Frontend: "New Data Source" button disabled for non-admins via policy.isCreateDataSourceEnabled() = currentUser.isAdmin
+- Empty-state "Click here" link also gated behind same policy check
+- Non-admin users get 403 Forbidden on all data source mutation API calls
+
+### Feature #37: Connection uses jrnybi_reader PostgreSQL role (least privilege) (PASSING)
+- Data source "JRNY Read Replica" confirmed using "user": "jrnybi_reader"
+- seed_jrny CLI reads from JRNYBI_JRNY_REPLICA_USER env var (default: jrnybi_reader)
+- No hardcoded superuser or table-owner credentials in query runner
+- Connection options verified from API: host=pg-replica, port=5432, dbname=jrny_db, user=jrnybi_reader
+
+## Current Status
+- Features passing: 44 (#33, #35, #37 newly verified)
+- Total features: 75
+- Completion: ~58.7%

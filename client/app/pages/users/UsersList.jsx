@@ -1,15 +1,12 @@
-import { isString, map, get, find } from "lodash";
+import { map } from "lodash";
 import React from "react";
 import PropTypes from "prop-types";
 
 import Button from "antd/lib/button";
-import Modal from "antd/lib/modal";
 import routeWithUserSession from "@/components/ApplicationArea/routeWithUserSession";
 import Link from "@/components/Link";
 import Paginator from "@/components/Paginator";
-import DynamicComponent from "@/components/DynamicComponent";
 import { UserPreviewCard } from "@/components/PreviewCard";
-import InputWithCopy from "@/components/InputWithCopy";
 
 import { wrap as itemsList, ControllerType } from "@/components/items-list/ItemsList";
 import { ResourceItemsSource } from "@/components/items-list/classes/ItemsSource";
@@ -24,26 +21,14 @@ import Layout from "@/components/layouts/ContentWithSidebar";
 import wrapSettingsTab from "@/components/SettingsWrapper";
 
 import { currentUser } from "@/services/auth";
-import { policy } from "@/services/policy";
 import User from "@/services/user";
-import navigateTo from "@/components/ApplicationArea/navigateTo";
-import notification from "@/services/notification";
-import { absoluteUrl } from "@/services/utils";
 import routes from "@/services/routes";
 
-import CreateUserDialog from "./components/CreateUserDialog";
-
-function UsersListActions({ user, enableUser, disableUser, deleteUser }) {
+function UsersListActions({ user, enableUser, disableUser }) {
   if (user.id === currentUser.id) {
     return null;
   }
-  if (user.is_invitation_pending) {
-    return (
-      <Button type="danger" className="w-100" onClick={event => deleteUser(event, user)}>
-        Delete
-      </Button>
-    );
-  }
+  // JRNYBI: No delete for pending invitations - users auto-provisioned via JWT
   return user.is_disabled ? (
     <Button type="primary" className="w-100" onClick={event => enableUser(event, user)}>
       Enable
@@ -58,12 +43,10 @@ function UsersListActions({ user, enableUser, disableUser, deleteUser }) {
 UsersListActions.propTypes = {
   user: PropTypes.shape({
     id: PropTypes.number,
-    is_invitation_pending: PropTypes.bool,
     is_disabled: PropTypes.bool,
   }).isRequired,
   enableUser: PropTypes.func.isRequired,
   disableUser: PropTypes.func.isRequired,
-  deleteUser: PropTypes.func.isRequired,
 };
 
 class UsersList extends React.Component {
@@ -77,16 +60,12 @@ class UsersList extends React.Component {
       href: "users",
       title: "Active Users",
     },
-    {
-      key: "pending",
-      href: "users/pending",
-      title: "Pending Invitations",
-    },
+    // JRNYBI: Pending Invitations removed - users auto-provisioned via JWT SSO
     {
       key: "disabled",
       href: "users/disabled",
       title: "Disabled Users",
-      isAvailable: () => policy.canCreateUser(),
+      isAvailable: () => currentUser.isAdmin,
     },
   ];
 
@@ -126,90 +105,27 @@ class UsersList extends React.Component {
           user={user}
           enableUser={this.enableUser}
           disableUser={this.disableUser}
-          deleteUser={this.deleteUser}
         />
       ),
       {
         width: "1%",
-        isAvailable: () => policy.canCreateUser(),
+        isAvailable: () => currentUser.isAdmin,
       }
     ),
   ];
 
-  componentDidMount() {
-    if (this.props.controller.params.isNewUserPage) {
-      this.showCreateUserDialog();
-    }
-  }
-
-  createUser = values =>
-    User.create(values)
-      .then(user => {
-        notification.success("Saved.");
-        if (user.invite_link) {
-          Modal.warning({
-            title: "Email not sent!",
-            content: (
-              <React.Fragment>
-                <p>
-                  The mail server is not configured, please send the following link to <b>{user.name}</b>:
-                </p>
-                <InputWithCopy value={absoluteUrl(user.invite_link)} aria-label="Invite link" readOnly />
-              </React.Fragment>
-            ),
-          });
-        }
-      })
-      .catch(error => {
-        const message = find([get(error, "response.data.message"), get(error, "message"), "Failed saving."], isString);
-        return Promise.reject(new Error(message));
-      });
-
-  showCreateUserDialog = () => {
-    if (policy.isCreateUserEnabled()) {
-      const goToUsersList = () => {
-        if (this.props.controller.params.isNewUserPage) {
-          navigateTo("users");
-        }
-      };
-      CreateUserDialog.showModal()
-        .onClose(values =>
-          this.createUser(values).then(() => {
-            this.props.controller.update();
-            goToUsersList();
-          })
-        )
-        .onDismiss(goToUsersList);
-    }
-  };
-
+  // JRNYBI: User creation removed - users auto-provisioned via JWT SSO
   enableUser = (event, user) => User.enableUser(user).then(() => this.props.controller.update());
 
   disableUser = (event, user) => User.disableUser(user).then(() => this.props.controller.update());
 
   deleteUser = (event, user) => User.deleteUser(user).then(() => this.props.controller.update());
 
-  // eslint-disable-next-line class-methods-use-this
-  renderPageHeader() {
-    if (!policy.canCreateUser()) {
-      return null;
-    }
-    return (
-      <div className="m-b-15">
-        <Button type="primary" disabled={!policy.isCreateUserEnabled()} onClick={this.showCreateUserDialog}>
-          <i className="fa fa-plus m-r-5" aria-hidden="true" />
-          New User
-        </Button>
-        <DynamicComponent name="UsersListExtra" />
-      </div>
-    );
-  }
-
   render() {
     const { controller } = this.props;
     return (
       <React.Fragment>
-        {this.renderPageHeader()}
+        {/* JRNYBI: No "New User" button - users auto-provisioned via JWT SSO */}
         <Layout>
           <Layout.Sidebar className="m-b-0">
             <Sidebar.SearchInput
@@ -285,28 +201,13 @@ const UsersListPage = wrapSettingsTab(
   )
 );
 
-routes.register(
-  "Users.New",
-  routeWithUserSession({
-    path: "/users/new",
-    title: "Users",
-    render: pageProps => <UsersListPage {...pageProps} currentPage="active" isNewUserPage />,
-  })
-);
+// JRNYBI: /users/new and /users/pending routes removed - users auto-provisioned via JWT SSO
 routes.register(
   "Users.List",
   routeWithUserSession({
     path: "/users",
     title: "Users",
     render: pageProps => <UsersListPage {...pageProps} currentPage="active" />,
-  })
-);
-routes.register(
-  "Users.Pending",
-  routeWithUserSession({
-    path: "/users/pending",
-    title: "Pending Invitations",
-    render: pageProps => <UsersListPage {...pageProps} currentPage="pending" />,
   })
 );
 routes.register(

@@ -37,11 +37,13 @@ export default class DefaultPolicy {
   }
 
   canCreateUser() {
-    return currentUser.isAdmin;
+    // JRNYBI: Users are auto-provisioned via JWT SSO - no manual creation
+    return false;
   }
 
   isCreateUserEnabled() {
-    return currentUser.isAdmin;
+    // JRNYBI: Users are auto-provisioned via JWT SSO - no manual creation
+    return false;
   }
 
   isCreateQuerySnippetEnabled() {
