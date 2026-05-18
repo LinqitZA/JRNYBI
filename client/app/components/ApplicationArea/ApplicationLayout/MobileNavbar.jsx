@@ -20,6 +20,7 @@ export default function MobileNavbar({ getPopupContainer }) {
       <div className="mobile-navbar-logo">
         <Link href="./">
           <img src={logoUrl} alt="JRNYBI" />
+          <span className="mobile-navbar-brand">JRNYBI</span>
         </Link>
       </div>
       <div>
@@ -64,7 +65,7 @@ export default function MobileNavbar({ getPopupContainer }) {
               {currentUser.hasPermission("super_admin") && <Menu.Divider />}
               <Menu.Item key="help">
                 {/* eslint-disable-next-line react/jsx-no-target-blank */}
-                <Link href="https://redash.io/help" target="_blank" rel="noopener">
+                <Link href="https://jrny.co.za/help" target="_blank" rel="noopener">
                   Help
                 </Link>
               </Menu.Item>

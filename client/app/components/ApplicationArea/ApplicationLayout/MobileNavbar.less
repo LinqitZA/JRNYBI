@@ -1,4 +1,6 @@
-@backgroundColor: #001529;
+@import "~@/assets/less/jrny-theme.less";
+
+@backgroundColor: @jrny-header-bg; // #1e293b (slate-800)
 @dividerColor: rgba(255, 255, 255, 0.5);
 @textColor: rgba(255, 255, 255, 0.75);
 
@@ -12,9 +14,22 @@
   height: 100%;
 
   &-logo {
+    display: flex;
+    align-items: center;
+    text-decoration: none;
+
     img {
-      height: 40px;
-      width: 40px;
+      height: 32px;
+      width: 32px;
+    }
+
+    .mobile-navbar-brand {
+      margin-left: 8px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: 0.5px;
+      white-space: nowrap;
     }
   }
 
