@@ -1,3 +1,4 @@
+import os
 from sys import exit
 
 import click
@@ -235,3 +236,103 @@ def edit(name, new_name=None, options=None, type=None, organization="default"):
 
     except NoResultFound:
         print("Couldn't find data source named: {}".format(name))
+
+
+@manager.command(name="seed_jrny")
+@click.option(
+    "--org",
+    "organization",
+    default="default",
+    help="The organization to add the data source to (default: 'default').",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Recreate the data source even if one already exists.",
+)
+def seed_jrny(organization="default", force=False):
+    """Seed the JRNY PostgreSQL (RLS) read-replica data source.
+
+    Creates a pre-configured data source of type 'jrny_pg' pointing to the
+    JRNY ERP read-replica. Connection details are read from environment
+    variables:
+
+    \b
+      JRNYBI_JRNY_REPLICA_HOST   (default: pg-replica)
+      JRNYBI_JRNY_REPLICA_PORT   (default: 5432)
+      JRNYBI_JRNY_REPLICA_DB     (default: jrny_db)
+      JRNYBI_JRNY_REPLICA_USER   (default: jrnybi_reader)
+      JRNYBI_JRNY_REPLICA_PASSWORD
+    """
+    ds_name = "JRNY Read Replica"
+    ds_type = "jrny_pg"
+
+    if ds_type not in query_runners:
+        print(
+            "Error: '{}' query runner is not registered. "
+            "Ensure 'redash.query_runner.jrny_pg' is in QUERY_RUNNERS.".format(ds_type)
+        )
+        exit(1)
+
+    try:
+        org = models.Organization.get_by_slug(organization)
+    except NoResultFound:
+        print("Error: organization '{}' not found. Run 'manage org create' first.".format(organization))
+        exit(1)
+
+    # Check if the JRNY data source already exists
+    existing = models.DataSource.query.filter(
+        models.DataSource.org == org,
+        models.DataSource.type == ds_type,
+    ).first()
+
+    if existing and not force:
+        print(
+            "JRNY data source already exists: '{}' (id={}). "
+            "Use --force to recreate.".format(existing.name, existing.id)
+        )
+        return
+
+    if existing and force:
+        print("Removing existing JRNY data source: '{}' (id={})".format(existing.name, existing.id))
+        models.db.session.delete(existing)
+        models.db.session.commit()
+
+    # Read connection details from environment variables
+    replica_host = os.environ.get("JRNYBI_JRNY_REPLICA_HOST", "pg-replica")
+    replica_port = int(os.environ.get("JRNYBI_JRNY_REPLICA_PORT", "5432"))
+    replica_db = os.environ.get("JRNYBI_JRNY_REPLICA_DB", "jrny_db")
+    replica_user = os.environ.get("JRNYBI_JRNY_REPLICA_USER", "jrnybi_reader")
+    replica_password = os.environ.get("JRNYBI_JRNY_REPLICA_PASSWORD", "")
+
+    schema = query_runners[ds_type].configuration_schema()
+
+    options_dict = {
+        "host": replica_host,
+        "port": replica_port,
+        "dbname": replica_db,
+        "user": replica_user,
+        "password": replica_password,
+        "search_path": "reporting,core,sales,finance,inventory,procurement,cashbook",
+        "sslmode": "prefer",
+        "dsn": "application_name=jrnybi",
+    }
+
+    options = ConfigurationContainer(options_dict, schema)
+
+    print("Creating JRNY data source '{}' (type={})".format(ds_name, ds_type))
+    print("  Host: {}:{}".format(replica_host, replica_port))
+    print("  Database: {}".format(replica_db))
+    print("  User: {}".format(replica_user))
+    print("  Search Path: {}".format(options_dict["search_path"]))
+
+    data_source = models.DataSource.create_with_group(
+        name=ds_name,
+        type=ds_type,
+        options=options,
+        org=org,
+    )
+    models.db.session.commit()
+
+    print("Success! Data source created with id={}".format(data_source.id))

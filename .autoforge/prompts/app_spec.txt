@@ -1,0 +1,538 @@
+<project_specification>
+  <project_name>JRNYBI</project_name>
+
+  <overview>
+    JRNYBI is a fork of Redash 26.03.0 rebranded as the embedded business intelligence and reporting platform for JRNY ERP. It runs as an independent service — separate repo, own Docker image, own CI/CD — but deployed alongside JRNY via docker-compose and integrated via JWT SSO + iframe/proxy. JRNYBI connects to a PostgreSQL streaming read-replica (not the primary) for all data queries, with Row-Level Security (RLS) enforcement via SET LOCAL session variables injected before every query.
+  </overview>
+
+  <target_audience>
+    JRNY ERP users — primarily business users, finance teams, inventory managers, procurement staff, and administrators who need reporting and analytics capabilities embedded within their ERP workflow.
+  </target_audience>
+
+  <technology_stack>
+    <frontend>
+      <framework>React 16.14</framework>
+      <ui_library>Ant Design 4.4.3 + Bootstrap 3.4.1</ui_library>
+      <styling>LESS with theme variables (jrny-theme.less)</styling>
+      <font>Inter (replacing Roboto)</font>
+      <build_tool>Webpack 5</build_tool>
+      <routing>UniversalRouter (custom route registry)</routing>
+      <icons>Ant Design Icons 4.2.1 + Font Awesome 4.7.0</icons>
+    </frontend>
+    <backend>
+      <runtime>Python 3.13 (Flask)</runtime>
+      <orm>SQLAlchemy</orm>
+      <database>PostgreSQL (metadata DB for dashboards, queries, user prefs)</database>
+      <data_source>PostgreSQL streaming read-replica (JRNY ERP data via RLS)</data_source>
+      <queue>Redis + RQ (background job execution)</queue>
+      <auth>JWT (RS256 via JWKS endpoint from JRNY API)</auth>
+      <package_manager>Poetry 2.1.4</package_manager>
+      <db_driver>psycopg2</db_driver>
+      <jwt_library>PyJWT</jwt_library>
+    </backend>
+    <communication>
+      <api>Flask-RESTful REST API (existing Redash pattern)</api>
+      <auth_protocol>JWT SSO — JRNY issues tokens, JRNYBI validates via JWKS</auth_protocol>
+      <embedding>iframe with CSP frame-ancestors + CORS</embedding>
+    </communication>
+  </technology_stack>
+
+  <prerequisites>
+    <environment_setup>
+      - Docker and docker-compose for containerized deployment
+      - Node.js 24 with pnpm for frontend build
+      - Python 3.13 with Poetry for backend dependencies
+      - PostgreSQL 18 for JRNYBI metadata database
+      - Redis 7 for job queue
+      - Access to JRNY ERP's PostgreSQL read-replica
+      - JRNY API's JWKS endpoint accessible for JWT validation
+    </environment_setup>
+  </prerequisites>
+
+  <feature_count>75</feature_count>
+
+  <security_and_access_control>
+    <user_roles>
+      <role name="admin">
+        <permissions>
+          - Full access to all JRNYBI features
+          - Can manage data sources (add, edit, delete)
+          - Can access admin/settings pages
+          - Can view system status and manage jobs
+          - Can create, edit, delete queries and dashboards
+          - Can manage user groups and permissions
+        </permissions>
+        <protected_routes>
+          - /admin/* (admin only)
+          - /data_sources/* (admin only)
+          - /groups/* (admin only)
+          - /users/* (admin only)
+        </protected_routes>
+      </role>
+      <role name="user">
+        <permissions>
+          - Can view dashboards
+          - Can create, edit, delete own queries
+          - Can create own dashboards
+          - Can view data dictionary
+          - Can set up alerts on own queries
+          - Cannot manage data sources
+          - Cannot access admin settings
+        </permissions>
+        <protected_routes>
+          - /dashboards (authenticated users)
+          - /queries (authenticated users)
+          - /alerts (authenticated users)
+          - /jrny/data-dictionary (authenticated users)
+        </protected_routes>
+      </role>
+    </user_roles>
+    <authentication>
+      <method>JWT SSO via JRNY ERP (RS256, JWKS validation)</method>
+      <session_timeout>6 hours (Redash default)</session_timeout>
+      <jwt_claims>email, name, sub (user_id), org_id, branch_id, entity_id, role</jwt_claims>
+      <disabled_methods>Password login, Google OAuth, SAML, LDAP</disabled_methods>
+    </authentication>
+    <row_level_security>
+      <mechanism>SET LOCAL session variables injected before every query in a transaction</mechanism>
+      <variables>
+        - app.current_org_id (UUID, from JWT org_id claim)
+        - app.current_branch_id (UUID, from JWT branch_id claim)
+        - app.current_entity_id (UUID, from JWT entity_id claim)
+        - app.current_user_id (UUID, from JWT sub claim)
+        - app.current_user_role (alphanumeric, from JWT role claim)
+      </variables>
+      <enforcement>PostgreSQL RLS policies on read-replica evaluate these session variables</enforcement>
+      <validation>UUID format validation and alphanumeric role validation prevent SQL injection</validation>
+    </row_level_security>
+    <sensitive_operations>
+      - Data source configuration changes require admin role
+      - Query execution on read-replica requires valid RLS context
+      - User provisioning happens automatically via JWT — no manual user creation
+    </sensitive_operations>
+  </security_and_access_control>
+
+  <core_features>
+    <infrastructure>
+      - JRNYBI metadata database connection established and healthy
+      - Database schema (Alembic migrations) applied correctly with all tables present
+      - Data (dashboards, queries, user prefs) persists across server restart
+      - No mock data patterns detected in codebase
+      - Backend API queries real PostgreSQL database (not in-memory or mock)
+    </infrastructure>
+
+    <rebranding>
+      - version.py updated to display JRNYBI version string (not Redash)
+      - All logo image files replaced with JRNY branding (logo.png, logo_white.png, redash_icon_small.png)
+      - Favicon files updated to JRNY branding (favicon-16x16, 32x32, 96x96)
+      - DesktopNavbar displays JRNYBI logo and brand name
+      - MobileNavbar displays JRNYBI logo and brand name
+      - Home page shows "Welcome to JRNYBI" message instead of "Welcome to Redash"
+      - Auth/login fallback pages show JRNYBI branding
+    </rebranding>
+
+    <jwt_authentication>
+      - JWT login enabled and configurable via REDASH_JWT_LOGIN_ENABLED environment variable
+      - JWT token validated from jrny_session cookie or Authorization header
+      - JRNY-specific claims (org_id, branch_id, entity_id, role) extracted from JWT payload
+      - New JRNYBI user auto-provisioned on first JWT login with email and name from token
+      - Existing user's JRNY details updated on each subsequent JWT login
+      - JRNY admin role mapped to JRNYBI admin group; user role mapped to default group
+      - All JRNY claims persisted in user.details JSONB field for query runner access
+      - Password login, Google OAuth, and SAML authentication disabled when JWT is active
+    </jwt_authentication>
+
+    <rls_query_runner>
+      - JRNYPostgreSQL query runner subclass created extending PostgreSQL runner
+      - Runner registered and appears as "JRNY PostgreSQL (RLS)" in data source type selection
+      - SET LOCAL app.current_org_id injected before every user query execution
+      - SET LOCAL app.current_branch_id injected before every user query execution
+      - SET LOCAL app.current_entity_id injected before every user query execution
+      - SET LOCAL app.current_user_id injected before every user query execution
+      - SET LOCAL app.current_user_role injected before every user query execution
+      - All SET LOCAL statements wrapped in BEGIN/COMMIT transaction block
+      - UUID values validated against regex pattern before inclusion in SET LOCAL statements
+      - Role values validated as alphanumeric-only before inclusion in SET LOCAL statements
+    </rls_query_runner>
+
+    <data_source_security>
+      - Pre-configured JRNY read-replica data source seeded on first boot
+      - Data source creation UI restricted to super-admin users only
+      - search_path configured to: reporting, core, sales, finance, inventory, procurement, cashbook
+      - Connection uses jrnybi_reader PostgreSQL role (never a table owner)
+    </data_source_security>
+
+    <prebuilt_reports_sales>
+      - Sales Summary dashboard with monthly revenue line/bar chart and order count
+      - Customer Revenue Ranking report with bar chart and sortable table
+      - Product Performance report with charts showing top/bottom performers
+      - All sales reports correctly filter data through RLS (only user's org data visible)
+    </prebuilt_reports_sales>
+
+    <prebuilt_reports_finance>
+      - Outstanding Invoices Aging report with aging buckets table and pie chart breakdown
+      - Cash Flow Summary with line chart showing inflows/outflows and transaction table
+      - Trial Balance table report with debit/credit columns grouped by account
+      - All finance reports correctly filter data through RLS
+    </prebuilt_reports_finance>
+
+    <prebuilt_reports_inventory_procurement>
+      - Inventory Valuation report with table and KPI widgets (total value, item count)
+      - Stock Below Reorder Point alert table highlighting items needing reorder
+      - Purchase Order Status dashboard showing PO pipeline by status
+      - Supplier Spend Analysis with bar chart ranking suppliers and detail table
+    </prebuilt_reports_inventory_procurement>
+
+    <report_seeding_and_parameters>
+      - Seed script programmatically creates all report queries via JRNYBI API
+      - Seed script creates appropriate visualizations (charts, tables, KPIs) for each query
+      - Seed script assembles dashboard layouts grouping related visualizations
+      - Date range parameter ({{start_date}}, {{end_date}}) filtering works on applicable reports
+      - Status/category parameter ({{status}}) filtering works on applicable reports
+    </report_seeding_and_parameters>
+
+    <data_dictionary_api>
+      - GET /api/jrny/data-dictionary endpoint returns complete schema metadata
+      - Table and column COMMENT ON annotations included in response data
+      - Response structured as nested hierarchy: schema -> table -> columns
+      - Endpoint requires authentication (returns 401 for unauthenticated requests)
+    </data_dictionary_api>
+
+    <data_dictionary_ui>
+      - Data Dictionary page accessible via dedicated link in main navigation bar
+      - Collapsible tree view displaying Schema -> Table/View -> Columns hierarchy
+      - Search/filter functionality across all schemas, tables, and column names
+      - Column details display: data type, nullable status, default value, description/comment
+      - "Copy query" button generates SELECT * FROM schema.table LIMIT 100 to clipboard
+      - "New Query" link opens query editor with selected table pre-filled in editor
+    </data_dictionary_ui>
+
+    <jrny_theme>
+      - Primary color updated to JRNY blue (#2563eb) throughout all UI components
+      - Layout header background updated to slate-800 (#1e293b)
+      - Layout body background updated to slate-50 (#f8fafc)
+      - Inter font family applied as primary font replacing Roboto
+    </jrny_theme>
+
+    <iframe_embedding>
+      - Content-Security-Policy header allows JRNY origin as frame-ancestor
+      - X-Frame-Options DENY header removed to permit iframe embedding
+      - CORS Access-Control-Allow-Origin configured for JRNY origin domain
+      - Cookie SameSite attribute configured for cross-origin iframe operation
+    </iframe_embedding>
+
+    <navigation_simplification>
+      - Settings/admin pages hidden from navigation for non-admin users
+      - User management pages hidden (users are auto-provisioned via JWT)
+      - Data Dictionary link added as primary item in main navigation menu
+      - "Back to JRNY" button added to navbar that navigates parent frame to JRNY ERP
+    </navigation_simplification>
+
+    <schema_auto_complete>
+      - Schema browser and auto-complete prioritize reporting schema views at top of list
+      - Auto-complete includes columns from all configured schemas (reporting, core, sales, finance, inventory, procurement, cashbook)
+    </schema_auto_complete>
+  </core_features>
+
+  <database_schema>
+    <note>
+      JRNYBI inherits the existing Redash database schema (managed by Alembic migrations).
+      Key tables in the JRNYBI metadata database are listed below.
+      The JRNY ERP data is accessed via read-replica and is NOT part of this schema.
+    </note>
+    <tables>
+      <users>
+        - id (serial PK), org_id (FK), name, email, password_hash, group_ids (int[])
+        - details (JSONB — stores jrny_org_id, jrny_branch_id, jrny_entity_id, jrny_user_id, jrny_role)
+        - api_key, disabled_at, created_at, updated_at
+      </users>
+      <organizations>
+        - id (serial PK), name, slug, settings (JSONB), created_at, updated_at
+      </organizations>
+      <groups>
+        - id (serial PK), org_id (FK), type, name, permissions (text[]), created_at
+      </groups>
+      <data_sources>
+        - id (serial PK), org_id (FK), name, type (e.g., "jrny_pg"), options (encrypted JSONB)
+        - queue_name, scheduled_queue_name, created_at
+      </data_sources>
+      <queries>
+        - id (serial PK), org_id (FK), data_source_id (FK), user_id (FK)
+        - name, description, query_text, query_hash, schedule (JSONB)
+        - is_archived, is_draft, tags (text[]), options (JSONB), created_at, updated_at
+      </queries>
+      <query_results>
+        - id (serial PK), org_id (FK), data_source_id (FK), query_hash
+        - query_text, data (text — JSON result), runtime, retrieved_at
+      </query_results>
+      <visualizations>
+        - id (serial PK), query_id (FK), type, name, description, options (text — JSON)
+        - created_at, updated_at
+      </visualizations>
+      <dashboards>
+        - id (serial PK), org_id (FK), user_id (FK), slug, name
+        - layout (text — JSON), dashboard_filters_enabled, is_archived
+        - tags (text[]), created_at, updated_at
+      </dashboards>
+      <widgets>
+        - id (serial PK), dashboard_id (FK), visualization_id (FK)
+        - text (text — markdown), width, options (text — JSON)
+        - created_at, updated_at
+      </widgets>
+      <alerts>
+        - id (serial PK), query_id (FK), user_id (FK), name, state
+        - options (JSONB), last_triggered_at, rearm, created_at, updated_at
+      </alerts>
+    </tables>
+  </database_schema>
+
+  <api_endpoints_summary>
+    <existing_redash_api>
+      - GET/POST /api/queries — List and create queries
+      - GET/PUT/DELETE /api/queries/:id — Query CRUD
+      - POST /api/queries/:id/refresh — Execute query
+      - POST /api/query_results — Submit query job
+      - GET /api/query_results/:id — Retrieve results
+      - GET/POST /api/dashboards — List and create dashboards
+      - GET/PUT/DELETE /api/dashboards/:id — Dashboard CRUD
+      - GET/POST /api/data_sources — List and create data sources
+      - POST /api/data_sources/:id/test — Test connection
+      - GET/POST /api/alerts — List and create alerts
+      - GET/PUT/DELETE /api/alerts/:id — Alert CRUD
+      - GET /api/users — List users
+      - GET/PUT /api/users/:id — User profile
+      - GET /api/session — Current session info
+      - GET /ping — Health check (no auth)
+      - GET /status.json — System status (super_admin only)
+    </existing_redash_api>
+    <new_jrnybi_api>
+      - GET /api/jrny/data-dictionary — Schema metadata from read-replica pg_catalog
+    </new_jrnybi_api>
+  </api_endpoints_summary>
+
+  <ui_layout>
+    <main_structure>
+      Top navigation bar (DesktopNavbar) with:
+      - Left: JRNYBI logo + brand name linking to home
+      - Center: Main nav items — Dashboards, Queries, Alerts, Data Dictionary
+      - Right: Create menu (New Query, New Dashboard, New Alert), Help, Settings (admin only), Profile/Logout
+      - Far right: "Back to JRNY" button (navigates parent iframe to ERP)
+
+      Body area renders route-matched page components below the navbar.
+      Mobile: Collapsible hamburger menu (MobileNavbar) with same items.
+    </main_structure>
+    <key_pages>
+      - Home: Welcome message, favorites list, empty state with onboarding
+      - Dashboards: Grid of dashboard cards, favorites, create new
+      - Queries: List with search/filter, query editor with auto-complete
+      - Alerts: Alert list with status indicators
+      - Data Dictionary (NEW): Searchable schema tree with copy/query actions
+      - Admin (admin only): Jobs, system status, data sources, groups
+    </key_pages>
+  </ui_layout>
+
+  <design_system>
+    <color_palette>
+      Primary: #2563eb (JRNY blue, Tailwind blue-600)
+      Header background: #1e293b (Slate-800)
+      Body background: #f8fafc (Slate-50)
+      Sidebar active: #121419
+      Link color: #02a4c4 (Teal/cyan, inherited from Redash)
+      Input border: #e8e8e8
+      Input focus: #79c2ff
+    </color_palette>
+    <typography>
+      Primary font: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif
+      Font size base: 13px
+      Heading weights: 600 (semibold), 700 (bold)
+    </typography>
+    <layout_dimensions>
+      Header height: 60px
+      Sidebar width: 240px (collapsed: 64px)
+      Max content width: 1170px
+    </layout_dimensions>
+  </design_system>
+
+  <implementation_steps>
+    <step number="1">
+      <title>Phase 1: Rebrand + Auth Integration (Week 1-2)</title>
+      <tasks>
+        - Update redash/version.py with JRNYBI version scheme
+        - Replace logo files in client/app/assets/images/ with JRNY branding
+        - Update DesktopNavbar.jsx and MobileNavbar.jsx brand name and logo imports
+        - Update Home.jsx welcome text from "Redash" to "JRNYBI"
+        - Update auth page branding as fallback
+        - Configure JWT environment variables (issuer, audience, JWKS URL, cookie name)
+        - Enhance redash/authentication/jwt_auth.py with create_or_update_jrnybi_user()
+        - Extract org_id, branch_id, entity_id, role from JRNY JWT claims
+        - Store JRNY claims in user.details JSONB
+        - Map JRNY roles to JRNYBI groups
+        - Update request_loader in authentication/__init__.py
+        - Disable password, Google OAuth, and SAML login
+      </tasks>
+    </step>
+    <step number="2">
+      <title>Phase 2: RLS + Security (Week 2-3)</title>
+      <tasks>
+        - Create JRNYPostgreSQL subclass in redash/query_runner/pg.py
+        - Implement annotate_query() with SET LOCAL injection (following Redshift pattern)
+        - Add UUID validation (_safe_uuid) and role validation (_safe_role)
+        - Implement _get_current_user() to resolve user from query metadata
+        - Register JRNYPostgreSQL in query_runner/__init__.py
+        - Add to enabled runners in settings/__init__.py
+        - Create data source seed configuration for read-replica
+        - Configure search_path for reporting and domain schemas
+        - Restrict data source creation UI to super-admins
+        - Override _get_tables() to prioritize reporting schema in auto-complete
+      </tasks>
+    </step>
+    <step number="3">
+      <title>Phase 3: Pre-Built Reports (Week 3-5)</title>
+      <tasks>
+        - Create seed script (jrnybi/seed/jrny_reports.py) using JRNYBI API
+        - Build Sales Summary query + dashboard with monthly revenue chart
+        - Build Outstanding Invoices Aging query + table + pie chart
+        - Build Inventory Valuation query + table + KPI widgets
+        - Build Stock Below Reorder Point query + alert table
+        - Build Purchase Order Status query + dashboard
+        - Build Cash Flow Summary query + line chart + table
+        - Build Trial Balance query + table
+        - Build Customer Revenue Ranking query + bar chart + table
+        - Build Supplier Spend Analysis query + bar chart + table
+        - Build Product Performance query + table + charts
+        - Add parameterized filtering (date range, status) to applicable reports
+        - Wire seed script into first-boot sequence
+      </tasks>
+    </step>
+    <step number="4">
+      <title>Phase 4: Data Dictionary (Week 4-5)</title>
+      <tasks>
+        - Create redash/handlers/jrny_data_dictionary.py API endpoint
+        - Implement pg_catalog + COMMENT ON metadata query
+        - Build nested response structure (schema -> table -> columns)
+        - Create client/app/pages/jrny/DataDictionary.jsx component
+        - Implement collapsible tree view with search/filter
+        - Add column detail display (type, nullable, default, comment)
+        - Implement "Copy query" button generating SELECT statement
+        - Implement "New Query" link with table pre-selected
+        - Register /jrny/data-dictionary route in routing system
+        - Add Data Dictionary to main navigation
+      </tasks>
+    </step>
+    <step number="5">
+      <title>Phase 5: UX Polish + Embedding (Week 5-6)</title>
+      <tasks>
+        - Create client/app/assets/less/jrny-theme.less with JRNY color palette
+        - Update LESS variables: primary-color, header-bg, body-bg
+        - Integrate Inter font family replacing Roboto
+        - Add CSP frame-ancestors middleware in redash/app.py
+        - Remove X-Frame-Options DENY for iframe embedding
+        - Configure CORS for JRNY origin
+        - Configure cookie SameSite for cross-origin iframe
+        - Simplify nav: hide Settings/Users for non-admins
+        - Add "Back to JRNY" button to navbar
+        - Override _get_tables() in JRNYPostgreSQL for schema auto-complete priority
+      </tasks>
+    </step>
+  </implementation_steps>
+
+  <deployment>
+    <environment_variables>
+      <!-- Core JRNYBI -->
+      REDASH_DATABASE_URL=postgresql://jrnybi:secret@jrnybi-postgres:5432/jrnybi
+      REDASH_REDIS_URL=redis://jrnybi-redis:6379/0
+      REDASH_COOKIE_SECRET=(generate-random-64-char)
+      REDASH_SECRET_KEY=(generate-random-64-char)
+
+      <!-- JWT Auth (JRNY Integration) -->
+      REDASH_JWT_LOGIN_ENABLED=true
+      REDASH_JWT_AUTH_ISSUER=jrny-erp
+      REDASH_JWT_AUTH_AUDIENCE=jrnybi
+      REDASH_JWT_AUTH_PUBLIC_CERTS_URL=http://jrny-api:4000/api/v1/auth/.well-known/jwks.json
+      REDASH_JWT_AUTH_COOKIE_NAME=jrny_session
+      REDASH_JWT_AUTH_ALGORITHMS=RS256
+      REDASH_PASSWORD_LOGIN_ENABLED=false
+
+      <!-- JRNY Read Replica -->
+      JRNYBI_JRNY_REPLICA_HOST=pg-replica
+      JRNYBI_JRNY_REPLICA_PORT=5432
+      JRNYBI_JRNY_REPLICA_DB=jrny_db
+      JRNYBI_JRNY_REPLICA_USER=jrnybi_reader
+      JRNYBI_JRNY_REPLICA_PASSWORD=(from-vault)
+
+      <!-- Embedding -->
+      JRNYBI_ALLOWED_FRAME_ANCESTOR=https://app.jrny.co.za
+      REDASH_CORS_ACCESS_CONTROL_ALLOW_ORIGIN=https://app.jrny.co.za
+    </environment_variables>
+    <first_boot_sequence>
+      1. JRNYBI metadata DB migrations: manage.py database create_tables
+      2. Create default org: manage.py org create "JRNY" "default"
+      3. Create admin user: manage.py users create_admin admin@jrny.co.za "Admin"
+      4. Configure JRNY data source via API (jrny_pg runner type pointing to pg-replica)
+      5. Run report seed script: python seed/jrny_reports.py
+    </first_boot_sequence>
+  </deployment>
+
+  <reporting_schemas>
+    <note>These are the JRNY ERP schemas accessible via the read-replica. JRNYBI does not own these — they exist in the JRNY primary database and are replicated.</note>
+    <schemas>
+      - reporting: Denormalized views (v_sales_orders, v_invoices, v_inventory_levels, v_purchase_orders, v_cashbook_transactions, v_general_ledger, v_customers, v_suppliers, v_product_catalogue)
+      - core: Organizations, contacts, entities, branches, users
+      - sales: Quotes, sales orders, deliveries, returns
+      - finance: Invoices, credit notes, GL entries, payment allocations
+      - inventory: Stock levels, warehouses, movements
+      - procurement: Purchase orders, supplier management
+      - cashbook: Bank accounts, transactions, reconciliation
+    </schemas>
+  </reporting_schemas>
+
+  <risk_register>
+    <risk name="Fork drift from upstream Redash">
+      <mitigation>Cherry-pick security patches only; rebrand is shallow (UI + one query runner)</mitigation>
+    </risk>
+    <risk name="RLS bypass via raw SQL">
+      <mitigation>SET LOCAL scoped to transaction; FORCE ROW LEVEL SECURITY on all tables; jrnybi_reader is never a table owner</mitigation>
+    </risk>
+    <risk name="Replica lag causes stale reports">
+      <mitigation>Display "data as of X" timestamp on dashboards; monitor replica lag</mitigation>
+    </risk>
+    <risk name="JWT token expiry during long queries">
+      <mitigation>Validate JWT at request time only; query execution continues even if token expires mid-run</mitigation>
+    </risk>
+    <risk name="Schema changes break reporting views">
+      <mitigation>Pin views to explicit column lists; add CI test that validates all reporting views</mitigation>
+    </risk>
+  </risk_register>
+
+  <success_criteria>
+    <functionality>
+      - All 75 features pass their test criteria
+      - JWT SSO login works seamlessly — JRNY ERP users see JRNYBI without separate login
+      - RLS enforces data isolation — users only see data for their org/branch/entity
+      - All 10 pre-built reports render with real data from read-replica
+      - Data Dictionary accurately reflects live schema metadata
+      - Reports support parameterized filtering (date ranges, status)
+    </functionality>
+    <user_experience>
+      - JRNYBI looks and feels like a native part of JRNY ERP (consistent branding, colors, fonts)
+      - Iframe embedding works without visual artifacts or auth issues
+      - Navigation is streamlined — non-admin users see only reporting-relevant items
+      - "Back to JRNY" button provides seamless return to ERP
+      - Schema auto-complete prioritizes reporting views for easy query authoring
+    </user_experience>
+    <technical_quality>
+      - No SQL injection vectors in SET LOCAL injection path
+      - UUID and role values validated before inclusion in SQL
+      - All SET LOCAL statements scoped to transactions (no bleed between queries)
+      - JWT validation uses public key rotation via JWKS endpoint
+      - Read-replica connection uses least-privilege role (jrnybi_reader)
+    </technical_quality>
+    <design_polish>
+      - JRNY blue (#2563eb) primary color applied consistently
+      - Inter font renders correctly across all pages
+      - Slate-800 header and slate-50 body match JRNY ERP visual identity
+      - No residual Redash branding visible anywhere in the UI
+      - Data Dictionary tree view is intuitive and responsive
+    </design_polish>
+  </success_criteria>
+</project_specification>

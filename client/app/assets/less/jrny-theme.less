@@ -1,0 +1,59 @@
+/**
+ * JRNYBI Theme Variables
+ *
+ * Overrides Redash default theme with JRNY ERP branding.
+ * These variables are consumed by Ant Design and custom LESS files.
+ *
+ * Color palette:
+ *   Primary:    #2563eb (JRNY Blue / Tailwind blue-600)
+ *   Header BG:  #1e293b (Slate-800)
+ *   Body BG:    #f8fafc (Slate-50)
+ *   Sidebar:    #121419
+ *   Link:       #02a4c4 (Teal/cyan, inherited from Redash)
+ *
+ * Typography:
+ *   Font:       'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif
+ *   Base size:  13px
+ *
+ * TODO: Wire into main.less imports and Ant Design theme config
+ */
+
+// ---------------------------------------------------------------------------
+// JRNY Brand Colors
+// ---------------------------------------------------------------------------
+@jrny-primary:          #2563eb;
+@jrny-header-bg:        #1e293b;
+@jrny-body-bg:          #f8fafc;
+@jrny-sidebar-active:   #121419;
+@jrny-link-color:       #02a4c4;
+@jrny-input-border:     #e8e8e8;
+@jrny-input-focus:      #79c2ff;
+
+// ---------------------------------------------------------------------------
+// Typography
+// ---------------------------------------------------------------------------
+@jrny-font-family:      'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+@jrny-font-size-base:   13px;
+@jrny-heading-weight:   600;
+@jrny-heading-bold:     700;
+
+// ---------------------------------------------------------------------------
+// Layout Dimensions
+// ---------------------------------------------------------------------------
+@jrny-header-height:    60px;
+@jrny-sidebar-width:    240px;
+@jrny-sidebar-collapsed: 64px;
+@jrny-max-content-width: 1170px;
+
+// ---------------------------------------------------------------------------
+// Ant Design Overrides (theme variables)
+// ---------------------------------------------------------------------------
+@primary-color:           @jrny-primary;
+@layout-header-background: @jrny-header-bg;
+@body-background:         @jrny-body-bg;
+@layout-body-background:  @jrny-body-bg;
+@font-family:             @jrny-font-family;
+@font-size-base:          @jrny-font-size-base;
+@link-color:              @jrny-link-color;
+@input-border-color:      @jrny-input-border;
+@outline-color:           @jrny-input-focus;

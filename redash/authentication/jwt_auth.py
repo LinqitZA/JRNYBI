@@ -19,7 +19,7 @@ def get_public_key_from_file(url):
 
 
 def get_public_key_from_net(url):
-    r = requests.get(url)
+    r = requests.get(url, timeout=10)
     r.raise_for_status()
     data = r.json()
     if "keys" in data:
@@ -45,10 +45,14 @@ def get_public_keys(url):
     if url in key_cache:
         keys = key_cache[url]
     else:
-        if url.startswith(FILE_SCHEME_PREFIX):
-            keys = [get_public_key_from_file(url)]
-        else:
-            keys = get_public_key_from_net(url)
+        try:
+            if url.startswith(FILE_SCHEME_PREFIX):
+                keys = [get_public_key_from_file(url)]
+            else:
+                keys = get_public_key_from_net(url)
+        except Exception as e:
+            logger.error("Failed to fetch public keys from %s: %s", url, e)
+            keys = []
     return keys
 
 
@@ -59,9 +63,22 @@ def verify_jwt_token(jwt_token, expected_issuer, expected_audience, algorithms, 
     # https://developers.cloudflare.com/access/setting-up-access/validate-jwt-tokens/
     # https://cloud.google.com/iap/docs/signed-headers-howto
     # Loop through the keys since we can't pass the key set to the decoder
-    keys = get_public_keys(public_certs_url)
+    try:
+        keys = get_public_keys(public_certs_url)
+    except Exception as e:
+        logger.error("Failed to get public keys: %s", e)
+        return None, False
 
-    key_id = jwt.get_unverified_header(jwt_token).get("kid", "")
+    if not keys:
+        logger.warning("No public keys available from %s", public_certs_url)
+        return None, False
+
+    try:
+        key_id = jwt.get_unverified_header(jwt_token).get("kid", "")
+    except jwt.exceptions.DecodeError as e:
+        logger.warning("Malformed JWT token header: %s", e)
+        return None, False
+
     if key_id and isinstance(keys, dict):
         keys = [keys.get(key_id)]
 

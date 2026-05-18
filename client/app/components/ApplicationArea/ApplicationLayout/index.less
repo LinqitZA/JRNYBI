@@ -1,25 +1,32 @@
+@import "~@/assets/less/jrny-theme.less";
+
 @mobileBreakpoint: ~"(max-width: 767px)";
+@mobileNavbarHeight: 49px;
 
 body #application-root {
-  @topMenuHeight: 49px;
-
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   justify-content: stretch;
   padding-bottom: 0 !important;
   height: 100%;
 
-  .application-layout-side-menu {
-    height: 100%;
-    position: relative;
+  // Desktop top navbar
+  .application-layout-desktop-navbar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: @jrny-header-height;
+    z-index: 1000;
 
     @media @mobileBreakpoint {
       display: none;
     }
   }
 
-  .application-layout-top-menu {
-    height: @topMenuHeight;
+  // Mobile navbar (shown only on mobile)
+  .application-layout-mobile-navbar {
+    height: @mobileNavbarHeight;
     display: none;
     position: fixed;
     top: 0;
@@ -33,16 +40,17 @@ body #application-root {
     }
   }
 
+  // Main content area
   .application-layout-content {
     display: flex;
     flex-direction: column;
     overflow-y: auto;
-
     flex: 1 1 auto;
     padding-bottom: 15px;
+    margin-top: @jrny-header-height;
 
     @media @mobileBreakpoint {
-      margin-top: @topMenuHeight; // compensate for app header fixed position
+      margin-top: @mobileNavbarHeight;
     }
   }
 }
@@ -58,8 +66,8 @@ body.fixed-layout #application-root {
 }
 
 body.headless #application-root {
-  .application-layout-side-menu,
-  .application-layout-top-menu {
+  .application-layout-desktop-navbar,
+  .application-layout-mobile-navbar {
     display: none !important;
   }
 
@@ -74,12 +82,13 @@ body.headless #application-root {
   body #application-root {
     height: auto;
 
-    .application-layout-side-menu {
-      height: auto;
+    .application-layout-desktop-navbar {
+      position: relative;
     }
 
     .application-layout-content {
       overflow: visible;
+      margin-top: 0;
     }
   }
 }

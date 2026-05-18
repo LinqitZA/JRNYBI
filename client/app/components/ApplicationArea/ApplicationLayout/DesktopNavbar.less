@@ -1,30 +1,63 @@
-@backgroundColor: #001529;
+@import "~@/assets/less/jrny-theme.less";
+
+@backgroundColor: @jrny-header-bg; // #1e293b (slate-800)
 @dividerColor: rgba(255, 255, 255, 0.5);
 @textColor: rgba(255, 255, 255, 0.75);
-@brandColor: #ff7964; // Redash logo color
+@brandColor: @jrny-primary; // #2563eb (JRNY blue)
 @activeItemColor: @brandColor;
-@iconSize: 26px;
+@navbarHeight: @jrny-header-height; // 60px
 
 .desktop-navbar {
   background: @backgroundColor;
   display: flex;
-  flex-direction: column;
-  height: 100%;
-  width: 80px;
-  overflow: hidden;
+  flex-direction: row;
+  align-items: center;
+  height: @navbarHeight;
+  width: 100%;
+  padding: 0 16px;
+  box-sizing: border-box;
 
-  &-spacer {
+  .desktop-navbar-left {
+    display: flex;
+    align-items: center;
     flex: 1 1 auto;
+    min-width: 0;
   }
 
-  &-logo.ant-menu {
-    padding-top: 20px;
-    padding-bottom: 20px;
-    text-align: center;
+  .desktop-navbar-right {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+  }
+
+  // Logo area
+  .desktop-navbar-logo {
+    display: flex;
+    align-items: center;
+    margin-right: 24px;
+    text-decoration: none;
+    flex-shrink: 0;
 
     img {
-      height: 40px;
-      transition: all 270ms;
+      height: 32px;
+      transition: opacity 270ms;
+    }
+
+    .desktop-navbar-brand {
+      margin-left: 10px;
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: 0.5px;
+      white-space: nowrap;
+    }
+
+    &:hover {
+      text-decoration: none;
+
+      img {
+        opacity: 0.85;
+      }
     }
   }
 
@@ -32,14 +65,26 @@
     font: inherit;
   }
 
+  // Shared horizontal menu styles
   .ant-menu {
+    background: transparent;
+    border-bottom: none;
+    line-height: @navbarHeight;
+
     .ant-menu-item,
     .ant-menu-submenu {
       font-weight: 500;
       color: @textColor;
+      height: @navbarHeight;
+      line-height: @navbarHeight;
+      padding: 0 12px;
+      margin: 0;
+      top: 0;
+      border-bottom: 2px solid transparent;
 
       &.navbar-active-item {
-        box-shadow: inset 3px 0 0 @activeItemColor;
+        border-bottom-color: @activeItemColor;
+        color: #fff;
 
         .anticon {
           color: @activeItemColor;
@@ -53,16 +98,18 @@
       &:focus,
       &:focus-within {
         color: #fff;
+        border-bottom-color: rgba(255, 255, 255, 0.3);
       }
 
       .anticon {
-        font-size: @iconSize;
-        margin: 0;
+        font-size: 16px;
+        margin-right: 6px;
+        vertical-align: middle;
       }
 
       .desktop-navbar-label {
-        margin-top: 4px;
-        font-size: 11px;
+        font-size: 13px;
+        vertical-align: middle;
       }
 
       a,
@@ -72,32 +119,18 @@
       }
     }
 
+    .ant-menu-submenu-title {
+      height: @navbarHeight;
+      line-height: @navbarHeight;
+      padding: 0;
+    }
+
     .ant-menu-submenu-arrow {
       display: none;
     }
 
-    .ant-menu-item,
-    .ant-menu-submenu {
-      padding: 0;
-      height: 60px;
-      display: flex;
-      align-items: center;
-      flex-direction: column;
-      justify-content: center;
-    }
-
-    .ant-menu-submenu-title {
-      width: 100%;
-      padding: 0;
-    }
-
-    a,
-    &.ant-menu-vertical > .ant-menu-submenu > .ant-menu-submenu-title,
-    .ant-menu-submenu-title {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
+    a {
+      display: inline;
       line-height: normal;
       height: auto;
       background: none;
@@ -105,23 +138,38 @@
     }
   }
 
+  // Main nav menu (Dashboards, Queries, Alerts)
+  .desktop-navbar-main-menu {
+    flex: 0 0 auto;
+  }
+
+  // Actions menu (Create, Help, Settings)
+  .desktop-navbar-actions-menu {
+    flex: 0 0 auto;
+  }
+
+  // Profile menu
   .desktop-navbar-profile-menu {
+    flex: 0 0 auto;
+    margin-left: 8px;
+
     .desktop-navbar-profile-menu-title {
       display: flex;
       align-items: center;
       justify-content: center;
-      overflow: hidden;
 
       .profile__image_thumb {
         margin: 0;
         vertical-align: middle;
-        width: @iconSize;
-        height: @iconSize;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
       }
     }
   }
 }
 
+// Dropdown submenu styles (appears as popup overlay)
 .desktop-navbar-submenu {
   .ant-menu {
     .ant-menu-item-divider {
