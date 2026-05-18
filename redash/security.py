@@ -66,6 +66,12 @@ def init_app(app):
             # END workaround
 
             if not current_user.is_authenticated or "user_id" in session:
+                # JRNYBI: Skip CSRF for unauthenticated API requests.
+                # Let the authentication layer reject them with 401 instead of
+                # CSRF returning 400. CSRF protection is only meaningful for
+                # authenticated session-based requests (browser forms).
+                if not current_user.is_authenticated and "/api/" in request.path:
+                    return
                 csrf.protect()
 
     talisman.init_app(
