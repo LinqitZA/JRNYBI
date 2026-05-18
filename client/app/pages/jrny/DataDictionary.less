@@ -102,6 +102,11 @@
     border: 1px solid @dd-border;
     border-radius: 8px;
     overflow: hidden;
+
+    // Remove focus outline on tree container itself (focus is delegated to child nodes)
+    &:focus {
+      outline: none;
+    }
   }
 
   .dd-node-header {
@@ -114,6 +119,16 @@
 
     &:hover {
       background: @dd-bg-hover;
+    }
+
+    // Keyboard focus ring - visible with high contrast
+    &.dd-focused,
+    &:focus {
+      outline: 2px solid @dd-primary;
+      outline-offset: -2px;
+      background: @dd-bg-hover;
+      z-index: 1;
+      position: relative;
     }
   }
 

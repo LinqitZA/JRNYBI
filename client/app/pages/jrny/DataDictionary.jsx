@@ -223,6 +223,72 @@ function DataDictionary() {
     }));
   }, []);
 
+  // Filter schemas/tables/columns based on search term
+  const filteredSchemas = useMemo(() => {
+    if (!searchTerm) return schemas;
+
+    const term = searchTerm.toLowerCase();
+    return schemas
+      .map((schema) => {
+        // Check if schema name matches
+        const schemaMatches = schema.name.toLowerCase().includes(term);
+
+        const filteredTables = schema.tables
+          .map((table) => {
+            // Check if table name matches
+            const tableMatches = table.name.toLowerCase().includes(term);
+            // Check if any column matches
+            const filteredColumns = table.columns.filter(
+              (col) =>
+                col.name.toLowerCase().includes(term) ||
+                (col.comment && col.comment.toLowerCase().includes(term))
+            );
+
+            if (tableMatches || filteredColumns.length > 0) {
+              return {
+                ...table,
+                columns: tableMatches ? table.columns : filteredColumns.length > 0 ? table.columns : [],
+              };
+            }
+            return null;
+          })
+          .filter(Boolean);
+
+        if (schemaMatches || filteredTables.length > 0) {
+          return {
+            ...schema,
+            tables: schemaMatches ? schema.tables : filteredTables,
+          };
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }, [schemas, searchTerm]);
+
+  // Auto-expand all matching schemas when searching
+  useEffect(() => {
+    if (searchTerm) {
+      const expanded = {};
+      const expandedTbls = {};
+      filteredSchemas.forEach((schema) => {
+        expanded[schema.name] = true;
+        schema.tables.forEach((table) => {
+          const term = searchTerm.toLowerCase();
+          const columnMatch = table.columns.some(
+            (col) =>
+              col.name.toLowerCase().includes(term) ||
+              (col.comment && col.comment.toLowerCase().includes(term))
+          );
+          if (columnMatch) {
+            expandedTbls[`${schema.name}.${table.name}`] = true;
+          }
+        });
+      });
+      setExpandedSchemas(expanded);
+      setExpandedTables(expandedTbls);
+    }
+  }, [searchTerm, filteredSchemas]);
+
   // Compute flat list of visible node IDs for keyboard navigation
   const visibleNodeIds = useMemo(() => {
     const ids = [];
@@ -350,72 +416,6 @@ function DataDictionary() {
     [focusedNodeId, visibleNodeIds]
   );
 
-  // Filter schemas/tables/columns based on search term
-  const filteredSchemas = useMemo(() => {
-    if (!searchTerm) return schemas;
-
-    const term = searchTerm.toLowerCase();
-    return schemas
-      .map((schema) => {
-        // Check if schema name matches
-        const schemaMatches = schema.name.toLowerCase().includes(term);
-
-        const filteredTables = schema.tables
-          .map((table) => {
-            // Check if table name matches
-            const tableMatches = table.name.toLowerCase().includes(term);
-            // Check if any column matches
-            const filteredColumns = table.columns.filter(
-              (col) =>
-                col.name.toLowerCase().includes(term) ||
-                (col.comment && col.comment.toLowerCase().includes(term))
-            );
-
-            if (tableMatches || filteredColumns.length > 0) {
-              return {
-                ...table,
-                columns: tableMatches ? table.columns : filteredColumns.length > 0 ? table.columns : [],
-              };
-            }
-            return null;
-          })
-          .filter(Boolean);
-
-        if (schemaMatches || filteredTables.length > 0) {
-          return {
-            ...schema,
-            tables: schemaMatches ? schema.tables : filteredTables,
-          };
-        }
-        return null;
-      })
-      .filter(Boolean);
-  }, [schemas, searchTerm]);
-
-  // Auto-expand all matching schemas when searching
-  useEffect(() => {
-    if (searchTerm) {
-      const expanded = {};
-      const expandedTbls = {};
-      filteredSchemas.forEach((schema) => {
-        expanded[schema.name] = true;
-        schema.tables.forEach((table) => {
-          const term = searchTerm.toLowerCase();
-          const columnMatch = table.columns.some(
-            (col) =>
-              col.name.toLowerCase().includes(term) ||
-              (col.comment && col.comment.toLowerCase().includes(term))
-          );
-          if (columnMatch) {
-            expandedTbls[`${schema.name}.${table.name}`] = true;
-          }
-        });
-      });
-      setExpandedSchemas(expanded);
-      setExpandedTables(expandedTbls);
-    }
-  }, [searchTerm, filteredSchemas]);
-
   if (loading) {
     return (
       <div className="jrny-data-dictionary container p-t-15">
@@ -474,11 +474,18 @@ function DataDictionary() {
         </span>
       </div>
 
-      <div className="dd-tree">
+      <div
+        className="dd-tree"
+        role="tree"
+        aria-label="Data Dictionary schema browser"
+        tabIndex={visibleNodeIds.length > 0 ? 0 : -1}
+        onKeyDown={handleTreeKeyDown}
+        onFocus={handleTreeFocus}
+      >
         {filteredSchemas.length === 0 ? (
           <div className="dd-empty">
             {searchTerm ? (
-              <p>No results matching "{searchTerm}"</p>
+              <p>No results matching &ldquo;{searchTerm}&rdquo;</p>
             ) : (
               <p>No schemas found. The data source may not be connected.</p>
             )}
@@ -493,6 +500,8 @@ function DataDictionary() {
               toggleSchema={toggleSchema}
               toggleTable={toggleTable}
               searchTerm={searchTerm}
+              focusedNodeId={focusedNodeId}
+              nodeRefs={nodeRefs}
             />
           ))
         )}
