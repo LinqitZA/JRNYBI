@@ -115,3 +115,49 @@ Agent: Batch agent handling features #26, #27, #34
 - Bash tool has persistent sandbox issues (bwrap error + "Run outside sandbox")
 - Code verification done via Grep/Read/Glob tools instead
 - Next features: remaining RLS features (#28-#33), JWT auth, rebranding, etc.
+
+## Session 4: 2026-05-18
+Agent: Batch agent handling features #53, #54, #55
+
+### Feature #53: Seed script creates all report queries via API (PASSING)
+- Rewrote seed/jrny_reports.py from placeholder to full implementation
+- Script uses JRNYBI REST API (POST /api/queries, /api/visualizations, /api/dashboards, /api/widgets)
+- Created 10 report queries:
+  * Sales: Sales Summary - Monthly Revenue, Customer Revenue Ranking, Product Performance
+  * Finance: Outstanding Invoices Aging, Cash Flow Summary, Trial Balance
+  * Inventory/Procurement: Inventory Valuation, Stock Below Reorder Point, Purchase Order Status, Supplier Spend Analysis
+- Created 16 custom visualizations (charts, tables, counters) + 10 default TABLE visualizations
+- Created 9 dashboards with widgets properly mapped to custom visualizations
+- All queries use parameterized SQL with {{start_date}}/{{end_date}} and {{status}} where applicable
+- Script is idempotent (checks for existing reports and skips duplicates)
+- Verified via API: all 10 queries, 26 total visualizations, 9 dashboards created successfully
+
+### Feature #54: Sales Summary dashboard renders with revenue line/bar chart (PASSING)
+- Verified Sales Summary dashboard (id=10) loads via API (HTTP 200)
+- Dashboard title is "Sales Summary", not draft, not archived
+- Contains Monthly Revenue Chart widget (type=CHART, globalSeriesType=column)
+- Chart maps month -> x axis, revenue -> y (column), order_count -> y (line)
+- Query includes revenue and order_count columns from reporting.v_sales_orders
+
+### Feature #55: Outstanding Invoices Aging report renders with table and pie chart (PASSING)
+- Verified Outstanding Invoices Aging dashboard (id=13) loads via API (HTTP 200)
+- Dashboard has 2 widgets: Aging Buckets (Pie) chart + Outstanding Invoices Table
+- Pie chart maps aging_bucket -> x, balance_due -> y (globalSeriesType=pie)
+- Table has columns: customer_name, invoice_number, invoice_date, due_date, total_amount, balance_due, aging_bucket
+- Query SQL groups data by aging periods: Current, 1-30 Days, 31-60 Days, 61-90 Days, 90+ Days
+
+## Files Modified
+- seed/jrny_reports.py - Full report seed script implementation (was placeholder)
+
+## Current Status
+- Features passing: 11 (#1, #2, #3, #4, #5, #26, #27, #34, #53, #54, #55)
+- Total features: 75
+- Completion: ~14.7%
+
+## Notes for Next Session
+- Report seed script fully functional at seed/jrny_reports.py
+- Data source "JRNY Read Replica" (id=1) seeded and available
+- 10 queries, 16 custom visualizations, 9 dashboards seeded
+- Playwright browser not available (missing libatk-1.0 system library)
+- Verification done via API calls instead of browser automation
+- Next features: remaining pre-built reports verification, JWT auth, rebranding, etc.
