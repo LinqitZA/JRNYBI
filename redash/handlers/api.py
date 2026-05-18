@@ -44,6 +44,7 @@ from redash.handlers.favorites import (
     DashboardFavoriteResource,
     QueryFavoriteResource,
 )
+from redash.handlers.jrny_data_dictionary import JRNYDataDictionaryResource
 from redash.handlers.groups import (
     GroupDataSourceListResource,
     GroupDataSourceResource,
@@ -285,3 +286,9 @@ api.add_org_resource(QuerySnippetResource, "/api/query_snippets/<snippet_id>", e
 api.add_org_resource(QuerySnippetListResource, "/api/query_snippets", endpoint="query_snippets")
 
 api.add_org_resource(OrganizationSettings, "/api/settings/organization", endpoint="organization_settings")
+
+api.add_org_resource(
+    JRNYDataDictionaryResource,
+    "/api/jrny/data-dictionary",
+    endpoint="jrny_data_dictionary",
+)
