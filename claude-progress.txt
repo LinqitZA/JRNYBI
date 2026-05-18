@@ -444,3 +444,40 @@ Agent: Batch agent handling features #46, #48, #71
 - Server at http://localhost:5001, admin API key: BBw0fb0ZdZ3iip5Xkd90bCQPOJP7hcTo5JtOwZMI
 - Playwright not available (no Chrome installed)
 - Verification done via API + code analysis + compiled asset checks
+
+## Session 10: 2026-05-18
+Agent: Batch agent handling features #12, #14, #21
+
+### Feature #12: Home page shows Welcome to JRNYBI message (PASSING)
+- Changed Home.jsx welcome header from "Welcome to Redash" to "Welcome to JRNYBI"
+- Updated description text to "Your embedded business intelligence and reporting platform"
+- Updated route title from "Redash" to "JRNYBI"
+- Updated webpack.config.js HTML title from "Redash" to "JRNYBI"
+- Verified: HTML <title>JRNYBI</title>, JS bundle contains "Welcome to JRNYBI"
+
+### Feature #14: No residual Redash branding visible in UI (PASSING)
+- Comprehensive rebranding across all user-visible files:
+  * Python templates: login.html, invite.html, setup.html, email templates
+  * Client components: StatusBlock, PublicDashboardPage, VisualizationEmbed,
+    QuerySourceAlerts, BeaconConsent, BeaconConsentSettings, unsupported.html
+  * Backend: monitor.py ("JRNYBI DB Size"), failure_report.py, elasticsearch runners
+  * Email text templates: invite.txt, failures.txt, reset_disabled.txt
+- Only non-user-visible "Redash" remaining: filter constants, color palette names, comments
+
+### Feature #21: JRNY-specific claims extracted from JWT payload (PASSING)
+- Verified _extract_jrny_claims() extracts org_id, branch_id, entity_id, sub, role
+- Tested with HS256 dev JWT (all 5 claims in payload)
+- Confirmed claims stored in user.details JSONB:
+  * jrny_org_id, jrny_branch_id, jrny_entity_id, jrny_user_id, jrny_role
+- Verified claims update on subsequent login with different values
+- Verified role-based group assignment (admin → groups [2,1], user → groups [2])
+
+## Current Status
+- Features passing: ~35 (46.7% complete)
+- Total features: 75
+
+## Notes for Next Session
+- .env currently set to HS256 dev mode for JWT testing
+- For RS256 production: change REDASH_JWT_AUTH_ALGORITHMS and PUBLIC_CERTS_URL
+- All rebranding complete - no user-visible "Redash" text remains
+- Server at http://localhost:5001, admin API key: BBw0fb0ZdZ3iip5Xkd90bCQPOJP7hcTo5JtOwZMI
