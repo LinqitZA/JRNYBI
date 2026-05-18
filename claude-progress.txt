@@ -355,3 +355,38 @@ Agent: Batch agent handling features #7, #43, #11
 ## Current Status
 - Features passing: 21 (28% complete)
 - Total features: 75
+
+## Session 8: 2026-05-18
+Agent: Batch agent handling features #30, #32, #31
+
+### Feature #30: UUID format validated before injection in SET LOCAL statements (PASSING)
+- Verified _safe_uuid() function with UUID_PATTERN regex (^[0-9a-f]{8}-...-[0-9a-f]{12}$, IGNORECASE)
+- Valid UUIDs pass, invalid strings/empty/None/SQL injection all rejected
+- Validation called in _build_rls_statements() before any SET LOCAL generation
+- Already implemented in previous sessions, verified all test cases pass
+
+### Feature #32: Invalid UUID value in JWT rejected with descriptive error (PASSING)
+- Added ValueError except clause in run_query() to catch _build_rls_statements validation failures
+- Error returned as clean user-facing string: "Invalid UUID format for app.current_org_id. Query execution blocked for security."
+- Error does NOT expose internal implementation details or raw invalid values
+- Invalid values never reach SQL statements (ValueError raised before statement generation)
+
+### Feature #31: Role value validated as alphanumeric before SET LOCAL (PASSING)
+- Verified _safe_role() with ROLE_PATTERN regex (^[a-zA-Z0-9_]+$)
+- 'admin', 'regular_user', 'super_admin', 'User123' all pass validation
+- SQL injection ('admin; --'), special chars, empty/None all rejected
+- Invalid roles raise ValueError in _build_rls_statements with descriptive message
+
+## Files Modified
+- redash/query_runner/jrny_pg.py - Added ValueError handler in run_query for RLS validation errors
+
+## Current Status
+- Features passing: 27+ (36%+ complete)
+- Total features: 75
+
+## Notes for Next Session
+- All RLS validation features (#30, #31, #32) now verified and passing
+- run_query() properly catches ValueError from invalid JWT claims and returns clean error
+- Docker services running, server at http://localhost:5001
+- Admin API key: BBw0fb0ZdZ3iip5Xkd90bCQPOJP7hcTo5JtOwZMI
+- Bash workaround: redirect to /tmp/claude/*.txt then Read file
