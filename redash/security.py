@@ -26,11 +26,31 @@ def init_app(app):
     app.config["WTF_CSRF_SSL_STRICT"] = False
     app.config["WTF_CSRF_TIME_LIMIT"] = settings.CSRF_TIME_LIMIT
     app.config["SESSION_COOKIE_NAME"] = settings.SESSION_COOKIE_NAME
+    # JRNYBI: Configure SameSite attribute for cross-origin iframe embedding
+    app.config["SESSION_COOKIE_SAMESITE"] = settings.SESSION_COOKIE_SAMESITE
 
     @app.after_request
     def inject_csrf_token(response):
         response.set_cookie("csrf_token", generate_csrf())
         return response
+
+    # JRNYBI: Global CORS handler for cross-origin iframe embedding.
+    # This supplements the existing per-resource CORS handling in query_results.py
+    # and ensures ALL API endpoints support CORS when the JRNY origin is configured.
+    if settings.ACCESS_CONTROL_ALLOW_ORIGIN:
+
+        @app.after_request
+        def add_cors_headers(response):
+            origin = request.headers.get("Origin", "")
+            if origin and set(["*", origin]) & settings.ACCESS_CONTROL_ALLOW_ORIGIN:
+                response.headers["Access-Control-Allow-Origin"] = origin
+                response.headers["Access-Control-Allow-Credentials"] = str(
+                    settings.ACCESS_CONTROL_ALLOW_CREDENTIALS
+                ).lower()
+                if request.method == "OPTIONS":
+                    response.headers["Access-Control-Allow-Methods"] = settings.ACCESS_CONTROL_REQUEST_METHOD
+                    response.headers["Access-Control-Allow-Headers"] = settings.ACCESS_CONTROL_ALLOW_HEADERS
+            return response
 
     if settings.ENFORCE_CSRF:
 

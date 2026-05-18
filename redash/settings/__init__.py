@@ -75,14 +75,23 @@ ENFORCE_FILE_SAVE = parse_boolean(os.environ.get("REDASH_ENFORCE_FILE_SAVE", "tr
 # Whether api calls using the json query runner will block private addresses
 ENFORCE_PRIVATE_ADDRESS_BLOCK = parse_boolean(os.environ.get("REDASH_ENFORCE_PRIVATE_IP_BLOCK", "true"))
 
+# JRNYBI: Iframe embedding - read early since it affects cookie and CSP settings.
+JRNYBI_ALLOWED_FRAME_ANCESTOR = os.environ.get("JRNYBI_ALLOWED_FRAME_ANCESTOR", "")
+
 # Whether to use secure cookies by default.
 COOKIES_SECURE = parse_boolean(os.environ.get("REDASH_COOKIES_SECURE", str(ENFORCE_HTTPS)))
 # Whether the session cookie is set to secure.
-SESSION_COOKIE_SECURE = parse_boolean(os.environ.get("REDASH_SESSION_COOKIE_SECURE") or str(COOKIES_SECURE))
+# JRNYBI: When SameSite=None is required for iframe embedding, Secure must be True.
+_iframe_embedding_enabled = bool(JRNYBI_ALLOWED_FRAME_ANCESTOR)
+SESSION_COOKIE_SECURE = parse_boolean(os.environ.get("REDASH_SESSION_COOKIE_SECURE") or str(COOKIES_SECURE or _iframe_embedding_enabled))
 # Whether the session cookie is set HttpOnly.
 SESSION_COOKIE_HTTPONLY = parse_boolean(os.environ.get("REDASH_SESSION_COOKIE_HTTPONLY", "true"))
 SESSION_EXPIRY_TIME = int(os.environ.get("REDASH_SESSION_EXPIRY_TIME", 60 * 60 * 6))
 SESSION_COOKIE_NAME = os.environ.get("REDASH_SESSION_COOKIE_NAME", "session")
+# JRNYBI: SameSite cookie attribute for cross-origin iframe embedding.
+# When JRNYBI_ALLOWED_FRAME_ANCESTOR is set, SameSite defaults to "None" (required for
+# cross-origin iframe cookies). When SameSite=None, Secure flag MUST be set.
+SESSION_COOKIE_SAMESITE = os.environ.get("REDASH_SESSION_COOKIE_SAMESITE", "None" if _iframe_embedding_enabled else "Lax")
 
 # Whether the session cookie is set to secure.
 REMEMBER_COOKIE_SECURE = parse_boolean(os.environ.get("REDASH_REMEMBER_COOKIE_SECURE") or str(COOKIES_SECURE))
@@ -95,7 +104,12 @@ REMEMBER_COOKIE_DURATION = int(os.environ.get("REDASH_REMEMBER_COOKIE_DURATION",
 # on the specific deployment.
 # See https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Frame-Options
 # for more information.
-FRAME_OPTIONS = os.environ.get("REDASH_FRAME_OPTIONS", "deny")
+# JRNYBI: When iframe embedding is enabled (JRNYBI_ALLOWED_FRAME_ANCESTOR is set),
+# X-Frame-Options is disabled because CSP frame-ancestors takes precedence.
+if JRNYBI_ALLOWED_FRAME_ANCESTOR:
+    FRAME_OPTIONS = False  # Disable X-Frame-Options; CSP frame-ancestors is used instead
+else:
+    FRAME_OPTIONS = os.environ.get("REDASH_FRAME_OPTIONS", "deny")
 FRAME_OPTIONS_ALLOW_FROM = os.environ.get("REDASH_FRAME_OPTIONS_ALLOW_FROM", "")
 
 # Whether and how to send Strict-Transport-Security response headers.
@@ -113,9 +127,25 @@ HSTS_INCLUDE_SUBDOMAINS = parse_boolean(os.environ.get("REDASH_HSTS_INCLUDE_SUBD
 # as a string in the general CSP format of a semicolon separated list of
 # individual CSP directives, see https://github.com/GoogleCloudPlatform/flask-talisman#example-7
 # for more information. E.g.:
+# JRNYBI: When iframe embedding is enabled, CSP frame-ancestors allows the JRNY origin.
+if JRNYBI_ALLOWED_FRAME_ANCESTOR:
+    _DEFAULT_CSP = (
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-eval'; font-src 'self' data:; "
+        "img-src 'self' http: https: data: blob:; object-src 'none'; "
+        f"frame-ancestors 'self' {JRNYBI_ALLOWED_FRAME_ANCESTOR}; "
+        "frame-src redash.io;"
+    )
+else:
+    _DEFAULT_CSP = (
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-eval'; font-src 'self' data:; "
+        "img-src 'self' http: https: data: blob:; object-src 'none'; "
+        "frame-ancestors 'none'; frame-src redash.io;"
+    )
 CONTENT_SECURITY_POLICY = os.environ.get(
     "REDASH_CONTENT_SECURITY_POLICY",
-    "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval'; font-src 'self' data:; img-src 'self' http: https: data: blob:; object-src 'none'; frame-ancestors 'none'; frame-src redash.io;",
+    _DEFAULT_CSP,
 )
 CONTENT_SECURITY_POLICY_REPORT_URI = os.environ.get("REDASH_CONTENT_SECURITY_POLICY_REPORT_URI", "")
 CONTENT_SECURITY_POLICY_REPORT_ONLY = parse_boolean(
@@ -276,11 +306,12 @@ THROTTLE_PASS_RESET_PATTERN = os.environ.get("REDASH_THROTTLE_PASS_RESET_PATTERN
 # In most cases all you need to do is set REDASH_CORS_ACCESS_CONTROL_ALLOW_ORIGIN
 # to the calling domain (or domains in a comma separated list).
 ACCESS_CONTROL_ALLOW_ORIGIN = set_from_string(os.environ.get("REDASH_CORS_ACCESS_CONTROL_ALLOW_ORIGIN", ""))
+# JRNYBI: When iframe embedding is enabled, credentials must be allowed for cookie-based auth.
 ACCESS_CONTROL_ALLOW_CREDENTIALS = parse_boolean(
-    os.environ.get("REDASH_CORS_ACCESS_CONTROL_ALLOW_CREDENTIALS", "false")
+    os.environ.get("REDASH_CORS_ACCESS_CONTROL_ALLOW_CREDENTIALS", "true" if _iframe_embedding_enabled else "false")
 )
-ACCESS_CONTROL_REQUEST_METHOD = os.environ.get("REDASH_CORS_ACCESS_CONTROL_REQUEST_METHOD", "GET, POST, PUT")
-ACCESS_CONTROL_ALLOW_HEADERS = os.environ.get("REDASH_CORS_ACCESS_CONTROL_ALLOW_HEADERS", "Content-Type")
+ACCESS_CONTROL_REQUEST_METHOD = os.environ.get("REDASH_CORS_ACCESS_CONTROL_REQUEST_METHOD", "GET, POST, PUT, DELETE, OPTIONS")
+ACCESS_CONTROL_ALLOW_HEADERS = os.environ.get("REDASH_CORS_ACCESS_CONTROL_ALLOW_HEADERS", "Content-Type, Authorization")
 
 # Query Runners
 default_query_runners = [
