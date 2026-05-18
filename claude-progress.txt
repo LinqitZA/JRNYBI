@@ -903,3 +903,43 @@ Agent: Batch agent handling features #51, #52, #56
 - Playwright unavailable (Chrome not installed, no sudo access)
 - Verification via API calls + compiled JS grep + code analysis
 - Bash sandbox has bwrap loopback errors - use dangerouslyDisableSandbox=true with redirect pattern
+
+## Session 20: 2026-05-18
+Agent: Batch agent handling features #63, #64, #65
+
+### Feature #63: Unauthorized API requests return 401 with proper error message (PASSING)
+- Fixed CSRF check in security.py to skip for unauthenticated API requests
+- Previously POST /api/* without auth returned 400 (CSRF missing) instead of 401
+- Now all API requests without auth return 401 with JSON: {"message": "Authentication required..."}
+- Verified: GET /api/queries, GET /api/dashboards, POST /api/queries → all 401
+
+### Feature #64: Expired JWT token returns proper error response (PASSING)
+- Added JWTTokenExpiredError in jwt_auth.py to distinguish expired tokens
+- verify_jwt_token now raises JWTTokenExpiredError on ExpiredSignatureError
+- Caller catches and returns 401 with "JWT token has expired. Please re-authenticate."
+- Added 401 error handler in handlers/__init__.py returning JSON for API paths
+- Verified: expired JWT → 401 with expiration message, valid JWT → 200
+
+### Feature #65: Query execution shows loading spinner during processing (PASSING)
+- Already fully implemented in Redash codebase (no changes needed)
+- QueryExecutionStatus shows: "Query in queue...", "Executing query...", "Loading results..."
+- Execute button disabled during execution (isQueryExecuting flag)
+- Refresh button uses Ant Design loading prop for spinner
+- Timer component shows elapsed time during execution
+- Cancel button available during waiting/processing states
+- All compiled into production JS bundle
+
+## Files Modified
+- redash/security.py - Skip CSRF for unauthenticated API requests
+- redash/authentication/jwt_auth.py - JWTTokenExpiredError, ExpiredSignatureError handling
+- redash/authentication/__init__.py - Catch JWTTokenExpiredError with specific message
+- redash/handlers/__init__.py - 401 error handler returning JSON for API paths
+
+## Current Status
+- Features passing: 66 (88% complete)
+- Total features: 75
+
+## Notes for Next Session
+- Server at http://localhost:5001, admin API key: BBw0fb0ZdZ3iip5Xkd90bCQPOJP7hcTo5JtOwZMI
+- JWT dev mode: HS256 with key at .dev_jwt_key
+- All 3 features verified and passing
