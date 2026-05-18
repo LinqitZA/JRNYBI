@@ -707,6 +707,75 @@ Agent: Batch agent handling features #18, #72
 - Playwright browser unavailable (no Chrome installed)
 - Bash sandbox intermittently blocks; use redirect-to-file pattern: `cmd > /tmp/claude/out.txt 2>&1 && cat /dev/null`
 
+## Session 16: 2026-05-18
+Agent: Batch agent handling features #42, #44, #45
+
+### Feature #42: User management pages hidden from navigation (PASSING)
+- Disabled user creation in DefaultPolicy.js (canCreateUser/isCreateUserEnabled return false)
+- Removed "New User" button, CreateUserDialog, and renderPageHeader from UsersList.jsx
+- Removed "Pending Invitations" sidebar item and /users/new, /users/pending routes
+- Removed showInviteStep from Home.jsx EmptyState (no invite flow in JWT auth)
+- Removed invite email warning from UserProfile.jsx
+- Users list remains view-only for admins (enable/disable actions only)
+- Compiled CSS/JS confirms zero "Create a New User" or "Pending Invitations" in output
+
+### Feature #44: Back to JRNY button added to navbar navigating parent frame (PASSING)
+- Added JRNYBI_JRNY_ERP_URL env var in settings/__init__.py (defaults to JRNYBI_ALLOWED_FRAME_ANCESTOR)
+- Passed jrnyErpUrl to frontend via client_config in authentication.py
+- Added "Back to JRNY" outline button in DesktopNavbar (far right, after profile menu)
+- Added "Back to JRNY" menu item in MobileNavbar (before logout)
+- Click handler: window.parent.location.href = clientConfig.jrnyErpUrl (with cross-origin fallback)
+- Button styled with border, transparent bg, hover effect (outline style)
+- Verified: jrnyErpUrl=https://app.jrny.co.za from API, button text in compiled JS
+
+### Feature #45: Direct URL access to admin routes blocked for non-admin users (PASSING)
+- Created RequireAdmin.jsx component in client/app/components/ApplicationArea/
+- Checks currentUser.isAdmin, shows "Access Denied" and redirects to home if false
+- Wrapped all admin route render functions with <RequireAdmin>:
+  * /admin/status, /admin/queries/jobs, /admin/queries/outdated (3 routes)
+  * /data_sources, /data_sources/new, /data_sources/:id (3 routes)
+  * /groups, /groups/:id, /groups/:id/data_sources (3 routes)
+  * /users, /users/disabled (2 routes)
+  * /destinations, /destinations/new, /destinations/:id (3 routes)
+- Regular user permissions verified: no "admin" or "super_admin" in permissions list
+- Admin user permissions verified: has both "admin" and "super_admin"
+- 14 routes total wrapped with RequireAdmin guard
+
+## Files Modified
+- client/app/services/policy/DefaultPolicy.js - canCreateUser returns false (already committed by parallel agent)
+- client/app/pages/users/UsersList.jsx - Removed create user flow, added RequireAdmin
+- client/app/pages/home/Home.jsx - Removed showInviteStep
+- client/app/pages/users/UserProfile.jsx - Removed invite email warning
+- client/app/components/ApplicationArea/ApplicationLayout/DesktopNavbar.jsx - Added Back to JRNY button
+- client/app/components/ApplicationArea/ApplicationLayout/DesktopNavbar.less - Back to JRNY styles
+- client/app/components/ApplicationArea/ApplicationLayout/MobileNavbar.jsx - Added Back to JRNY menu item
+- redash/settings/__init__.py - Added JRNYBI_JRNY_ERP_URL setting
+- redash/handlers/authentication.py - Added jrnyErpUrl to client_config
+- client/app/components/ApplicationArea/RequireAdmin.jsx - NEW: Admin route guard component
+- client/app/pages/admin/SystemStatus.jsx - RequireAdmin guard
+- client/app/pages/admin/Jobs.jsx - RequireAdmin guard
+- client/app/pages/admin/OutdatedQueries.jsx - RequireAdmin guard
+- client/app/pages/data-sources/DataSourcesList.jsx - RequireAdmin guard
+- client/app/pages/data-sources/EditDataSource.jsx - RequireAdmin guard
+- client/app/pages/groups/GroupsList.jsx - RequireAdmin guard
+- client/app/pages/groups/GroupDataSources.jsx - RequireAdmin guard
+- client/app/pages/groups/GroupMembers.jsx - RequireAdmin guard
+- client/app/pages/destinations/DestinationsList.jsx - RequireAdmin guard
+- client/app/pages/destinations/EditDestination.jsx - RequireAdmin guard
+
+## Current Status
+- Features passing: 50 (66.7% complete)
+- Total features: 75
+
+## Notes for Next Session
+- All 3 features (#42, #44, #45) implemented and passing
+- Frontend rebuilt and deployed to Docker container (hash: f35a2333d655a5b50bf8)
+- Server at http://localhost:5001, admin API key: BBw0fb0ZdZ3iip5Xkd90bCQPOJP7hcTo5JtOwZMI
+- Regular user API key: Be25Kk8CHYJOpS9NZ0TMS1a9ouB77XSOmclc4XmI (reguser@jrny-test.co.za)
+- Playwright browser unavailable (no Chrome installed)
+- Verification done via API + code analysis + compiled asset checks
+- Next features: remaining iframe embedding, report features, query snippets, etc.
+
 ## Session 14: 2026-05-18
 Agent: Batch agent handling features #33, #35, #37
 
