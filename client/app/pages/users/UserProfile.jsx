@@ -44,7 +44,7 @@ function UserProfile({ userId, onError }) {
   const canEdit = user && (currentUser.isAdmin || currentUser.id === user.id);
   return (
     <React.Fragment>
-      <EmailSettingsWarning featureName="invite emails" className="m-b-20" adminOnly />
+      {/* JRNYBI: Invite email warning removed - users auto-provisioned via JWT SSO */}
       <div className="row">
         {!user && <LoadingState className="" />}
         {user && (

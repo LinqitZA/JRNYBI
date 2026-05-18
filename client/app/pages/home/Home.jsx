@@ -84,7 +84,6 @@ export default function Home() {
             illustration="dashboard"
             helpMessage={<EmptyStateHelpMessage helpTriggerType="GETTING_STARTED" />}
             showDashboardStep
-            showInviteStep
             onboardingMode
           />
         </DynamicComponent>

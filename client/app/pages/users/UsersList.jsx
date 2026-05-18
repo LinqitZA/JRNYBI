@@ -183,9 +183,6 @@ const UsersListPage = wrapSettingsTab(
             case "active":
               request.pending = false;
               break;
-            case "pending":
-              request.pending = true;
-              break;
             case "disabled":
               request.disabled = true;
               break;
