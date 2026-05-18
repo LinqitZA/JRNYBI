@@ -1,4 +1,4 @@
-from flask import jsonify
+from flask import jsonify, request
 from flask_login import login_required
 
 from redash.handlers.api import api
@@ -35,3 +35,12 @@ def init_app(app):
 
     app.register_blueprint(routes)
     api.init_app(app)
+
+    # JRNYBI: Return JSON error responses for API requests (instead of HTML)
+    @app.errorhandler(401)
+    def handle_unauthorized(e):
+        if "/api/" in request.path:
+            return jsonify({"message": e.description or "Authentication required."}), 401
+        from flask import redirect
+        from redash.authentication import get_login_url
+        return redirect(get_login_url(next=request.url, external=False))

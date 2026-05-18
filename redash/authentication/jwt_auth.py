@@ -59,6 +59,11 @@ def get_public_keys(url):
 get_public_keys.key_cache = {}
 
 
+class JWTTokenExpiredError(Exception):
+    """Raised when a JWT token has expired."""
+    pass
+
+
 def verify_jwt_token(jwt_token, expected_issuer, expected_audience, algorithms, public_certs_url):
     # https://developers.cloudflare.com/access/setting-up-access/validate-jwt-tokens/
     # https://cloud.google.com/iap/docs/signed-headers-howto
@@ -93,6 +98,9 @@ def verify_jwt_token(jwt_token, expected_issuer, expected_audience, algorithms, 
                 raise Exception("Wrong issuer: {}".format(issuer))
             valid_token = True
             break
+        except jwt.exceptions.ExpiredSignatureError:
+            logger.warning("JWT token has expired")
+            raise JWTTokenExpiredError("Token has expired")
         except Exception as e:
             logging.exception(e)
 

@@ -220,13 +220,16 @@ def jwt_token_load_user_from_request(request):
         return None
 
     if jwt_token:
-        payload, token_is_valid = jwt_auth.verify_jwt_token(
-            jwt_token,
-            expected_issuer=org_settings["auth_jwt_auth_issuer"],
-            expected_audience=org_settings["auth_jwt_auth_audience"],
-            algorithms=org_settings["auth_jwt_auth_algorithms"],
-            public_certs_url=org_settings["auth_jwt_auth_public_certs_url"],
-        )
+        try:
+            payload, token_is_valid = jwt_auth.verify_jwt_token(
+                jwt_token,
+                expected_issuer=org_settings["auth_jwt_auth_issuer"],
+                expected_audience=org_settings["auth_jwt_auth_audience"],
+                algorithms=org_settings["auth_jwt_auth_algorithms"],
+                public_certs_url=org_settings["auth_jwt_auth_public_certs_url"],
+            )
+        except jwt_auth.JWTTokenExpiredError:
+            raise Unauthorized("JWT token has expired. Please re-authenticate.")
         if not token_is_valid:
             raise Unauthorized("Invalid JWT token")
 
