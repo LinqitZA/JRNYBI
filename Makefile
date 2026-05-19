@@ -1,7 +1,7 @@
 .PHONY: compose_build up test_db create_database clean down tests lint backend-unit-tests frontend-unit-tests test build watch start redis-cli bash
 
 compose_build: .env
-	COMPOSE_DOCKER_CLI_BUILD=1 DOCKER_BUILDKIT=1 docker compose build
+	COMPOSE_DOCKER_CLI_BUILD=1 DOCKER_BUILDKIT=1 docker compose build --build-arg skip_frontend_build=""
 
 up:
 	docker compose up -d redis postgres --remove-orphans
