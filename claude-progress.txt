@@ -1166,3 +1166,31 @@ Agent: Handling feature #77
 - Features passing: 76 (76/77 = 98.7%)
 - Total features: 77
 - Feature #77 complete
+
+## Session 24: 2026-05-19
+Agent: Handling feature #76
+
+### Feature #76: Fix schema refresh UNION ORDER BY for PostgreSQL 18 (PASSING)
+- Fixed _get_tables() in redash/query_runner/jrny_pg.py (lines 336-382)
+- Bug: ORDER BY with CASE expression directly on UNION query fails on PostgreSQL 18
+  Error: "invalid UNION/INTERSECT/EXCEPT ORDER BY clause - Only result column names can be used"
+- Fix: Wrapped both SELECT branches in a subquery: SELECT ... FROM (...UNION...) AS combined
+- Moved ORDER BY outside the subquery so it applies to the combined result set
+- Added explicit NULL::text cast for type compatibility across UNION branches
+- Verified: old query fails on PG18 with exact error from feature description
+- Verified: new query executes successfully, returning reporting schema first
+- Verified: schema refresh via API returns 40 tables/views (9 from reporting schema)
+- Verified: worker logs show "schemas: Job OK" with zero errors
+- Verified: zero "invalid UNION" errors in full worker log history
+- Verified: no mock data patterns in modified file
+- Docker image rebuilt with fix, server restarted, schema refresh re-verified
+- Committed as 0bc46312
+
+## Files Modified
+- redash/query_runner/jrny_pg.py - Wrapped UNION in subquery, moved ORDER BY to outer query
+
+## Current Status
+- Features passing: 77 (77/77 = 100%)
+- Total features: 77
+- ALL FEATURES COMPLETE
+- Server at http://localhost:5001, admin API key: 1ttpe50H8MPbYp4MNPQioewySO8UHXajeXvqIQhi
