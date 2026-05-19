@@ -1141,6 +1141,28 @@ Agent: Batch agent handling features #74, #75
 - ALL FEATURES COMPLETE
 
 ## Notes
-- Server at http://localhost:5001, admin API key: BBw0fb0ZdZ3iip5Xkd90bCQPOJP7hcTo5JtOwZMI
+- Server at http://localhost:5001, admin API key: 1ttpe50H8MPbYp4MNPQioewySO8UHXajeXvqIQhi
 - The RLS deduplication fix (feature #74) is a security-critical change
 - Committed as 4496267f
+
+## Session 23: 2026-05-19
+Agent: Handling feature #77
+
+### Feature #77: Fix data dictionary API call to use relative URL path (PASSING)
+- Changed axios.get('/api/jrny/data-dictionary') to axios.get('api/jrny/data-dictionary') in DataDictionary.jsx line 218
+- Removed leading slash so URL resolves relative to <base href="/bi/"> when behind reverse proxy
+- Verified: HTML already has <base href="/bi/"> set, confirming the need for relative URLs
+- Verified: compiled JS contains "api/jrny/data-dictionary" (relative) and NOT "/api/jrny/data-dictionary" (absolute)
+- Verified: Docker container's JS also has the correct relative URL
+- Verified: no other absolute /api/jrny/ paths remain in client code (grep confirms 0 matches)
+- Verified: consistent with existing Redash pattern (api/session, api/dashboards, etc. all use relative URLs)
+- No mock data patterns found in the file
+- Committed as 07555a13
+
+## Files Modified
+- client/app/pages/jrny/DataDictionary.jsx - Changed absolute API URL to relative (line 218)
+
+## Current Status
+- Features passing: 76 (76/77 = 98.7%)
+- Total features: 77
+- Feature #77 complete
