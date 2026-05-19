@@ -215,7 +215,7 @@ function DataDictionary() {
   // Fetch data dictionary on mount
   useEffect(() => {
     axios
-      .get("/api/jrny/data-dictionary")
+      .get("api/jrny/data-dictionary")
       .then((data) => {
         setSchemas(data.schemas || []);
         // Auto-expand the first schema
