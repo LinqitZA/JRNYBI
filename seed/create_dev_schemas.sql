@@ -376,23 +376,175 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- Convert reporting "tables" to actual VIEWs that reference base tables.
+-- This enables pg_depend-based FK inference for view columns.
+
+-- Drop existing tables if they exist (dev environment only)
+DROP TABLE IF EXISTS reporting.v_sales_orders CASCADE;
+DROP TABLE IF EXISTS reporting.v_invoices CASCADE;
+DROP TABLE IF EXISTS reporting.v_inventory_levels CASCADE;
+DROP TABLE IF EXISTS reporting.v_purchase_orders CASCADE;
+DROP TABLE IF EXISTS reporting.v_cashbook_transactions CASCADE;
+DROP TABLE IF EXISTS reporting.v_general_ledger CASCADE;
+DROP TABLE IF EXISTS reporting.v_customers CASCADE;
+DROP TABLE IF EXISTS reporting.v_suppliers CASCADE;
+DROP TABLE IF EXISTS reporting.v_product_catalogue CASCADE;
+
+-- Also drop existing views to recreate cleanly
+DROP VIEW IF EXISTS reporting.v_sales_orders CASCADE;
+DROP VIEW IF EXISTS reporting.v_invoices CASCADE;
+DROP VIEW IF EXISTS reporting.v_inventory_levels CASCADE;
+DROP VIEW IF EXISTS reporting.v_purchase_orders CASCADE;
+DROP VIEW IF EXISTS reporting.v_cashbook_transactions CASCADE;
+DROP VIEW IF EXISTS reporting.v_general_ledger CASCADE;
+DROP VIEW IF EXISTS reporting.v_customers CASCADE;
+DROP VIEW IF EXISTS reporting.v_suppliers CASCADE;
+DROP VIEW IF EXISTS reporting.v_product_catalogue CASCADE;
+
+-- Create reporting views that reference base tables
+-- The customer_id column in v_sales_orders originates from sales.sales_orders.customer_id
+-- which has an FK to core.contacts(id) — so the FK inference should pick this up.
+CREATE VIEW reporting.v_sales_orders AS
+SELECT
+  so.id,
+  so.order_number,
+  c.first_name || ' ' || c.last_name AS customer_name,
+  so.customer_id,
+  so.order_date,
+  so.total_amount,
+  so.status,
+  o.id AS org_id,
+  NULL::UUID AS branch_id
+FROM sales.sales_orders so
+LEFT JOIN core.contacts c ON c.id = so.customer_id
+LEFT JOIN core.organizations o ON TRUE;
+
+CREATE VIEW reporting.v_invoices AS
+SELECT
+  inv.id,
+  inv.invoice_number,
+  c.first_name || ' ' || c.last_name AS customer_name,
+  inv.customer_id,
+  inv.invoice_date,
+  inv.due_date,
+  inv.total_amount,
+  inv.balance_due,
+  CASE
+    WHEN inv.due_date >= CURRENT_DATE THEN 'Current'
+    WHEN CURRENT_DATE - inv.due_date <= 30 THEN '1-30 Days'
+    WHEN CURRENT_DATE - inv.due_date <= 60 THEN '31-60 Days'
+    WHEN CURRENT_DATE - inv.due_date <= 90 THEN '61-90 Days'
+    ELSE '90+ Days'
+  END AS aging_bucket,
+  NULL::UUID AS org_id
+FROM finance.invoices inv
+LEFT JOIN core.contacts c ON c.id = inv.customer_id;
+
+CREATE VIEW reporting.v_inventory_levels AS
+SELECT
+  sl.id,
+  sl.product_id,
+  sl.warehouse_id,
+  sl.quantity AS quantity_on_hand,
+  sl.reorder_point,
+  0::NUMERIC(12,2) AS unit_cost,
+  (sl.quantity * 0)::NUMERIC(12,2) AS total_value,
+  NULL::TEXT AS product_code,
+  NULL::TEXT AS product_name,
+  NULL::TEXT AS warehouse,
+  NULL::UUID AS org_id
+FROM inventory.stock_levels sl;
+
+CREATE VIEW reporting.v_purchase_orders AS
+SELECT
+  po.id,
+  po.po_number,
+  c.first_name || ' ' || c.last_name AS supplier_name,
+  po.supplier_id,
+  po.order_date,
+  NULL::DATE AS expected_date,
+  po.total_amount,
+  po.status,
+  NULL::UUID AS org_id
+FROM procurement.purchase_orders po
+LEFT JOIN core.contacts c ON c.id = po.supplier_id;
+
+CREATE VIEW reporting.v_cashbook_transactions AS
+SELECT
+  t.id,
+  t.transaction_date,
+  t.description,
+  t.amount,
+  t.transaction_type,
+  ba.account_name AS bank_account,
+  t.bank_account_id,
+  NULL::UUID AS org_id
+FROM cashbook.transactions t
+LEFT JOIN cashbook.bank_accounts ba ON ba.id = t.bank_account_id;
+
+CREATE VIEW reporting.v_general_ledger AS
+SELECT
+  gl.id,
+  gl.account_code,
+  NULL::TEXT AS account_name,
+  gl.debit,
+  gl.credit,
+  gl.posting_date,
+  NULL::UUID AS org_id
+FROM finance.gl_entries gl;
+
+CREATE VIEW reporting.v_customers AS
+SELECT
+  c.id,
+  NULL::TEXT AS customer_code,
+  c.first_name || ' ' || c.last_name AS customer_name,
+  c.email,
+  c.phone,
+  c.org_id
+FROM core.contacts c;
+
+CREATE VIEW reporting.v_suppliers AS
+SELECT
+  c.id,
+  NULL::TEXT AS supplier_code,
+  c.first_name || ' ' || c.last_name AS supplier_name,
+  c.email,
+  c.phone,
+  c.org_id
+FROM core.contacts c;
+
+CREATE VIEW reporting.v_product_catalogue AS
+SELECT
+  gen_random_uuid() AS id,
+  NULL::TEXT AS product_code,
+  NULL::TEXT AS product_name,
+  NULL::TEXT AS category,
+  0::NUMERIC(12,2) AS unit_price,
+  NULL::UUID AS org_id;
+
 -- Add COMMENT ON annotations
-COMMENT ON TABLE reporting.v_sales_orders IS 'Denormalized sales order view';
+COMMENT ON VIEW reporting.v_sales_orders IS 'Denormalized sales order view';
 COMMENT ON COLUMN reporting.v_sales_orders.id IS 'Primary key';
 COMMENT ON COLUMN reporting.v_sales_orders.order_number IS 'Unique order number';
 COMMENT ON COLUMN reporting.v_sales_orders.customer_name IS 'Customer display name';
 COMMENT ON COLUMN reporting.v_sales_orders.total_amount IS 'Order total including tax';
+COMMENT ON COLUMN reporting.v_sales_orders.customer_id IS 'fk:core.contacts.id Customer foreign key';
 
-COMMENT ON TABLE reporting.v_invoices IS 'Denormalized invoice view with aging';
+COMMENT ON VIEW reporting.v_invoices IS 'Denormalized invoice view with aging';
 COMMENT ON COLUMN reporting.v_invoices.aging_bucket IS 'Aging period: Current, 1-30, 31-60, 61-90, 90+';
+COMMENT ON COLUMN reporting.v_invoices.customer_id IS 'fk:core.contacts.id Invoice customer FK';
 
-COMMENT ON TABLE reporting.v_inventory_levels IS 'Current inventory stock levels';
-COMMENT ON TABLE reporting.v_purchase_orders IS 'Purchase order pipeline view';
-COMMENT ON TABLE reporting.v_cashbook_transactions IS 'Bank transaction records';
-COMMENT ON TABLE reporting.v_general_ledger IS 'General ledger entries';
-COMMENT ON TABLE reporting.v_customers IS 'Customer master data';
-COMMENT ON TABLE reporting.v_suppliers IS 'Supplier master data';
-COMMENT ON TABLE reporting.v_product_catalogue IS 'Product catalogue view';
+COMMENT ON VIEW reporting.v_inventory_levels IS 'Current inventory stock levels';
+COMMENT ON VIEW reporting.v_purchase_orders IS 'Purchase order pipeline view';
+COMMENT ON COLUMN reporting.v_purchase_orders.supplier_id IS 'fk:core.contacts.id Supplier FK';
+
+COMMENT ON VIEW reporting.v_cashbook_transactions IS 'Bank transaction records';
+COMMENT ON COLUMN reporting.v_cashbook_transactions.bank_account_id IS 'fk:cashbook.bank_accounts.id Bank account FK';
+
+COMMENT ON VIEW reporting.v_general_ledger IS 'General ledger entries';
+COMMENT ON VIEW reporting.v_customers IS 'Customer master data';
+COMMENT ON VIEW reporting.v_suppliers IS 'Supplier master data';
+COMMENT ON VIEW reporting.v_product_catalogue IS 'Product catalogue view';
 
 COMMENT ON TABLE core.organizations IS 'Organization entities';
 COMMENT ON TABLE core.branches IS 'Organization branches';

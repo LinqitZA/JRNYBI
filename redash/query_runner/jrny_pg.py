@@ -493,6 +493,180 @@ class JRNYPostgreSQL(PostgreSQL):
 
         return fk_map
 
+    def _get_view_column_origins(self, view_deps):
+        """
+        Infer which base table column each view column originates from by
+        combining pg_depend (which base table columns a view depends on)
+        with name matching.
+
+        PostgreSQL's pg_depend records column-level dependencies from a
+        view's rewrite rule to base table columns, but does not record
+        which *view* column each dependency maps to.  We bridge this gap
+        by matching view column names to the dependent base column names
+        -- a view column named "customer_id" that depends on a base table
+        column also named "customer_id" is inferred as originating from it.
+        This handles the common case (same-name pass-through columns) and
+        also catches renamed columns via the COMMENT ON fallback.
+
+        Args:
+            view_deps: dict from _get_view_dependencies() mapping
+                       "schema.view" -> ["schema.base_table", ...]
+
+        Returns:
+            dict: Mapping of ("schema.view_name", "view_col_name")
+                  to [{"base_schema": str, "base_table": str, "base_column": str}].
+        """
+        if not view_deps:
+            return {}
+
+        schema_list = ",".join("'{}'".format(s) for s in JRNY_SCHEMAS)
+
+        # Get all columns from base tables that are referenced by views
+        query = """
+        SELECT
+            vs.nspname        AS view_schema,
+            vc.relname        AS view_name,
+            ts.nspname        AS base_schema,
+            tc.relname        AS base_table,
+            ta.attname        AS base_column
+        FROM pg_depend d
+        JOIN pg_rewrite rw     ON rw.oid = d.objid
+        JOIN pg_class vc       ON vc.oid = rw.ev_class
+        JOIN pg_namespace vs   ON vs.oid = vc.relnamespace
+        JOIN pg_class tc       ON tc.oid = d.refobjid
+        JOIN pg_namespace ts   ON ts.oid = tc.relnamespace
+        JOIN pg_attribute ta   ON ta.attrelid = tc.oid
+                              AND ta.attnum = d.refobjsubid
+        WHERE d.classid    = 'pg_rewrite'::regclass
+          AND d.deptype    = 'n'
+          AND d.refobjsubid > 0
+          AND vc.relkind   IN ('v', 'm')
+          AND tc.relkind   IN ('r', 'p', 'f')
+          AND vc.oid       <> tc.oid
+          AND ta.attnum    > 0
+          AND NOT ta.attisdropped
+          AND vs.nspname   IN ({schemas})
+          AND ts.nspname   NOT IN ('pg_catalog', 'information_schema')
+          AND has_schema_privilege(vs.nspname, 'usage')
+          AND has_schema_privilege(ts.nspname, 'usage')
+        ORDER BY view_schema, view_name, base_schema, base_table
+        """.format(schemas=schema_list)
+
+        try:
+            results, error = self.run_query(query, None)
+            if error is not None:
+                logger.warning("Failed to fetch view column deps: %s", error)
+                return {}
+        except Exception:
+            logger.warning("Exception fetching view column deps", exc_info=True)
+            return {}
+
+        # Build map: view_full_name -> set of (base_full_name, base_column) pairs
+        view_base_cols = {}
+        if results and results.get("rows"):
+            for row in results["rows"]:
+                view_key = "{}.{}".format(
+                    row.get("view_schema", ""), row.get("view_name", "")
+                )
+                base_col_entry = {
+                    "base_schema": row.get("base_schema", ""),
+                    "base_table": row.get("base_table", ""),
+                    "base_column": row.get("base_column", ""),
+                }
+                if view_key not in view_base_cols:
+                    view_base_cols[view_key] = []
+                view_base_cols[view_key].append(base_col_entry)
+
+        logger.debug(
+            "Found base column dependencies for %d views", len(view_base_cols)
+        )
+        return view_base_cols
+
+    def _infer_view_fk_from_origins(self, fk_map, view_base_cols, schema_dict):
+        """
+        Cross-reference view columns with base-table FK map using name
+        matching.  For each view, look at the base columns the view depends
+        on.  If a base column has an FK and the view has a column with the
+        *same name*, infer that the view column inherits the FK.
+
+        Args:
+            fk_map: dict from _get_foreign_keys()
+            view_base_cols: dict from _get_view_column_origins()
+            schema_dict: the full schema dict (view_name -> {columns: [...]})
+
+        Returns:
+            dict: Additional FK entries for view columns.
+        """
+        inferred = {}
+
+        for view_name, base_col_list in view_base_cols.items():
+            # Get the view's own columns
+            view_info = schema_dict.get(view_name)
+            if not view_info:
+                continue
+            view_col_names = set()
+            for col in view_info.get("columns", []):
+                cn = col.get("name") if isinstance(col, dict) else col
+                view_col_names.add(cn)
+
+            for entry in base_col_list:
+                base_full = "{}.{}".format(
+                    entry["base_schema"], entry["base_table"]
+                )
+                base_col = entry["base_column"]
+
+                # Check if this base column has an FK
+                base_key = (base_full, base_col)
+                if base_key not in fk_map:
+                    continue
+
+                # Check if the view has a column with the same name
+                if base_col in view_col_names:
+                    view_key = (view_name, base_col)
+                    if view_key not in fk_map and view_key not in inferred:
+                        inferred[view_key] = fk_map[base_key]
+
+        logger.debug(
+            "Inferred %d FK relationships for view columns", len(inferred)
+        )
+        return inferred
+
+    def _parse_fk_comments(self, column_comments):
+        """
+        Parse COMMENT ON COLUMN annotations with the convention:
+            'fk:schema.table.column'
+
+        This provides a manual fallback for views whose columns can't be
+        automatically traced to base FK columns (e.g. computed columns,
+        renamed columns via expression-based views).
+
+        Args:
+            column_comments: dict mapping ("schema.table", col_name) -> description
+
+        Returns:
+            dict: FK entries from comments, in the same format as fk_map:
+                  ("full_table_name", col_name) -> {"schema", "table", "column"}.
+        """
+        fk_re = re.compile(r"fk:(\w+)\.(\w+)\.(\w+)")
+        comment_fks = {}
+
+        for (table_name, col_name), comment in column_comments.items():
+            if not comment:
+                continue
+            m = fk_re.search(comment)
+            if m:
+                comment_fks[(table_name, col_name)] = {
+                    "schema": m.group(1),
+                    "table": m.group(2),
+                    "column": m.group(3),
+                }
+
+        if comment_fks:
+            logger.debug(
+                "Parsed %d FK annotations from column comments", len(comment_fks)
+            )
+        return comment_fks
+
     def _get_view_dependencies(self):
         """
         Query pg_depend + pg_rewrite + pg_class to map each view to its
@@ -646,56 +820,84 @@ class JRNYPostgreSQL(PostgreSQL):
         if settings.SCHEMA_RUN_TABLE_SIZE_CALCULATIONS and get_stats:
             self._get_tables_stats(schema_dict)
 
-        # Fetch FK relationships and merge into the column data
+        # Fetch FK relationships from base tables
         fk_map = self._get_foreign_keys()
-        if fk_map:
+
+        # Fetch view dependencies (reused for both FK inference and source_tables)
+        view_deps = self._get_view_dependencies()
+
+        # Infer FK relationships for view columns by tracing origins
+        view_column_origins = self._get_view_column_origins(view_deps)
+        inferred_fks = self._infer_view_fk_from_origins(fk_map, view_column_origins, schema_dict)
+
+        # Fetch COMMENT ON annotations (needed for both descriptions and FK comments)
+        table_comments, column_comments = self._get_comments()
+
+        # Parse fk:schema.table.column comment annotations as fallback
+        comment_fks = self._parse_fk_comments(column_comments)
+
+        # Merge all FK maps: base FKs + inferred view FKs + comment FKs
+        # Comment FKs have lowest priority (only fill gaps)
+        merged_fk_map = {}
+        merged_fk_map.update(comment_fks)
+        merged_fk_map.update(inferred_fks)
+        merged_fk_map.update(fk_map)  # Direct FKs have highest priority
+
+        if merged_fk_map:
             for table_name, table_info in schema_dict.items():
                 for column in table_info.get("columns", []):
                     col_name = column.get("name") if isinstance(column, dict) else column
                     key = (table_name, col_name)
-                    if key in fk_map:
+                    if key in merged_fk_map:
                         if isinstance(column, dict):
-                            column["fk"] = fk_map[key]
+                            column["fk"] = merged_fk_map[key]
                         else:
                             # Column is a plain string — upgrade to dict
                             idx = table_info["columns"].index(column)
                             table_info["columns"][idx] = {
                                 "name": column,
-                                "fk": fk_map[key],
+                                "fk": merged_fk_map[key],
                             }
             logger.debug(
-                "Enriched schema with %d foreign key relationships", len(fk_map)
+                "Enriched schema with %d total FK relationships "
+                "(base: %d, inferred: %d, comments: %d)",
+                len(merged_fk_map),
+                len(fk_map),
+                len(inferred_fks),
+                len(comment_fks),
             )
 
-        # Fetch view dependencies and add source_tables to view entries
-        view_deps = self._get_view_dependencies()
+        # Add source_tables to view entries (view_deps already fetched above)
         if view_deps:
             for table_name, table_info in schema_dict.items():
                 if table_name in view_deps:
                     table_info["source_tables"] = view_deps[table_name]
 
-        # Fetch COMMENT ON annotations and merge into schema
-        table_comments, column_comments = self._get_comments()
+        # Merge COMMENT ON annotations into schema (already fetched above)
         if table_comments or column_comments:
             for table_name, table_info in schema_dict.items():
                 # Add table-level description
                 if table_name in table_comments:
                     table_info["description"] = table_comments[table_name]
 
-                # Add column-level descriptions
+                # Add column-level descriptions (strip fk: prefix from display)
                 for column in table_info.get("columns", []):
                     col_name = column.get("name") if isinstance(column, dict) else column
                     key = (table_name, col_name)
                     if key in column_comments:
-                        if isinstance(column, dict):
-                            column["description"] = column_comments[key]
-                        else:
-                            # Column is a plain string — upgrade to dict
-                            idx = table_info["columns"].index(column)
-                            table_info["columns"][idx] = {
-                                "name": column,
-                                "description": column_comments[key],
-                            }
+                        desc = column_comments[key]
+                        # Strip the fk:... annotation from the user-visible description
+                        desc_clean = re.sub(r"\s*fk:\w+\.\w+\.\w+\s*", "", desc).strip()
+                        if desc_clean:
+                            if isinstance(column, dict):
+                                column["description"] = desc_clean
+                            else:
+                                # Column is a plain string — upgrade to dict
+                                idx = table_info["columns"].index(column)
+                                table_info["columns"][idx] = {
+                                    "name": column,
+                                    "description": desc_clean,
+                                }
 
         return list(schema_dict.values())
 
