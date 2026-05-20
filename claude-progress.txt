@@ -1246,3 +1246,114 @@ Agent: Batch agent handling features #78, #87, #79
 ## Current Status
 - Features passing: 80+ (87 total)
 - All 3 assigned features (#78, #87, #79) implemented and verified
+
+## Session 26: 2026-05-20
+Agent: Batch agent handling features #80, #81, #85
+
+### Feature #80: SQL context parser for cursor position awareness (PASSING)
+- Created client/app/components/queries/QueryEditor/sqlContext.js
+- Lightweight regex/state-machine tokenizer (zero external dependencies)
+- Exports parseSQLContext(queryText, cursorPosition) returning:
+  {clause, tables: [{schema, name, alias}], currentPrefix, completing}
+- Handles: clause detection (SELECT, FROM, JOIN, WHERE, ON, ORDER BY, GROUP BY, HAVING, LIMIT)
+- Handles: table alias tracking (FROM sales.sales_orders so -> alias "so" for that table)
+- Handles: schema-qualified names (sales.sales_orders)
+- Handles: subqueries (scopes to innermost query via paren tracking)
+- Handles: incomplete/invalid SQL (forgiving parser, never throws)
+- Handles: comments (single-line --, block /* */), string literals
+- 52 unit tests covering all edge cases, clause detection, table extraction, prefix, comments, subqueries
+- Committed as ec79630f
+
+### Feature #81: Context-aware column filtering in autocomplete (PASSING)
+- Modified custom Ace completer in ace.js to call parseSQLContext()
+- FROM/JOIN clauses: shows only table name suggestions (boosted score 200)
+- SELECT/WHERE/ON/ORDER BY/GROUP BY/HAVING: shows columns from referenced tables (score 200)
+- Falls back to all columns if no tables identified yet
+- Alias-qualified completions: "so." maps to aliased table's columns (score 300)
+- Table-qualified completions preserved and enhanced
+- Completion score hierarchy: alias-columns (300) > context-columns (200) > alias-qualified (190) > table-qualified (180) > generic tables (100) > generic columns (50)
+- Error handling: falls back to default behavior if parsing fails
+- Webpack build successful, all 52 tests still pass
+- Committed as 5df89a1f
+
+### Feature #85: Reporting view suggestions for base table queries (PASSING)
+- Backend: Added _get_view_dependencies() to jrny_pg.py
+  - Queries pg_depend + pg_rewrite + pg_class to map views -> base tables
+  - Returns {"reporting.v_sales_summary": ["sales.sales_orders"], ...}
+  - Added source_tables field to schema payload for view entries
+- Frontend: ViewSuggestionBanner.jsx
+  - Builds reverse lookup: base table -> [views that reference it]
+  - Uses parseSQLContext() to detect FROM clauses referencing base tables
+  - Shows non-intrusive amber banner with lightbulb icon
+  - "Use it instead" link replaces base table with view name
+  - Up to 3 alternative view suggestions per table
+  - Reporting schema views prioritized over others
+- Frontend: SchemaBrowser.jsx
+  - VIEW badge (purple) displayed next to views in schema browser
+  - Tooltip shows "View - sources from: ..." listing base tables
+  - source_tables PropType added to SchemaItemType
+- Frontend: schema-browser.less
+  - .view-badge styles (purple, uppercase, rounded)
+- Verified: pg_depend query returns correct view dependencies for test views
+- Verified: schema API includes source_tables on view entries
+- Verified: webpack build succeeds with all new components
+- Committed as 936ddffc
+
+## Files Modified
+- client/app/components/queries/QueryEditor/sqlContext.js - NEW: SQL context parser module
+- client/app/components/queries/QueryEditor/sqlContext.test.js - NEW: 52 unit tests
+- client/app/components/queries/QueryEditor/ace.js - Context-aware completer
+- redash/query_runner/jrny_pg.py - _get_view_dependencies(), source_tables in schema
+- (Other files committed by parallel agent: ViewSuggestionBanner.jsx/.less, SchemaBrowser.jsx, schema-browser.less, QuerySource.jsx)
+
+## Current Status
+- Features passing: 83+ (87 total)
+- All 3 assigned features (#80, #81, #85) implemented and verified
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+
+## Session 27: 2026-05-20
+Agent: Handling feature #83
+
+### Feature #83: Inline column documentation in autocomplete popup (PASSING)
+- Backend: Added nullable info to schema API
+  * Modified _get_tables() SQL to include is_nullable column
+  * For pg_class (materialized views): derives nullable from a.attnotnull
+  * For information_schema.columns: uses is_nullable directly
+  * Created _get_definitions_enriched() method - like base _get_definitions but includes nullable
+  * Imported full_table_name from pg.py for proper schema-qualified name building
+  * Schema API now returns {"name": "col", "type": "...", "nullable": true/false, ...} for every column
+- Frontend: Rich autocomplete doc tooltip (ace.js changes were made by parallel agent #82)
+  * buildColumnDocHTML() generates rich HTML tooltip for each completion item
+  * getTypeCategory() classifies column types: numeric, date, boolean, uuid, json, array, text
+  * getTypeBadgeColor() returns CSS colors: green, blue, orange, purple, amber, cyan, gray
+  * escapeHtml() prevents XSS in docHTML content
+  * buildTableDocHTML() generates table tooltips with column count + description
+  * All column completion generators enriched: buildKeywordsFromSchema, buildTableColumnKeywords,
+    getColumnsForReferencedTables, getColumnsForAlias
+  * Ace's built-in docHTML tooltip mechanism displays the side panel on selection/hover
+- CSS: Tooltip styling in index.less
+  * .ace_doc-tooltip: max-width 420px, border-radius 6px, subtle shadow
+  * .jrnybi-col-doc: main container with Inter font
+  * .jrnybi-type-badge: color-coded type badges (inline-block, rounded, white on color)
+  * .jrnybi-nullable-badge: NULLABLE (gray border) or NOT NULL (red border)
+  * .jrnybi-col-doc-fk: FK → reference in JRNY blue (#2563eb)
+  * .jrnybi-col-doc-desc: description text in gray (#4b5563)
+- Verified:
+  * Schema API returns nullable (true/false) for all columns
+  * FK columns include fk: {schema, table, column}
+  * Described columns include description text
+  * Compiled JS/CSS contain all new classes and functions
+  * No mock data patterns in modified files
+  * Server healthy (200 on /ping)
+  * Frontend assets served correctly (200 on JS/CSS)
+
+## Files Modified
+- redash/query_runner/jrny_pg.py - _get_definitions_enriched(), nullable in _get_tables() SQL
+- client/app/components/queries/QueryEditor/index.less - Autocomplete doc tooltip CSS
+- (ace.js changes were already committed by parallel agent in 218acfa7)
+
+## Current Status
+- Features passing: 83+ (87 total)
+- Feature #83 complete
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+- Committed as f70596b2
