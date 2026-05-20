@@ -1,0 +1,73 @@
+@import (reference) "~@/assets/less/inc/variables";
+
+.view-suggestion-banner {
+  border-top: 1px solid #e2e8f0;
+  background-color: #fffbeb;
+  padding: 6px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #92400e;
+  max-height: 80px;
+  overflow-y: auto;
+
+  .view-suggestion-item {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+
+    + .view-suggestion-item {
+      margin-top: 4px;
+      padding-top: 4px;
+      border-top: 1px solid #fde68a;
+    }
+  }
+
+  .suggestion-icon {
+    color: #d97706;
+    font-size: 14px;
+    margin-right: 6px;
+    flex-shrink: 0;
+  }
+
+  .suggestion-text {
+    code {
+      background-color: #fef3c7;
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-size: 11px;
+      color: #78350f;
+    }
+  }
+
+  .suggestion-action,
+  .suggestion-alt-action {
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    font-size: 12px;
+    text-decoration: underline;
+    font-weight: 500;
+  }
+
+  .suggestion-action {
+    color: #2563eb;
+
+    &:hover {
+      color: #1d4ed8;
+    }
+  }
+
+  .suggestion-alt-action {
+    color: #6b7280;
+
+    &:hover {
+      color: #374151;
+    }
+  }
+
+  .suggestion-alternatives {
+    color: #9ca3af;
+  }
+}

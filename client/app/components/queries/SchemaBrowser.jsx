@@ -28,6 +28,7 @@ export const SchemaItemType = PropTypes.shape({
   size: PropTypes.number,
   loading: PropTypes.bool,
   columns: PropTypes.arrayOf(SchemaItemColumnType).isRequired,
+  source_tables: PropTypes.arrayOf(PropTypes.string),
 });
 
 const schemaTableHeight = 22;
@@ -124,16 +125,21 @@ function SchemaItem({ item, expanded, onToggle, onSelect, onNavigateToTable, inc
 
   const tableDisplayName = item.displayName || item.name;
   const tableIcon = getTableIcon(item.name);
+  const hasSourceTables = item.source_tables && item.source_tables.length > 0;
+  const viewTooltip = hasSourceTables
+    ? (item.description ? item.description + "\n\n" : "") +
+      "View - sources from: " + item.source_tables.join(", ")
+    : item.description;
 
   return (
     <div {...props}>
       <div className="schema-list-item">
         <Tooltip
-          title={item.description}
+          title={viewTooltip}
           mouseEnterDelay={0}
           mouseLeaveDelay={0}
           placement="rightTop"
-          trigger={item.description ? "hover" : ""}
+          trigger={viewTooltip ? "hover" : ""}
           overlayStyle={{ whiteSpace: "pre-line" }}
         >
           <PlainButton className="table-name" onClick={onToggle}>
@@ -142,6 +148,11 @@ function SchemaItem({ item, expanded, onToggle, onSelect, onNavigateToTable, inc
               <span title={item.name}>{tableDisplayName}</span>
               {!isNil(item.size) && <span> ({item.size})</span>}
             </strong>
+            {hasSourceTables && (
+              <span className="view-badge" title={"View - sources: " + item.source_tables.join(", ")}>
+                VIEW
+              </span>
+            )}
             {incomingFkCount > 0 && (
               <span className="fk-ref-badge" title={incomingFkCount + " FK refs"}>
                 {incomingFkCount}

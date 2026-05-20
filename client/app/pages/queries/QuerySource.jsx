@@ -23,6 +23,7 @@ import QueryExecutionStatus from "./components/QueryExecutionStatus";
 import QuerySourceAlerts from "./components/QuerySourceAlerts";
 import wrapQueryPage from "./components/wrapQueryPage";
 import QueryExecutionMetadata from "./components/QueryExecutionMetadata";
+import ViewSuggestionBanner from "@/components/queries/ViewSuggestionBanner";
 
 import { getEditorComponents } from "@/components/queries/editor-components";
 import useQuery from "./hooks/useQuery";
@@ -83,6 +84,8 @@ function QuerySource(props) {
 
   const [handleQueryEditorChange] = useDebouncedCallback(queryText => {
     setQuery(extend(query.clone(), { query: queryText }));
+    // Update cursor position to end of text for view suggestions
+    setCursorPosition(queryText ? queryText.length : 0);
   }, 100);
 
   useEffect(() => {
@@ -158,6 +161,25 @@ function QuerySource(props) {
   }, []);
 
   const [selectedText, setSelectedText] = useState(null);
+  const [cursorPosition, setCursorPosition] = useState(0);
+
+  const handleApplyViewSuggestion = useCallback(
+    (baseTable, viewName, alias) => {
+      if (!editorRef.current) return;
+      const currentQuery = query.query || "";
+      // Replace the base table reference with the view name in the query text
+      // Handle both "schema.table alias" and "table alias" patterns
+      const escBase = baseTable.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const aliasPattern = alias ? `\\s+${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}` : "";
+      const pattern = new RegExp(`\\b${escBase}${aliasPattern}\\b`, "i");
+      const newAlias = alias ? ` ${alias}` : "";
+      const newQuery = currentQuery.replace(pattern, `${viewName}${newAlias}`);
+      if (newQuery !== currentQuery) {
+        setQuery(extend(query.clone(), { query: newQuery }));
+      }
+    },
+    [query, setQuery]
+  );
 
   const doExecuteQuery = useCallback(
     (skipParametersDirtyFlag = false) => {
@@ -266,6 +288,13 @@ function QuerySource(props) {
                       autocompleteEnabled={autocompleteAvailable && autocompleteEnabled}
                       onChange={handleQueryEditorChange}
                       onSelectionChange={setSelectedText}
+                    />
+
+                    <ViewSuggestionBanner
+                      queryText={query.query}
+                      cursorPosition={cursorPosition}
+                      schema={schema}
+                      onApplySuggestion={handleApplyViewSuggestion}
                     />
 
                     <QueryEditor.Controls
