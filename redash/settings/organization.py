@@ -73,4 +73,41 @@ settings = {
     "send_email_on_failed_scheduled_queries": SEND_EMAIL_ON_FAILED_SCHEDULED_QUERIES,
     "hide_plotly_mode_bar": HIDE_PLOTLY_MODE_BAR,
     "disable_public_urls": DISABLE_PUBLIC_URLS,
+    "report_categories": [
+        {
+            "id": "sales",
+            "name": "Sales",
+            "icon": "shopping-cart",
+            "color": "#2563eb",
+            "description": "Sales orders, revenue, and customer analytics",
+        },
+        {
+            "id": "finance",
+            "name": "Finance",
+            "icon": "dollar",
+            "color": "#16a34a",
+            "description": "Invoicing, cash flow, and financial statements",
+        },
+        {
+            "id": "inventory",
+            "name": "Inventory",
+            "icon": "database",
+            "color": "#d97706",
+            "description": "Stock levels, valuation, and warehouse management",
+        },
+        {
+            "id": "procurement",
+            "name": "Procurement",
+            "icon": "shopping",
+            "color": "#7c3aed",
+            "description": "Purchase orders, supplier management, and spend analysis",
+        },
+        {
+            "id": "cashbook",
+            "name": "Cashbook",
+            "icon": "book",
+            "color": "#0891b2",
+            "description": "Bank transactions, reconciliation, and cash management",
+        },
+    ],
 }

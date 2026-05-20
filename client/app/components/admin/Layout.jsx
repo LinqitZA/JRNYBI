@@ -22,6 +22,9 @@ export default function Layout({ activeTab, children }) {
             <Menu.Item key="outdated_queries">
               <Link href="admin/queries/outdated">Outdated Queries</Link>
             </Menu.Item>
+            <Menu.Item key="report_categories">
+              <Link href="admin/report-categories">Report Categories</Link>
+            </Menu.Item>
           </Menu>
           {children}
         </div>

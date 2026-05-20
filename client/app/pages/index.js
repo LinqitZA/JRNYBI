@@ -2,6 +2,7 @@ import "./home/Home";
 
 import "./admin/Jobs";
 import "./admin/OutdatedQueries";
+import "./admin/ReportCategories";
 import "./admin/SystemStatus";
 
 import "./alerts/AlertsList";

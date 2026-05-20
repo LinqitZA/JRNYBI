@@ -95,6 +95,10 @@ from redash.handlers.visualizations import (
     VisualizationResource,
 )
 from redash.handlers.widgets import WidgetListResource, WidgetResource
+from redash.handlers.jrny_report_categories import (
+    JRNYReportCategoryListResource,
+    JRNYReportCategoryResource,
+)
 from redash.utils import json_dumps
 
 
@@ -291,4 +295,15 @@ api.add_org_resource(
     JRNYDataDictionaryResource,
     "/api/jrny/data-dictionary",
     endpoint="jrny_data_dictionary",
+)
+
+api.add_org_resource(
+    JRNYReportCategoryListResource,
+    "/api/jrny/report-categories",
+    endpoint="jrny_report_categories",
+)
+api.add_org_resource(
+    JRNYReportCategoryResource,
+    "/api/jrny/report-categories/<category_id>",
+    endpoint="jrny_report_category",
 )
