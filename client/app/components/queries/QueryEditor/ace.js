@@ -3,6 +3,7 @@ import AceEditor from "react-ace";
 import ace from "ace-builds";
 import { parseSQLContext } from "./sqlContext";
 import { resolveDisplayColumn } from "./fkResolution";
+import { buildTypeAwareSuggestions } from "./querySnippets";
 
 import "ace-builds/src-noconflict/ext-language_tools";
 import "ace-builds/src-noconflict/mode-json";
@@ -642,12 +643,16 @@ langTools.setCompleters([
         // SELECT / WHERE / ON / ORDER BY / GROUP BY / HAVING: show columns from referenced tables
         if (COLUMN_CLAUSES.has(ctx.clause)) {
           const contextColumns = getColumnsForReferencedTables(ctx.tables, rawSchema, tableColumn);
+
+          // Add type-aware function suggestions (aggregates, date fns, filters)
+          const typeAware = buildTypeAwareSuggestions(ctx.clause, rawSchema, ctx.tables);
+
           if (contextColumns) {
-            callback(null, contextColumns);
+            callback(null, contextColumns.concat(typeAware));
             return;
           }
-          // No tables identified yet \u2014 fall back to all columns
-          callback(null, column);
+          // No tables identified yet \u2014 fall back to all columns + type-aware
+          callback(null, column.concat(typeAware));
           return;
         }
       } catch (e) {

@@ -4,6 +4,7 @@ import cx from "classnames";
 import ace from "ace-builds";
 import { AceEditor, snippetsModule, updateSchemaCompleter, getSchemaRawData, getFKGraphData } from "./ace";
 import { detectFKAtCursor, applyFKResolution, findFKColumnsInSelect } from "./fkResolution";
+import { SQL_SNIPPETS, JRNY_TEMPLATES, expandSelectStar } from "./querySnippets";
 import { srNotify } from "@/lib/accessibility";
 import { SchemaItemType } from "@/components/queries/SchemaBrowser";
 import resizeObserver from "@/services/resizeObserver";
@@ -169,6 +170,18 @@ const QueryEditor = React.forwardRef(function(
       },
     });
 
+    // SELECT * expansion: Ctrl+Shift+E to expand * to column list
+    editor.commands.addCommand({
+      name: "expandSelectStar",
+      bindKey: { win: "Ctrl-Shift-E", mac: "Cmd-Shift-E" },
+      exec: ed => {
+        const rawSchema = getSchemaRawData(ed.id);
+        if (rawSchema) {
+          expandSelectStar(ed, rawSchema);
+        }
+      },
+    });
+
     // Reset Completer in case dot is pressed
     editor.commands.on("afterExec", e => {
       if (e.command.name === "insertstring" && e.args === "." && editor.completer) {
@@ -182,9 +195,21 @@ const QueryEditor = React.forwardRef(function(
         snippetText: "",
       };
       m.snippets = snippetManager.parseSnippetFile(m.snippetText);
+
+      // Register user-created snippets from the API
       snippets.forEach(snippet => {
         m.snippets.push(snippet.getSnippet());
       });
+
+      // Register built-in SQL pattern snippets and JRNY templates
+      SQL_SNIPPETS.concat(JRNY_TEMPLATES).forEach(snip => {
+        m.snippets.push({
+          name: snip.name,
+          content: snip.content,
+          tabTrigger: snip.tabTrigger,
+        });
+      });
+
       snippetManager.register(m.snippets || [], m.scope);
     });
 

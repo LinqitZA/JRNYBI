@@ -1357,3 +1357,32 @@ Agent: Handling feature #83
 - Feature #83 complete
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
 - Committed as f70596b2
+
+## Session 28: 2026-05-20
+Agent: Handling feature #86
+
+### Feature #86: Smart query snippets and template patterns (PASSING)
+- Verified all implementation already in place from parallel agents (Sessions 26-27)
+- **SQL Pattern Snippets** (14 total): countby, sumby, avgby, datetrunc, daterange, casewhen, rownum, lag, lead, runningtotal, cte, existsq, coalesce, distinctcount, paginateq
+- **SELECT * Expansion**: expandSelectStar() function, bound to Ctrl+Shift+E/Cmd+Shift+E
+- **JRNY Templates** (5 total): tmpl_sales_period, tmpl_outstanding, tmpl_inventory, tmpl_customers, tmpl_cashflow
+- **Type-Aware Suggestions**: buildTypeAwareSuggestions() provides context-sensitive completions:
+  * Date columns in SELECT: date_trunc('month'), date_trunc('week'), EXTRACT(year)
+  * Date columns in WHERE: recent 30 days, this month, BETWEEN dates
+  * Numeric columns in SELECT: SUM, AVG, MAX, MIN
+  * Numeric columns in WHERE: > 0, BETWEEN, IS NOT NULL
+  * Text columns in SELECT: COUNT(DISTINCT), LOWER()
+  * Text columns in WHERE: ILIKE, IS NOT NULL, LOWER() =
+  * Boolean columns in WHERE: = true, = false
+- **Ace Registration**: snippetManager.register() called with SQL_SNIPPETS + JRNY_TEMPLATES in index.jsx
+  langTools.snippetCompleter included in completer chain in ace.js
+- **Compiled JS Verification**: All patterns found in app.072bebd68a07137b633d.js (local & Docker)
+- **Schema API**: Returns type/nullable/fk/description metadata for all columns (verified via API)
+- **Mock Data Check**: Zero matches for mock/placeholder patterns in QueryEditor files
+- No code changes needed - verification only session
+
+## Current Status
+- Features passing: 87 (87/87 = 100%)
+- Total features: 87
+- ALL FEATURES COMPLETE
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
