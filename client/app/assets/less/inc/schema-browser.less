@@ -43,6 +43,29 @@
         white-space: nowrap;
         cursor: pointer;
         padding: 2px 22px 2px 10px;
+
+        // View icon (fa-eye) styled slightly differently from table icon
+        .fa-eye {
+          color: #7c3aed; // purple for views
+        }
+      }
+
+      // FK reference count badge
+      .fk-ref-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 16px;
+        height: 14px;
+        padding: 0 4px;
+        margin-left: 4px;
+        border-radius: 7px;
+        background-color: fade(@primary-color, 15%);
+        color: @primary-color;
+        font-size: 9px;
+        font-weight: 600;
+        line-height: 14px;
+        flex-shrink: 0;
       }
 
       &:hover,
@@ -78,6 +101,26 @@
           text-transform: uppercase;
         }
 
+        // FK link icon on foreign key columns
+        .fk-icon {
+          color: @primary-color;
+          font-size: 10px;
+          margin-right: 3px;
+          cursor: pointer;
+          opacity: 0.7;
+
+          &:hover {
+            opacity: 1;
+            text-decoration: underline;
+          }
+        }
+
+        // Highlight FK columns with a subtle left border
+        &.fk-column {
+          border-left: 2px solid fade(@primary-color, 40%);
+          padding-left: 20px;
+        }
+
         &:hover,
         &:focus,
         &:focus-within {
@@ -87,6 +130,32 @@
             visibility: visible;
           }
         }
+      }
+    }
+  }
+
+  // Relationship filter banner
+  .relationship-filter-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 8px;
+    margin: 4px 0;
+    background-color: fade(@primary-color, 8%);
+    border: 1px solid fade(@primary-color, 20%);
+    border-radius: @redash-radius;
+    font-size: 11px;
+    color: @text-color;
+
+    .clear-filter {
+      color: @primary-color;
+      font-size: 11px;
+      cursor: pointer;
+      margin-left: 8px;
+      white-space: nowrap;
+
+      &:hover {
+        text-decoration: underline;
       }
     }
   }

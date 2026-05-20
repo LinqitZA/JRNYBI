@@ -1,4 +1,4 @@
-import { isNil, map, filter, some, includes, get } from "lodash";
+import { isNil, map, filter, some, includes, get, reduce } from "lodash";
 import cx from "classnames";
 import React, { useState, useCallback, useMemo, useEffect } from "react";
 import PropTypes from "prop-types";
@@ -33,7 +33,70 @@ export const SchemaItemType = PropTypes.shape({
 const schemaTableHeight = 22;
 const schemaColumnHeight = 18;
 
-function SchemaItem({ item, expanded, onToggle, onSelect, ...props }) {
+/**
+ * Determine the icon class for a table based on its name.
+ * Views (prefixed with "v_" in any schema) get fa-eye, others get fa-table.
+ */
+function getTableIcon(tableName) {
+  // Extract the table part (after the last dot for schema-qualified names)
+  const parts = tableName.split(".");
+  const rawName = parts[parts.length - 1];
+  return rawName.startsWith("v_") ? "fa fa-eye" : "fa fa-table";
+}
+
+/**
+ * Build a map of table name -> count of incoming FK references.
+ * A "ref" means another table has a column with fk pointing to this table.
+ */
+function buildIncomingFkCounts(schema) {
+  return reduce(
+    schema,
+    (counts, item) => {
+      if (item.columns) {
+        item.columns.forEach((col) => {
+          const fk = get(col, "fk");
+          if (fk) {
+            const refTableName = fk.schema + "." + fk.table;
+            counts[refTableName] = (counts[refTableName] || 0) + 1;
+          }
+        });
+      }
+      return counts;
+    },
+    {}
+  );
+}
+
+/**
+ * Build a set of table names related to the given table (via FK in either direction).
+ */
+function getRelatedTables(schema, tableName) {
+  const related = new Set();
+  related.add(tableName);
+
+  schema.forEach((item) => {
+    if (item.columns) {
+      item.columns.forEach((col) => {
+        const fk = get(col, "fk");
+        if (fk) {
+          const refTableName = fk.schema + "." + fk.table;
+          // This table references another table
+          if (item.name === tableName) {
+            related.add(refTableName);
+          }
+          // Another table references this table
+          if (refTableName === tableName) {
+            related.add(item.name);
+          }
+        }
+      });
+    }
+  });
+
+  return related;
+}
+
+function SchemaItem({ item, expanded, onToggle, onSelect, onNavigateToTable, incomingFkCount, ...props }) {
   const handleSelect = useCallback(
     (event, ...args) => {
       event.preventDefault();
@@ -43,11 +106,24 @@ function SchemaItem({ item, expanded, onToggle, onSelect, ...props }) {
     [onSelect]
   );
 
+  const handleFkClick = useCallback(
+    (event, fk) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (onNavigateToTable) {
+        const targetTable = fk.schema + "." + fk.table;
+        onNavigateToTable(targetTable);
+      }
+    },
+    [onNavigateToTable]
+  );
+
   if (!item) {
     return null;
   }
 
   const tableDisplayName = item.displayName || item.name;
+  const tableIcon = getTableIcon(item.name);
 
   return (
     <div {...props}>
@@ -61,11 +137,16 @@ function SchemaItem({ item, expanded, onToggle, onSelect, ...props }) {
           overlayStyle={{ whiteSpace: "pre-line" }}
         >
           <PlainButton className="table-name" onClick={onToggle}>
-            <i className="fa fa-table m-r-5" aria-hidden="true" />
+            <i className={cx(tableIcon, "m-r-5")} aria-hidden="true" />
             <strong>
               <span title={item.name}>{tableDisplayName}</span>
               {!isNil(item.size) && <span> ({item.size})</span>}
             </strong>
+            {incomingFkCount > 0 && (
+              <span className="fk-ref-badge" title={incomingFkCount + " FK refs"}>
+                {incomingFkCount}
+              </span>
+            )}
           </PlainButton>
         </Tooltip>
         <Tooltip
@@ -89,9 +170,17 @@ function SchemaItem({ item, expanded, onToggle, onSelect, ...props }) {
               const columnName = get(column, "name");
               const columnType = get(column, "type");
               const columnDescription = get(column, "description");
+              const fk = get(column, "fk");
+              const fkTooltip = fk
+                ? "References " + fk.schema + "." + fk.table + "." + fk.column
+                : null;
               return (
                 <Tooltip
-                  title={"Insert column name into query text" + (columnDescription ? "\n" + columnDescription : "")}
+                  title={
+                    "Insert column name into query text" +
+                    (fkTooltip ? "\n" + fkTooltip : "") +
+                    (columnDescription ? "\n" + columnDescription : "")
+                  }
                   mouseEnterDelay={0}
                   mouseLeaveDelay={0}
                   placement="rightTop"
@@ -99,10 +188,24 @@ function SchemaItem({ item, expanded, onToggle, onSelect, ...props }) {
                 >
                   <PlainButton
                     key={columnName}
-                    className="table-open-item"
+                    className={cx("table-open-item", { "fk-column": !!fk })}
                     onClick={(e) => handleSelect(e, columnName)}
                   >
                     <div>
+                      {fk && (
+                        <Tooltip
+                          title={"Click to go to " + fk.schema + "." + fk.table}
+                          mouseEnterDelay={0}
+                          mouseLeaveDelay={0}
+                          placement="top"
+                        >
+                          <i
+                            className="fa fa-link fk-icon"
+                            aria-hidden="true"
+                            onClick={(e) => handleFkClick(e, fk)}
+                          />
+                        </Tooltip>
+                      )}
                       {columnName} {columnType && <span className="column-type">{columnType}</span>}
                     </div>
 
@@ -125,6 +228,8 @@ SchemaItem.propTypes = {
   expanded: PropTypes.bool,
   onToggle: PropTypes.func,
   onSelect: PropTypes.func,
+  onNavigateToTable: PropTypes.func,
+  incomingFkCount: PropTypes.number,
 };
 
 SchemaItem.defaultProps = {
@@ -132,6 +237,8 @@ SchemaItem.defaultProps = {
   expanded: false,
   onToggle: () => {},
   onSelect: () => {},
+  onNavigateToTable: null,
+  incomingFkCount: 0,
 };
 
 function SchemaLoadingState() {
@@ -142,7 +249,15 @@ function SchemaLoadingState() {
   );
 }
 
-export function SchemaList({ loading, schema, expandedFlags, onTableExpand, onItemSelect }) {
+export function SchemaList({
+  loading,
+  schema,
+  expandedFlags,
+  onTableExpand,
+  onItemSelect,
+  onNavigateToTable,
+  incomingFkCounts,
+}) {
   const [listRef, setListRef] = useState(null);
 
   useEffect(() => {
@@ -178,6 +293,8 @@ export function SchemaList({ loading, schema, expandedFlags, onTableExpand, onIt
                     expanded={expandedFlags[item.name]}
                     onToggle={() => onTableExpand(item.name)}
                     onSelect={onItemSelect}
+                    onNavigateToTable={onNavigateToTable}
+                    incomingFkCount={get(incomingFkCounts, item.name, 0)}
                   />
                 );
               }}
@@ -235,9 +352,21 @@ export default function SchemaBrowser({
 }) {
   const [schema, isLoading, refreshSchema] = useDataSourceSchema(dataSource);
   const [filterString, setFilterString] = useState("");
-  const filteredSchema = useMemo(() => applyFilterOnSchema(schema, filterString), [schema, filterString]);
-  const [handleFilterChange] = useDebouncedCallback(setFilterString, 500);
   const [expandedFlags, setExpandedFlags] = useState({});
+  const [relationshipFilter, setRelationshipFilter] = useState(null); // table name to filter by
+
+  const incomingFkCounts = useMemo(() => buildIncomingFkCounts(schema), [schema]);
+
+  const filteredSchema = useMemo(() => {
+    let result = applyFilterOnSchema(schema, filterString);
+    if (relationshipFilter) {
+      const related = getRelatedTables(schema, relationshipFilter);
+      result = filter(result, (item) => related.has(item.name));
+    }
+    return result;
+  }, [schema, filterString, relationshipFilter]);
+
+  const [handleFilterChange] = useDebouncedCallback(setFilterString, 500);
 
   const handleSchemaUpdate = useImmutableCallback(onSchemaUpdate);
 
@@ -245,6 +374,24 @@ export default function SchemaBrowser({
     setExpandedFlags({});
     handleSchemaUpdate(schema);
   }, [schema, handleSchemaUpdate]);
+
+  // Navigate to a table (scroll + expand) when clicking an FK link
+  const handleNavigateToTable = useCallback(
+    (tableName) => {
+      setExpandedFlags((prev) => ({ ...prev, [tableName]: true }));
+      // Clear any relationship filter so the target table is visible
+      setRelationshipFilter(null);
+    },
+    []
+  );
+
+  // Toggle relationship filtering for a table
+  const handleToggleRelationships = useCallback(
+    (tableName) => {
+      setRelationshipFilter((prev) => (prev === tableName ? null : tableName));
+    },
+    []
+  );
 
   if (schema.length === 0 && !isLoading) {
     return null;
@@ -275,12 +422,24 @@ export default function SchemaBrowser({
           </Button>
         </Tooltip>
       </div>
+      {relationshipFilter && (
+        <div className="relationship-filter-banner">
+          <span>
+            Showing tables related to <strong>{relationshipFilter}</strong>
+          </span>
+          <PlainButton onClick={() => setRelationshipFilter(null)} className="clear-filter">
+            <i className="fa fa-times" aria-hidden="true" /> Clear
+          </PlainButton>
+        </div>
+      )}
       <SchemaList
         loading={isLoading && schema.length === 0}
         schema={filteredSchema}
         expandedFlags={expandedFlags}
         onTableExpand={toggleTable}
         onItemSelect={onItemSelect}
+        onNavigateToTable={handleNavigateToTable}
+        incomingFkCounts={incomingFkCounts}
       />
     </div>
   );
