@@ -13,6 +13,7 @@ import pivotVisualization from "./pivot";
 import sankeyVisualization from "./sankey";
 import sunburstVisualization from "./sunburst";
 import tableVisualization from "./table";
+import reportVisualization from "./report";
 import wordCloudVisualization from "./word-cloud";
 
 type VisualizationConfig = {
@@ -87,6 +88,7 @@ each(
     funnelVisualization,
     mapVisualization,
     pivotVisualization,
+    reportVisualization,
     sankeyVisualization,
     sunburstVisualization,
     tableVisualization,

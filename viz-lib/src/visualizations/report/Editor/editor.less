@@ -1,0 +1,89 @@
+.report-metric-card-editor {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  background: #fafbfc;
+
+  .report-metric-card-editor-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  .report-metric-card-editor-title {
+    font-weight: 600;
+    font-size: 13px;
+    color: #1e293b;
+  }
+
+  .report-metric-card-editor-actions {
+    display: flex;
+    gap: 4px;
+  }
+
+  .report-metric-card-btn {
+    border: 1px solid #cbd5e1;
+    background: #fff;
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    font-size: 12px;
+    color: #64748b;
+    transition: all 0.2s;
+
+    &:hover {
+      border-color: #94a3b8;
+      color: #1e293b;
+    }
+
+    &.report-metric-card-btn-danger {
+      &:hover {
+        border-color: #dc2626;
+        color: #dc2626;
+        background: #fef2f2;
+      }
+    }
+  }
+}
+
+.report-conditional-colors {
+  padding-left: 8px;
+
+  .report-color-picker-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .report-color-label {
+    font-size: 12px;
+    color: #64748b;
+  }
+}
+
+.report-add-metric-btn {
+  display: block;
+  width: 100%;
+  padding: 8px 16px;
+  border: 2px dashed #cbd5e1;
+  border-radius: 8px;
+  background: transparent;
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: #2563eb;
+    background: #eff6ff;
+  }
+
+  i {
+    margin-right: 6px;
+  }
+}
