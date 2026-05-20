@@ -30,7 +30,7 @@ from redash.query_runner import (
     JobTimeoutException,
     register,
 )
-from redash.query_runner.pg import PostgreSQL, _wait, _cleanup_ssl_certs, build_schema, types_map
+from redash.query_runner.pg import PostgreSQL, _wait, _cleanup_ssl_certs, build_schema, full_table_name, types_map
 
 logger = logging.getLogger(__name__)
 
@@ -333,6 +333,43 @@ class JRNYPostgreSQL(PostgreSQL):
 
         return data, error
 
+    def _get_definitions_enriched(self, schema, query):
+        """
+        Like _get_definitions from base PostgreSQL, but also handles
+        is_nullable column data to enrich the schema for autocomplete.
+        """
+        results, error = self.run_query(query, None)
+        if error is not None:
+            self._handle_run_query_error(error)
+
+        # Custom build_schema that includes nullable info
+        table_names = set(
+            full_table_name(r["table_schema"], r["table_name"])
+            for r in results["rows"]
+        )
+        for row in results["rows"]:
+            if row["table_schema"] != "public":
+                table_name = full_table_name(
+                    row["table_schema"], row["table_name"]
+                )
+            else:
+                if row["table_name"] in table_names:
+                    table_name = full_table_name(
+                        row["table_schema"], row["table_name"]
+                    )
+                else:
+                    table_name = row["table_name"]
+
+            if table_name not in schema:
+                schema[table_name] = {"name": table_name, "columns": []}
+
+            col_dict = {"name": row["column_name"]}
+            if row.get("data_type") is not None:
+                col_dict["type"] = row["data_type"]
+            if row.get("is_nullable") is not None:
+                col_dict["nullable"] = row["is_nullable"] == "YES"
+            schema[table_name]["columns"].append(col_dict)
+
     def _get_tables(self, schema):
         """
         Get schema metadata, prioritizing the 'reporting' schema views at the
@@ -345,12 +382,14 @@ class JRNYPostgreSQL(PostgreSQL):
         SELECT table_schema,
                table_name,
                column_name,
-               data_type
+               data_type,
+               is_nullable
         FROM (
             SELECT s.nspname AS table_schema,
                    c.relname AS table_name,
                    a.attname AS column_name,
-                   NULL::text AS data_type
+                   NULL::text AS data_type,
+                   CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END AS is_nullable
             FROM pg_class c
             JOIN pg_namespace s
             ON c.relnamespace = s.oid
@@ -368,7 +407,8 @@ class JRNYPostgreSQL(PostgreSQL):
             SELECT table_schema,
                    table_name,
                    column_name,
-                   data_type
+                   data_type,
+                   is_nullable
             FROM information_schema.columns
             WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
             AND has_table_privilege(quote_ident(table_schema) || '.' || quote_ident(table_name), 'select')
@@ -381,7 +421,7 @@ class JRNYPostgreSQL(PostgreSQL):
             column_name
         """
 
-        self._get_definitions(schema, query)
+        self._get_definitions_enriched(schema, query)
 
         return list(schema.values())
 

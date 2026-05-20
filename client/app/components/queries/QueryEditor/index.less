@@ -11,3 +11,76 @@
     margin: 0;
   }
 }
+
+// ---- JRNYBI autocomplete documentation tooltip styles ----
+// These are global because Ace appends the tooltip outside the editor container.
+.ace_doc-tooltip {
+  max-width: 420px !important;
+  padding: 0 !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 6px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1) !important;
+  background: #ffffff !important;
+}
+
+.jrnybi-col-doc {
+  padding: 8px 12px;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 12px;
+  line-height: 1.5;
+  max-width: 380px;
+}
+
+.jrnybi-col-doc-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 2px;
+}
+
+.jrnybi-type-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #ffffff;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.jrnybi-nullable-badge {
+  display: inline-block;
+  padding: 0px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.jrnybi-nullable-badge.jrnybi-nullable {
+  color: #9ca3af;
+  border: 1px solid #d1d5db;
+}
+
+.jrnybi-nullable-badge.jrnybi-notnull {
+  color: #dc2626;
+  border: 1px solid #fca5a5;
+}
+
+.jrnybi-col-doc-fk {
+  margin-top: 4px;
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.jrnybi-col-doc-desc {
+  margin-top: 4px;
+  color: #4b5563;
+  font-size: 12px;
+  line-height: 1.4;
+  word-wrap: break-word;
+}
