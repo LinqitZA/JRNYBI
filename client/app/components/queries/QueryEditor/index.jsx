@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState, useCallback, useImperativeHandle } from "react";
 import PropTypes from "prop-types";
 import cx from "classnames";
-import { AceEditor, snippetsModule, updateSchemaCompleter } from "./ace";
+import ace from "ace-builds";
+import { AceEditor, snippetsModule, updateSchemaCompleter, getSchemaRawData, getFKGraphData } from "./ace";
+import { detectFKAtCursor, applyFKResolution, findFKColumnsInSelect } from "./fkResolution";
 import { srNotify } from "@/lib/accessibility";
 import { SchemaItemType } from "@/components/queries/SchemaBrowser";
 import resizeObserver from "@/services/resizeObserver";
@@ -48,9 +50,52 @@ const QueryEditor = React.forwardRef(function(
   useEffect(() => {
     if (editorRef) {
       const editorId = editorRef.editor.id;
+      const editor = editorRef.editor;
       updateSchemaCompleter(editorId, schema);
+
+      // FK column markers: dotted underline on FK columns in SELECT clause
+      const Range = ace.acequire("ace/range").Range;
+      let markerIds = [];
+      let markerTimeout = null;
+
+      function updateFKMarkers() {
+        const rawSchema = getSchemaRawData(editorId);
+        const fkGraph = getFKGraphData(editorId);
+
+        // Remove old markers
+        markerIds.forEach(id => editor.session.removeMarker(id));
+        markerIds = [];
+
+        if (!rawSchema || !fkGraph) return;
+
+        try {
+          const fkCols = findFKColumnsInSelect(editor, rawSchema, fkGraph);
+          fkCols.forEach(marker => {
+            const range = new Range(marker.row, marker.startCol, marker.row, marker.endCol);
+            const id = editor.session.addMarker(range, "fk-resolvable-marker", "text", false);
+            markerIds.push(id);
+          });
+        } catch (e) {
+          // Never let marker logic break the editor
+        }
+      }
+
+      // Initial marker update
+      updateFKMarkers();
+
+      // Update markers on text changes (debounced)
+      function onEditorChange() {
+        if (markerTimeout) clearTimeout(markerTimeout);
+        markerTimeout = setTimeout(updateFKMarkers, 500);
+      }
+
+      editor.session.on("change", onEditorChange);
+
       return () => {
         updateSchemaCompleter(editorId, null);
+        markerIds.forEach(id => editor.session.removeMarker(id));
+        editor.session.off("change", onEditorChange);
+        if (markerTimeout) clearTimeout(markerTimeout);
       };
     }
   }, [schema, editorRef]);
@@ -107,6 +152,21 @@ const QueryEditor = React.forwardRef(function(
       if (notificationCleanup) {
         notificationCleanup();
       }
+    });
+
+    // FK resolution: Ctrl+. to resolve FK column to its display field
+    editor.commands.addCommand({
+      name: "resolveFKColumn",
+      bindKey: { win: "Ctrl-.", mac: "Cmd-." },
+      exec: ed => {
+        const rawSchema = getSchemaRawData(ed.id);
+        const fkGraph = getFKGraphData(ed.id);
+        if (!rawSchema || !fkGraph) return;
+        const fkInfo = detectFKAtCursor(ed, rawSchema, fkGraph);
+        if (fkInfo) {
+          applyFKResolution(ed, fkInfo);
+        }
+      },
     });
 
     // Reset Completer in case dot is pressed

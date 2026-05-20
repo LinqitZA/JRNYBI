@@ -2,6 +2,7 @@ import { capitalize, isNil, map, get } from "lodash";
 import AceEditor from "react-ace";
 import ace from "ace-builds";
 import { parseSQLContext } from "./sqlContext";
+import { resolveDisplayColumn } from "./fkResolution";
 
 import "ace-builds/src-noconflict/ext-language_tools";
 import "ace-builds/src-noconflict/mode-json";
@@ -261,6 +262,12 @@ function buildFKGraph(schema) {
       .map(p => `${shortTableName(g.sourceTable)}.${p.sourceCol} → ${shortTableName(g.targetTable)}.${p.targetCol}`)
       .join(", ");
 
+    // Resolve display columns for both ends of the relationship
+    const targetEntry = schema.find(t => t.name === g.targetTable);
+    const targetDisplayCol = targetEntry ? resolveDisplayColumn(targetEntry) : null;
+    const sourceEntry = schema.find(t => t.name === g.sourceTable);
+    const sourceDisplayCol = sourceEntry ? resolveDisplayColumn(sourceEntry) : null;
+
     // Outgoing edge: sourceTable has FK pointing to targetTable
     if (!graph[g.sourceTable]) graph[g.sourceTable] = [];
     graph[g.sourceTable].push({
@@ -269,6 +276,7 @@ function buildFKGraph(schema) {
       //   existingAlias.thisCol = newAlias.otherCol
       joinPairs: g.pairs.map(p => ({ thisCol: p.sourceCol, otherCol: p.targetCol })),
       metaLabel,
+      displayColumn: targetDisplayCol,
     });
 
     // Incoming edge: targetTable is referenced by sourceTable
@@ -279,6 +287,7 @@ function buildFKGraph(schema) {
       //   existingAlias.thisCol = newAlias.otherCol
       joinPairs: g.pairs.map(p => ({ thisCol: p.targetCol, otherCol: p.sourceCol })),
       metaLabel,
+      displayColumn: sourceDisplayCol,
     });
   });
 
@@ -655,5 +664,15 @@ langTools.setCompleters([
     },
   },
 ]);
+
+/** Get raw schema data for an editor (used by FK resolution). */
+export function getSchemaRawData(editorId) {
+  return schemaRawData[editorId] || null;
+}
+
+/** Get FK graph data for an editor (used by FK resolution). */
+export function getFKGraphData(editorId) {
+  return fkGraphData[editorId] || null;
+}
 
 export { AceEditor, langTools, snippetsModule };
