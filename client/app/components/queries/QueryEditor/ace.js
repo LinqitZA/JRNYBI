@@ -80,10 +80,209 @@ function buildKeywordsFromSchema(schema) {
 const schemaCompleterKeywords = {};
 /** Raw schema data per editor (needed for context-aware lookups). */
 const schemaRawData = {};
+/** Cached FK relationship graph per editor. */
+const fkGraphData = {};
 
 export function updateSchemaCompleter(editorKey, schema = null) {
   schemaCompleterKeywords[editorKey] = isNil(schema) ? null : buildKeywordsFromSchema(schema);
   schemaRawData[editorKey] = isNil(schema) ? null : schema;
+  fkGraphData[editorKey] = isNil(schema) ? null : buildFKGraph(schema);
+}
+
+// ---- FK relationship graph ---------------------------------------------------
+
+/**
+ * Build a foreign-key relationship graph from the enriched schema data.
+ * For each table, returns all tables that have FK relationships (both directions:
+ * tables that reference it, and tables it references).
+ *
+ * @param {Array} schema - The raw schema array from the backend (with FK-enriched columns)
+ * @returns {Object} graph keyed by full table name, value is array of relationship edges
+ */
+function buildFKGraph(schema) {
+  if (!schema) return {};
+
+  // First pass: collect all FK relationships grouped by source→target table pair
+  // This naturally handles composite FKs (multiple columns in the same constraint)
+  const pairMap = {}; // key: "sourceTable||targetTable"
+
+  schema.forEach(table => {
+    (table.columns || []).forEach(col => {
+      const fk = get(col, "fk");
+      if (!fk) return;
+
+      const targetTable = fk.schema ? `${fk.schema}.${fk.table}` : fk.table;
+      const pairKey = `${table.name}||${targetTable}`;
+
+      if (!pairMap[pairKey]) {
+        pairMap[pairKey] = { sourceTable: table.name, targetTable, pairs: [] };
+      }
+      pairMap[pairKey].pairs.push({
+        sourceCol: get(col, "name"), // FK column in source table
+        targetCol: fk.column,        // referenced column in target table
+      });
+    });
+  });
+
+  // Second pass: build bidirectional adjacency list
+  const graph = {};
+
+  Object.values(pairMap).forEach(g => {
+    const metaLabel = g.pairs
+      .map(p => `${shortTableName(g.sourceTable)}.${p.sourceCol} → ${shortTableName(g.targetTable)}.${p.targetCol}`)
+      .join(", ");
+
+    // Outgoing edge: sourceTable has FK pointing to targetTable
+    if (!graph[g.sourceTable]) graph[g.sourceTable] = [];
+    graph[g.sourceTable].push({
+      relatedTable: g.targetTable,
+      // When the existing query table IS the source, these map to:
+      //   existingAlias.thisCol = newAlias.otherCol
+      joinPairs: g.pairs.map(p => ({ thisCol: p.sourceCol, otherCol: p.targetCol })),
+      metaLabel,
+    });
+
+    // Incoming edge: targetTable is referenced by sourceTable
+    if (!graph[g.targetTable]) graph[g.targetTable] = [];
+    graph[g.targetTable].push({
+      relatedTable: g.sourceTable,
+      // When the existing query table IS the target, these map to:
+      //   existingAlias.thisCol = newAlias.otherCol
+      joinPairs: g.pairs.map(p => ({ thisCol: p.targetCol, otherCol: p.sourceCol })),
+      metaLabel,
+    });
+  });
+
+  return graph;
+}
+
+/** Get the short display name for a table (without schema prefix). */
+function shortTableName(fullName) {
+  if (!fullName) return fullName;
+  const dot = fullName.lastIndexOf(".");
+  return dot >= 0 ? fullName.substring(dot + 1) : fullName;
+}
+
+/**
+ * Generate a short alias for a table name, avoiding conflicts with existing aliases.
+ */
+function generateAlias(tableName, existingAliases) {
+  const sn = shortTableName(tableName);
+  const parts = sn.split("_");
+  const taken = new Set((existingAliases || []).map(a => (a || "").toLowerCase()));
+
+  // Try initials of underscore-separated parts (e.g. "sales_orders" → "so")
+  if (parts.length > 1) {
+    const initials = parts.map(p => (p[0] || "")).join("");
+    if (initials && !taken.has(initials.toLowerCase())) return initials;
+  }
+
+  // Try first letter
+  if (sn[0] && !taken.has(sn[0].toLowerCase())) return sn[0];
+
+  // Try increasing prefixes
+  for (let len = 2; len <= Math.min(sn.length, 5); len++) {
+    const cand = sn.substring(0, len);
+    if (!taken.has(cand.toLowerCase())) return cand;
+  }
+
+  // Append number as last resort
+  let num = 2;
+  while (taken.has(`${sn[0]}${num}`.toLowerCase())) num++;
+  return `${sn[0]}${num}`;
+}
+
+/**
+ * Find the full schema table name matching a table reference from SQL context.
+ * Handles schema-qualified names (sales.orders) and unqualified names (orders).
+ */
+function findSchemaTableName(ref, rawSchema) {
+  if (!rawSchema || !ref) return null;
+
+  const possibleNames = [];
+  if (ref.schema && ref.name) possibleNames.push(`${ref.schema}.${ref.name}`);
+  possibleNames.push(ref.name);
+
+  const matched = rawSchema.find(schemaItem => {
+    for (const pn of possibleNames) {
+      if (schemaItem.name === pn) return true;
+      if (schemaItem.name.endsWith(`.${pn}`)) return true;
+    }
+    return false;
+  });
+
+  return matched ? matched.name : null;
+}
+
+/**
+ * Build FK-aware JOIN table suggestions. For each table already in the query,
+ * look up FK relationships and generate completions with auto-generated ON clauses.
+ *
+ * @param {Object} ctx           - SQL context from parseSQLContext()
+ * @param {Array}  rawSchema     - Raw schema data
+ * @param {Object} fkGraph       - FK relationship graph from buildFKGraph()
+ * @param {boolean} includeOnClause - Whether to generate ON clause (true for JOINs, false for FROM)
+ * @returns {Array|null} FK-based suggestions, or null if none found
+ */
+function buildJoinSuggestions(ctx, rawSchema, fkGraph, includeOnClause) {
+  if (!rawSchema || !fkGraph || !ctx.tables || ctx.tables.length === 0) {
+    return null;
+  }
+
+  const suggestions = [];
+  const suggestedTables = new Set();
+
+  ctx.tables.forEach(existingRef => {
+    const existingFullName = findSchemaTableName(existingRef, rawSchema);
+    if (!existingFullName) return;
+
+    const edges = fkGraph[existingFullName];
+    if (!edges) return;
+
+    const existingAliases = ctx.tables.map(t => t.alias || t.name);
+    const existingQualifier = existingRef.alias || existingRef.name;
+
+    edges.forEach(edge => {
+      if (suggestedTables.has(edge.relatedTable)) return;
+
+      // Don't suggest tables already in the query
+      const alreadyInQuery = ctx.tables.some(t => {
+        const fn = findSchemaTableName(t, rawSchema);
+        return fn === edge.relatedTable;
+      });
+      if (alreadyInQuery) return;
+
+      suggestedTables.add(edge.relatedTable);
+
+      if (includeOnClause) {
+        // Generate alias and full JOIN clause with ON condition
+        const newAlias = generateAlias(edge.relatedTable, existingAliases);
+
+        // Build ON clause — supports composite FKs with AND
+        const onParts = edge.joinPairs.map(
+          p => `${existingQualifier}.${p.thisCol} = ${newAlias}.${p.otherCol}`
+        );
+        const onClause = onParts.join(" AND ");
+
+        suggestions.push({
+          name: edge.relatedTable,
+          value: `${edge.relatedTable} ${newAlias} ON ${onClause}`,
+          score: 250, // higher than regular tables (100/200)
+          meta: `FK: ${edge.metaLabel}`,
+        });
+      } else {
+        // FROM clause: just prioritize the table, no ON clause
+        suggestions.push({
+          name: edge.relatedTable,
+          value: edge.relatedTable,
+          score: 250,
+          meta: `FK: ${edge.metaLabel}`,
+        });
+      }
+    });
+  });
+
+  return suggestions.length > 0 ? suggestions : null;
 }
 
 // ---- Context-aware helpers ----------------------------------------------------
@@ -275,9 +474,25 @@ langTools.setCompleters([
           return;
         }
 
-        // FROM / JOIN clauses: show only table names (no columns)
+        // FROM / JOIN clauses: show table names with FK-aware prioritization
         if (TABLE_CLAUSES.has(ctx.clause)) {
-          // Boost table scores for contextual relevance
+          const fkGraph = fkGraphData[editor.id];
+          const isJoinClause = ctx.clause && ctx.clause.toUpperCase().includes("JOIN");
+
+          // When tables already exist in the query, offer FK-based suggestions
+          if (ctx.tables.length > 0 && fkGraph) {
+            const fkSuggestions = buildJoinSuggestions(
+              ctx, rawSchema, fkGraph, isJoinClause
+            );
+            if (fkSuggestions) {
+              // FK-related tables first (score 250), then all others (score 100)
+              const otherTables = table.map(t => ({ ...t, score: 100 }));
+              callback(null, fkSuggestions.concat(otherTables));
+              return;
+            }
+          }
+
+          // Regular table suggestions (no FK data or no existing tables yet)
           const boostedTables = table.map(t => ({ ...t, score: 200 }));
           callback(null, boostedTables);
           return;
