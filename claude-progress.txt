@@ -1386,3 +1386,63 @@ Agent: Handling feature #86
 - Total features: 87
 - ALL FEATURES COMPLETE
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+
+## Session 29: 2026-05-20
+Agent: Handling feature #93
+
+### Feature #93: Report category management for admins (PASSING)
+- **Backend API**: Created full CRUD API at /api/jrny/report-categories
+  * GET returns ordered list of categories (authenticated users)
+  * POST creates new category (admin only, validates name/id/color/icon)
+  * PUT on list endpoint bulk-replaces all categories (reorder support)
+  * PUT on /<id> updates single category (admin only)
+  * DELETE on /<id> removes category (admin only)
+  * All mutations require @require_admin decorator
+  * Categories stored in organization.settings JSONB under "report_categories" key
+- **Default Categories**: 5 defaults matching JRNY ERP modules:
+  * Sales (shopping-cart, #2563eb), Finance (dollar, #16a34a)
+  * Inventory (database, #d97706), Procurement (shopping, #7c3aed)
+  * Cashbook (book, #0891b2)
+- **Admin UI Page**: /admin/report-categories with full CRUD
+  * Ant Design Table with reorder (up/down arrows), edit, delete
+  * CategoryFormModal with icon picker (15 Ant Design icons)
+  * Color picker with hex input, native color input, and preset swatches
+  * Popconfirm on delete, validation on form fields
+  * Uncategorized note at bottom explaining fallback behavior
+- **Admin Layout**: Added "Report Categories" tab to admin horizontal menu
+- **Route**: Registered Admin.ReportCategories route with RequireAdmin guard
+- **Validation**: name required, id auto-generated from name, color must be #RRGGBB
+  * Duplicate IDs rejected (400), invalid colors rejected (400)
+  * Non-existent category delete returns 404
+- **Persistence**: Data stored in PostgreSQL JSONB, verified survives server restart
+- **Mock Data Check**: Zero matches for mock/placeholder patterns
+- **No Console Errors**: Server logs show clean 200/400/404 status codes
+
+## Files Modified
+- redash/settings/organization.py - Added report_categories default setting (5 categories)
+- redash/handlers/jrny_report_categories.py - NEW: Full CRUD API resource
+- redash/handlers/api.py - Registered report-categories API endpoints
+- client/app/pages/admin/ReportCategories.jsx - NEW: Admin page component
+- client/app/pages/admin/ReportCategories.less - NEW: Styles for admin page
+- client/app/components/admin/Layout.jsx - Added Report Categories menu item
+- client/app/pages/index.js - Added ReportCategories import
+
+## Verification Summary
+- GET /api/jrny/report-categories -> 200 with 5 default categories
+- POST (create) -> 201 with auto-generated ID
+- PUT /<id> (update) -> 200 with updated fields
+- DELETE /<id> (delete) -> 200 with confirmation
+- PUT (bulk reorder) -> 200 with new order
+- DELETE nonexistent -> 404
+- POST duplicate ID -> 400
+- POST invalid color -> 400
+- Unauthenticated POST -> 401
+- Restart persistence test: create -> restart -> verify -> cleanup
+- Docker container JS has "Report Categories" strings (13+ matches)
+- Docker container CSS has 27 selectors for report-categories-page
+- Committed as 8dc226e7
+
+## Current Status
+- Features passing: 88+ (93 total)
+- Feature #93 complete
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
