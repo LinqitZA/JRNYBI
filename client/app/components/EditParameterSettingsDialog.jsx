@@ -251,6 +251,29 @@ function EditParameterSettingsDialog(props) {
             </Checkbox>
           </Form.Item>
         )}
+        {param.type === "query" && (
+          <Form.Item
+            label="Depends On"
+            help="Optional: reload this dropdown when another parameter changes"
+            {...formItemProps}
+          >
+            <Select
+              value={param.dependsOn || undefined}
+              onChange={(dependsOn) => setParam({ ...param, dependsOn: dependsOn || null })}
+              placeholder="None (independent)"
+              allowClear
+              data-test="DependsOnSelect"
+            >
+              {(props.existingParams || [])
+                .filter((name) => name !== param.name)
+                .map((name) => (
+                  <Option key={name} value={name}>
+                    {name}
+                  </Option>
+                ))}
+            </Select>
+          </Form.Item>
+        )}
         {(param.type === "enum" || param.type === "query") && param.multiValuesOptions && (
           <Form.Item
             label="Quotation"

@@ -13,6 +13,9 @@ class Parameter {
 
     // Used for URL serialization
     this.urlPrefix = "p_";
+
+    // Cascading parameter support: name of parent parameter this depends on
+    this.dependsOn = parameter.dependsOn || null;
   }
 
   static getExecutionValue(param, extra = {}) {

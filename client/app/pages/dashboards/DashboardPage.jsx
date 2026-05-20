@@ -1,5 +1,5 @@
-import { isEmpty, map } from "lodash";
-import React, { useState, useEffect } from "react";
+import { isEmpty, map, some, get } from "lodash";
+import React, { useState, useEffect, useMemo } from "react";
 import PropTypes from "prop-types";
 import cx from "classnames";
 
@@ -89,6 +89,15 @@ function DashboardComponent(props) {
     setGridDisabled,
   } = dashboardConfiguration;
 
+  const hasReportVisualization = useMemo(
+    () =>
+      some(
+        get(dashboard, "widgets", []),
+        (w) => get(w, "visualization.type") === "REPORT"
+      ),
+    [dashboard]
+  );
+
   const [pageContainer, setPageContainer] = useState(null);
   const [bottomPanelStyles, setBottomPanelStyles] = useState({});
   const onParametersEdit = (parameters) => {
@@ -130,13 +139,31 @@ function DashboardComponent(props) {
         }
       />
       {!isEmpty(globalParameters) && (
-        <div className="dashboard-parameters m-b-10 p-15 bg-white tiled" data-test="DashboardParameters">
+        <div
+          className={cx("dashboard-parameters m-b-10 p-15 bg-white tiled", {
+            "report-filter-bar": hasReportVisualization,
+          })}
+          data-test="DashboardParameters">
+          {hasReportVisualization && (
+            <div className="report-filter-bar-header">
+              <i className="fa fa-filter" /> Report Filters
+            </div>
+          )}
           <Parameters
             parameters={globalParameters}
             onValuesChange={refreshDashboard}
             sortable={editingLayout}
             onParametersEdit={onParametersEdit}
           />
+          {hasReportVisualization && (
+            <button
+              type="button"
+              className="report-run-btn"
+              onClick={refreshDashboard}
+              data-test="RunReportButton">
+              <i className="fa fa-play" /> Run Report
+            </button>
+          )}
         </div>
       )}
       {!isEmpty(filters) && (

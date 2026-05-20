@@ -24,6 +24,22 @@ const DYNAMIC_DATE_OPTIONS = [
     label: () => getDynamicDateRangeFromString("d_this_year").value()[0].format("YYYY"),
   },
   {
+    name: "This quarter",
+    value: getDynamicDateRangeFromString("d_this_quarter"),
+    label: () =>
+      "Q" +
+      getDynamicDateRangeFromString("d_this_quarter").value()[0].quarter() +
+      " " +
+      getDynamicDateRangeFromString("d_this_quarter").value()[0].format("YYYY"),
+  },
+  {
+    name: "Year to date",
+    value: getDynamicDateRangeFromString("d_year_to_date"),
+    label: () =>
+      getDynamicDateRangeFromString("d_year_to_date").value()[0].format("MMM D") +
+      " - Today",
+  },
+  {
     name: "Last week",
     value: getDynamicDateRangeFromString("d_last_week"),
     label: () =>
@@ -40,6 +56,15 @@ const DYNAMIC_DATE_OPTIONS = [
     name: "Last year",
     value: getDynamicDateRangeFromString("d_last_year"),
     label: () => getDynamicDateRangeFromString("d_last_year").value()[0].format("YYYY"),
+  },
+  {
+    name: "Last quarter",
+    value: getDynamicDateRangeFromString("d_last_quarter"),
+    label: () =>
+      "Q" +
+      getDynamicDateRangeFromString("d_last_quarter").value()[0].quarter() +
+      " " +
+      getDynamicDateRangeFromString("d_last_quarter").value()[0].format("YYYY"),
   },
   {
     name: "Last 7 days",

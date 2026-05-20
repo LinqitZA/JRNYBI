@@ -1,7 +1,9 @@
-import { find, isArray, get, first, map, intersection, isEqual, isEmpty } from "lodash";
+import { find, isArray, get, first, map, intersection, isEqual, isEmpty, debounce } from "lodash";
 import React from "react";
 import PropTypes from "prop-types";
 import SelectWithVirtualScroll from "@/components/SelectWithVirtualScroll";
+
+const DEBOUNCE_SEARCH_MS = 200;
 
 export default class QueryBasedParameterInput extends React.Component {
   static propTypes = {
@@ -26,10 +28,36 @@ export default class QueryBasedParameterInput extends React.Component {
     super(props);
     this.state = {
       options: [],
+      filteredOptions: null,
       value: null,
       loading: false,
     };
+    this.debouncedFilter = debounce(this._filterOptions, DEBOUNCE_SEARCH_MS);
   }
+
+  componentWillUnmount() {
+    this.debouncedFilter.cancel();
+  }
+
+  _filterOptions = (searchText) => {
+    if (!searchText) {
+      this.setState({ filteredOptions: null });
+      return;
+    }
+    const lowerSearch = searchText.toLowerCase();
+    const filtered = this.state.options.filter(
+      (opt) => String(opt.name).toLowerCase().includes(lowerSearch) || String(opt.value).toLowerCase().includes(lowerSearch)
+    );
+    this.setState({ filteredOptions: filtered });
+  };
+
+  handleSearch = (searchText) => {
+    if (this.state.options.length > 500) {
+      this.debouncedFilter(searchText);
+    } else {
+      this.setState({ filteredOptions: null });
+    }
+  };
 
   componentDidMount() {
     this._loadOptions(this.props.queryId);
@@ -41,6 +69,10 @@ export default class QueryBasedParameterInput extends React.Component {
     }
     if (this.props.value !== prevProps.value) {
       this.setValue(this.props.value);
+    }
+    // Cascading: reload options when parent parameter value changes
+    if (this.props.cascadeKey !== prevProps.cascadeKey) {
+      this._loadOptions(this.props.queryId, true);
     }
   }
 
@@ -59,8 +91,8 @@ export default class QueryBasedParameterInput extends React.Component {
     return value;
   }
 
-  async _loadOptions(queryId) {
-    if (queryId && queryId !== this.state.queryId) {
+  async _loadOptions(queryId, forceReload = false) {
+    if (queryId && (queryId !== this.state.queryId || forceReload)) {
       this.setState({ loading: true });
       const options = await this.props.parameter.loadDropdownValues();
 
@@ -78,7 +110,8 @@ export default class QueryBasedParameterInput extends React.Component {
 
   render() {
     const { className, mode, onSelect, queryId, value, ...otherProps } = this.props;
-    const { loading, options } = this.state;
+    const { loading, options, filteredOptions } = this.state;
+    const displayOptions = filteredOptions || options;
     return (
       <span>
         <SelectWithVirtualScroll
@@ -88,9 +121,10 @@ export default class QueryBasedParameterInput extends React.Component {
           mode={mode}
           value={this.state.value}
           onChange={onSelect}
-          options={map(options, ({ value, name }) => ({ label: String(name), value }))}
+          options={map(displayOptions, ({ value, name }) => ({ label: String(name), value }))}
           showSearch
           showArrow
+          onSearch={this.handleSearch}
           notFoundContent={isEmpty(options) ? "No options available" : null}
           {...otherProps}
         />

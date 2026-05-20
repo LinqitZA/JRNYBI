@@ -102,6 +102,21 @@ const DYNAMIC_DATE_RANGES = {
     name: "Last 10 years",
     value: untilNow(() => moment().subtract(10, "years").startOf("day")),
   },
+  this_quarter: {
+    name: "This quarter",
+    value: () => [moment().startOf("quarter"), moment().endOf("quarter")],
+  },
+  last_quarter: {
+    name: "Last quarter",
+    value: () => [
+      moment().subtract(1, "quarter").startOf("quarter"),
+      moment().subtract(1, "quarter").endOf("quarter"),
+    ],
+  },
+  year_to_date: {
+    name: "Year to date",
+    value: () => [moment().startOf("year"), moment()],
+  },
 };
 
 export const DynamicDateRangeType = PropTypes.oneOf(values(DYNAMIC_DATE_RANGES));

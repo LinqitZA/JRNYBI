@@ -19,6 +19,55 @@
   display: flex;
 }
 
+// Report-specific filter bar styling
+.report-filter-bar {
+  border-left: 3px solid #2563eb;
+  background: linear-gradient(135deg, #f8fafc 0%, #eff6ff 100%);
+  position: relative;
+
+  .report-filter-bar-header {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #2563eb;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #e2e8f0;
+
+    i {
+      margin-right: 6px;
+    }
+  }
+
+  .report-run-btn {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 6px 20px;
+    border: 1px solid #2563eb;
+    border-radius: 6px;
+    background: #2563eb;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+
+    &:hover {
+      background: #1d4ed8;
+      border-color: #1d4ed8;
+    }
+
+    &:active {
+      background: #1e40af;
+    }
+
+    i {
+      margin-right: 6px;
+    }
+  }
+}
+
 .add-widget-container {
   background: #fff;
   border-radius: @redash-radius;

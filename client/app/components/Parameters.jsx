@@ -115,6 +115,19 @@ export default class Parameters extends React.Component {
         updateUrl(parameters);
       }
       onValuesChange(parametersWithPendingValues);
+
+      // Cascading parameters: notify dependents when a parent value changes
+      const changedNames = parametersWithPendingValues.map((p) => p.name);
+      if (changedNames.length > 0) {
+        const dependents = parameters.filter(
+          (p) => p.dependsOn && changedNames.includes(p.dependsOn)
+        );
+        if (dependents.length > 0) {
+          // Trigger a state update to force re-render of dependent params
+          this.setState({ cascadeCounter: (this.state.cascadeCounter || 0) + 1 });
+        }
+      }
+
       return { parameters };
     });
   };
