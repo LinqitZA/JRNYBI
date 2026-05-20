@@ -385,5 +385,110 @@ class JRNYPostgreSQL(PostgreSQL):
 
         return list(schema.values())
 
+    def _get_foreign_keys(self):
+        """
+        Query foreign key relationships from information_schema, filtered to
+        JRNY schemas.  Respects has_table_privilege and has_schema_privilege
+        so that only accessible FK metadata is returned.
+
+        Returns:
+            dict: Mapping of (source_schema.source_table, source_column)
+                  to {"schema": ref_schema, "table": ref_table, "column": ref_column}.
+        """
+        schema_list = ",".join("'{}'".format(s) for s in JRNY_SCHEMAS)
+
+        query = """
+        SELECT
+            tc.table_schema   AS fk_schema,
+            tc.table_name     AS fk_table,
+            kcu.column_name   AS fk_column,
+            ccu.table_schema  AS ref_schema,
+            ccu.table_name    AS ref_table,
+            ccu.column_name   AS ref_column
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name    = kcu.constraint_name
+         AND tc.constraint_schema  = kcu.constraint_schema
+        JOIN information_schema.constraint_column_usage ccu
+          ON tc.constraint_name    = ccu.constraint_name
+         AND tc.constraint_schema  = ccu.constraint_schema
+        WHERE tc.constraint_type = 'FOREIGN KEY'
+          AND tc.table_schema IN ({schemas})
+          AND has_table_privilege(
+                quote_ident(tc.table_schema) || '.' || quote_ident(tc.table_name),
+                'select')
+          AND has_schema_privilege(tc.table_schema, 'usage')
+          AND has_table_privilege(
+                quote_ident(ccu.table_schema) || '.' || quote_ident(ccu.table_name),
+                'select')
+          AND has_schema_privilege(ccu.table_schema, 'usage')
+        """.format(schemas=schema_list)
+
+        try:
+            results, error = self.run_query(query, None)
+            if error is not None:
+                logger.warning("Failed to fetch foreign keys: %s", error)
+                return {}
+        except Exception:
+            logger.warning("Exception fetching foreign keys", exc_info=True)
+            return {}
+
+        fk_map = {}
+        if results and results.get("rows"):
+            for row in results["rows"]:
+                fk_schema = row.get("fk_schema", "")
+                fk_table = row.get("fk_table", "")
+                fk_column = row.get("fk_column", "")
+                ref_schema = row.get("ref_schema", "")
+                ref_table = row.get("ref_table", "")
+                ref_column = row.get("ref_column", "")
+
+                # Build the full table name matching build_schema() output
+                full_name = "{}.{}".format(fk_schema, fk_table)
+                fk_map[(full_name, fk_column)] = {
+                    "schema": ref_schema,
+                    "table": ref_table,
+                    "column": ref_column,
+                }
+
+        return fk_map
+
+    def get_schema(self, get_stats=False):
+        """
+        Override to enrich the schema payload with foreign key relationship
+        data.  Each column that is a foreign key gets an additional 'fk'
+        field: {"schema": str, "table": str, "column": str}.
+        """
+        from redash import settings
+
+        schema_dict = {}
+        self._get_tables(schema_dict)
+
+        if settings.SCHEMA_RUN_TABLE_SIZE_CALCULATIONS and get_stats:
+            self._get_tables_stats(schema_dict)
+
+        # Fetch FK relationships and merge into the column data
+        fk_map = self._get_foreign_keys()
+        if fk_map:
+            for table_name, table_info in schema_dict.items():
+                for column in table_info.get("columns", []):
+                    col_name = column.get("name") if isinstance(column, dict) else column
+                    key = (table_name, col_name)
+                    if key in fk_map:
+                        if isinstance(column, dict):
+                            column["fk"] = fk_map[key]
+                        else:
+                            # Column is a plain string — upgrade to dict
+                            idx = table_info["columns"].index(column)
+                            table_info["columns"][idx] = {
+                                "name": column,
+                                "fk": fk_map[key],
+                            }
+            logger.debug(
+                "Enriched schema with %d foreign key relationships", len(fk_map)
+            )
+
+        return list(schema_dict.values())
+
 
 register(JRNYPostgreSQL)

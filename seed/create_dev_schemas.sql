@@ -304,6 +304,78 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- Add foreign key constraints for schema relationship testing
+-- Note: Using DO blocks so constraints are idempotent (skip if already exists)
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_branches_org' AND table_schema = 'core'
+  ) THEN
+    ALTER TABLE core.branches
+      ADD CONSTRAINT fk_branches_org FOREIGN KEY (org_id) REFERENCES core.organizations(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_contacts_org' AND table_schema = 'core'
+  ) THEN
+    ALTER TABLE core.contacts
+      ADD CONSTRAINT fk_contacts_org FOREIGN KEY (org_id) REFERENCES core.organizations(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_sales_orders_customer' AND table_schema = 'sales'
+  ) THEN
+    ALTER TABLE sales.sales_orders
+      ADD CONSTRAINT fk_sales_orders_customer FOREIGN KEY (customer_id) REFERENCES core.contacts(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_quotes_customer' AND table_schema = 'sales'
+  ) THEN
+    ALTER TABLE sales.quotes
+      ADD CONSTRAINT fk_quotes_customer FOREIGN KEY (customer_id) REFERENCES core.contacts(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_invoices_customer' AND table_schema = 'finance'
+  ) THEN
+    ALTER TABLE finance.invoices
+      ADD CONSTRAINT fk_invoices_customer FOREIGN KEY (customer_id) REFERENCES core.contacts(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_purchase_orders_supplier' AND table_schema = 'procurement'
+  ) THEN
+    ALTER TABLE procurement.purchase_orders
+      ADD CONSTRAINT fk_purchase_orders_supplier FOREIGN KEY (supplier_id) REFERENCES core.contacts(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_transactions_bank_account' AND table_schema = 'cashbook'
+  ) THEN
+    ALTER TABLE cashbook.transactions
+      ADD CONSTRAINT fk_transactions_bank_account FOREIGN KEY (bank_account_id) REFERENCES cashbook.bank_accounts(id);
+  END IF;
+END $$;
+
 -- Add COMMENT ON annotations
 COMMENT ON TABLE reporting.v_sales_orders IS 'Denormalized sales order view';
 COMMENT ON COLUMN reporting.v_sales_orders.id IS 'Primary key';

@@ -251,7 +251,7 @@ def edit(name, new_name=None, options=None, type=None, organization="default"):
     default=False,
     help="Recreate the data source even if one already exists.",
 )
-def seed_jrny(organization="default", force=False):
+def seed_jrny(organization="JRNY", force=False):
     """Seed the JRNY PostgreSQL (RLS) read-replica data source.
 
     Creates a pre-configured data source of type 'jrny_pg' pointing to the

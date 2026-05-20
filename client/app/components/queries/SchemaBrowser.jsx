@@ -16,6 +16,11 @@ import LoadingState from "../items-list/components/LoadingState";
 const SchemaItemColumnType = PropTypes.shape({
   name: PropTypes.string.isRequired,
   type: PropTypes.string,
+  fk: PropTypes.shape({
+    schema: PropTypes.string,
+    table: PropTypes.string,
+    column: PropTypes.string,
+  }),
 });
 
 export const SchemaItemType = PropTypes.shape({
