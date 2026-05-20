@@ -15,7 +15,7 @@ from sqlalchemy_utils.models import generic_repr
 from redash import redis_connection
 from redash.utils import dt_from_timestamp, generate_token
 
-from .base import Column, GFKBase, db, key_type, primary_key
+from .base import Column, GFKBase, db, gfk_type, key_type, primary_key
 from .mixins import BelongsToOrgMixin, TimestampMixin
 from .types import MutableDict, MutableList, json_cast_property
 
@@ -74,6 +74,7 @@ class PermissionsCheckMixin:
         return has_permissions
 
 
+@gfk_type
 @generic_repr("id", "name", "email")
 class User(TimestampMixin, db.Model, BelongsToOrgMixin, UserMixin, PermissionsCheckMixin):
     id = primary_key("User")
@@ -402,6 +403,10 @@ class ApiUser(UserMixin, PermissionsCheckMixin):
 
     @staticmethod
     def is_api_user():
+        return True
+
+    @property
+    def is_email_verified(self):
         return True
 
     @property

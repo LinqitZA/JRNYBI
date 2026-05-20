@@ -32,15 +32,135 @@ defineDummySnippets("yaml");
 // for data sources with syntax = "custom"
 ace.define("ace/mode/custom", [], () => {});
 
+// ---- Column documentation helpers (inline autocomplete enrichment) ----------
+
+/**
+ * Classify a PostgreSQL data type into a visual category for color-coding.
+ */
+function getTypeCategory(type) {
+  if (!type) return "default";
+  const t = type.toLowerCase();
+  if (/int|numeric|decimal|float|double|real|serial|money|smallint|bigint/.test(t)) return "numeric";
+  if (/date|time|interval|timestamp/.test(t)) return "date";
+  if (/bool/.test(t)) return "boolean";
+  if (/uuid/.test(t)) return "uuid";
+  if (/json/.test(t)) return "json";
+  if (/\[\]|array|anyarray/.test(t)) return "array";
+  return "text"; // varchar, text, char, etc.
+}
+
+/**
+ * Return the CSS color for a given type category.
+ */
+function getTypeBadgeColor(category) {
+  switch (category) {
+    case "numeric": return "#16a34a"; // green
+    case "date": return "#2563eb";    // blue
+    case "boolean": return "#ea580c"; // orange
+    case "uuid": return "#9333ea";    // purple
+    case "json": return "#ca8a04";    // amber
+    case "array": return "#0891b2";   // cyan
+    default: return "#6b7280";        // gray for text/default
+  }
+}
+
+/** Escape HTML special chars to prevent XSS in docHTML. */
+function escapeHtml(str) {
+  if (!str) return "";
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/**
+ * Build a rich HTML tooltip for a column completion item.
+ * Shows type badge (color-coded), nullable status, FK reference, and description.
+ *
+ * @param {Object} column - The raw column object from the schema
+ * @returns {string|undefined} HTML string for docHTML, or undefined if nothing to show
+ */
+function buildColumnDocHTML(column) {
+  if (!column || typeof column === "string") return undefined;
+
+  const type = get(column, "type", "");
+  const description = get(column, "description", "");
+  const fk = get(column, "fk");
+  const nullable = get(column, "nullable");
+
+  // Only show tooltip if we have something useful to display
+  if (!type && !description && !fk && nullable === undefined) return undefined;
+
+  const category = getTypeCategory(type);
+  const color = getTypeBadgeColor(category);
+
+  let html = '<div class="jrnybi-col-doc">';
+
+  // Row 1: Type badge + nullable
+  if (type || nullable !== undefined) {
+    html += '<div class="jrnybi-col-doc-badges">';
+    if (type) {
+      html += '<span class="jrnybi-type-badge" style="background:' + color + ';">' + escapeHtml(type) + "</span>";
+    }
+    if (nullable !== undefined) {
+      if (nullable) {
+        html += '<span class="jrnybi-nullable-badge jrnybi-nullable">NULLABLE</span>';
+      } else {
+        html += '<span class="jrnybi-nullable-badge jrnybi-notnull">NOT NULL</span>';
+      }
+    }
+    html += "</div>";
+  }
+
+  // Row 2: FK reference
+  if (fk) {
+    const fkTarget = (fk.schema ? escapeHtml(fk.schema) + "." : "") +
+      escapeHtml(fk.table) + "." + escapeHtml(fk.column);
+    html += '<div class="jrnybi-col-doc-fk">FK &rarr; ' + fkTarget + "</div>";
+  }
+
+  // Row 3: Description
+  if (description) {
+    html += '<div class="jrnybi-col-doc-desc">' + escapeHtml(description) + "</div>";
+  }
+
+  html += "</div>";
+  return html;
+}
+
+/**
+ * Build a rich HTML tooltip for a table completion item.
+ */
+function buildTableDocHTML(table) {
+  if (!table) return undefined;
+  const description = get(table, "description", "");
+  const colCount = (table.columns || []).length;
+
+  let html = '<div class="jrnybi-col-doc">';
+  html += '<div class="jrnybi-col-doc-badges">';
+  html += '<span class="jrnybi-type-badge" style="background:#475569;">Table</span>';
+  if (colCount > 0) {
+    html += '<span class="jrnybi-nullable-badge jrnybi-nullable">' + colCount + " columns</span>";
+  }
+  html += "</div>";
+  if (description) {
+    html += '<div class="jrnybi-col-doc-desc">' + escapeHtml(description) + "</div>";
+  }
+  html += "</div>";
+  return html;
+}
+
+/** Lookup map: column name → raw column object (for docHTML generation). */
+const columnMetaLookup = {};
+
 function buildTableColumnKeywords(table) {
   const keywords = [];
   table.columns.forEach(column => {
     const columnName = get(column, "name");
+    const qualifiedName = `${table.name}.${columnName}`;
     keywords.push({
-      name: `${table.name}.${columnName}`,
-      value: `${table.name}.${columnName}`,
+      name: qualifiedName,
+      value: qualifiedName,
       score: 100,
       meta: capitalize(get(column, "type", "Column")),
+      docHTML: buildColumnDocHTML(column),
     });
   });
   return keywords;
@@ -57,11 +177,19 @@ function buildKeywordsFromSchema(schema) {
       value: table.name,
       score: 100,
       meta: "Table",
+      docHTML: buildTableDocHTML(table),
     });
     tableColumnKeywords[table.name] = buildTableColumnKeywords(table);
     table.columns.forEach(c => {
       const columnName = get(c, "name", c);
-      columnKeywords[columnName] = capitalize(get(c, "type", "Column"));
+      // Store full column metadata for lookup by unqualified column names
+      if (typeof c === "object") {
+        columnMetaLookup[columnName] = c;
+      }
+      columnKeywords[columnName] = {
+        type: capitalize(get(c, "type", "Column")),
+        docHTML: buildColumnDocHTML(c),
+      };
     });
   });
 
@@ -71,7 +199,8 @@ function buildKeywordsFromSchema(schema) {
       name: k,
       value: k,
       score: 50,
-      meta: v,
+      meta: v.type,
+      docHTML: v.docHTML,
     })),
     tableColumn: tableColumnKeywords,
   };
@@ -342,6 +471,7 @@ function getColumnsForReferencedTables(referencedTables, rawSchema, tableColumnK
             value: colName,
             score: 200, // higher than generic columns (50)
             meta: capitalize(get(c, "type", "Column")),
+            docHTML: buildColumnDocHTML(c),
           });
         }
       });
@@ -356,6 +486,7 @@ function getColumnsForReferencedTables(referencedTables, rawSchema, tableColumnK
             value: qualified,
             score: 190,
             meta: capitalize(get(c, "type", "Column")),
+            docHTML: buildColumnDocHTML(c),
           });
         });
       }
@@ -405,6 +536,7 @@ function getColumnsForAlias(alias, referencedTables, rawSchema) {
       value: colName,
       score: 300, // highest score - most specific match
       meta: capitalize(get(c, "type", "Column")),
+      docHTML: buildColumnDocHTML(c),
     };
   });
 }
