@@ -1194,3 +1194,55 @@ Agent: Handling feature #76
 - Total features: 77
 - ALL FEATURES COMPLETE
 - Server at http://localhost:5001, admin API key: 1ttpe50H8MPbYp4MNPQioewySO8UHXajeXvqIQhi
+
+## Session 25: 2026-05-20
+Agent: Batch agent handling features #78, #87, #79
+
+### Feature #78: Enrich schema payload with foreign key relationships (PASSING)
+- Added _get_foreign_keys() method to JRNYPostgreSQL in jrny_pg.py
+- Queries information_schema.table_constraints JOIN key_column_usage JOIN constraint_column_usage
+- Filtered to JRNY schemas, respects has_table_privilege and has_schema_privilege
+- Overrides get_schema() to merge FK data into column entries
+- Each FK column gets {"fk": {"schema": str, "table": str, "column": str}}
+- Updated SchemaItemColumnType PropType in SchemaBrowser.jsx to accept optional fk field
+- Added 7 FK constraints to dev schemas (create_dev_schemas.sql)
+- Verified: GET /api/data_sources/1/schema returns fk data for all 7 relationships
+- Fixed seed_jrny default org slug from 'default' to 'JRNY'
+
+### Feature #87: FK relationship indicators in schema browser (PASSING)
+- Link icon (fa-link) on FK columns with CSS class fk-icon
+- Tooltip showing "References schema.table.column" for FK columns
+- Clickable FK link navigates to and expands the referenced table
+- Visual distinction: views (v_*) get fa-eye icon (purple), tables get fa-table
+- FK reference count badge (fk-ref-badge) on tables referenced by other tables
+- Relationship filter banner to show only tables related to a selected table
+- Full LESS styles in schema-browser.less for all new UI elements
+- Frontend rebuilt and deployed (webpack build successful)
+
+### Feature #79: Enrich schema payload with column comments from data dictionary (PASSING)
+- Added _get_comments() method using obj_description() and col_description() from pg_catalog
+- Table comments merged as 'description' field on schema items
+- Column comments merged as 'description' field on column items
+- SchemaBrowser tooltip already renders column.description - now shows real data
+- Redis cache correctly includes description fields
+- Verified: 20 table + 6 column descriptions from dev schemas
+- Verified: schema refresh picks up new COMMENT ON annotations (added test comment, appeared)
+
+## Files Modified
+- redash/query_runner/jrny_pg.py - _get_foreign_keys(), _get_comments(), get_schema() override
+- redash/cli/data_sources.py - Fixed default org slug
+- client/app/components/queries/SchemaBrowser.jsx - FK indicators, view icon, comments
+- client/app/assets/less/inc/schema-browser.less - FK/view styles
+- seed/create_dev_schemas.sql - Added FK constraints
+
+## Environment Notes
+- Docker services running: postgres, redis, server, worker, scheduler, email
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+- Org slug set to 'default' in DB (Organization name is 'JRNY')
+- Dev schemas have 7 FK constraints, 20 table comments, 6+ column comments
+- Bash workaround: `command > /tmp/claude/output.txt 2>&1 && cat /dev/null` then Read file
+- pnpm run build works for frontend webpack build
+
+## Current Status
+- Features passing: 80+ (87 total)
+- All 3 assigned features (#78, #87, #79) implemented and verified
