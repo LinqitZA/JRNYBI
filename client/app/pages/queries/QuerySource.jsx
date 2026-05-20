@@ -24,6 +24,7 @@ import QuerySourceAlerts from "./components/QuerySourceAlerts";
 import wrapQueryPage from "./components/wrapQueryPage";
 import QueryExecutionMetadata from "./components/QueryExecutionMetadata";
 import ViewSuggestionBanner from "@/components/queries/ViewSuggestionBanner";
+import SelectStarHintBanner from "@/components/queries/SelectStarHintBanner";
 
 import { getEditorComponents } from "@/components/queries/editor-components";
 import useQuery from "./hooks/useQuery";
@@ -162,6 +163,26 @@ function QuerySource(props) {
 
   const [selectedText, setSelectedText] = useState(null);
   const [cursorPosition, setCursorPosition] = useState(0);
+  const [selectStarMatches, setSelectStarMatches] = useState([]);
+
+  const handleExpandSelectStar = useCallback(() => {
+    if (editorRef.current) {
+      editorRef.current.focus();
+      // Trigger the editor's built-in expandSelectStar command
+      // The QueryEditor registers this as "expandSelectStar" on Ctrl+Shift+E
+      const aceEditor = editorRef.current;
+      // Use the paste API to trigger focus, then simulate the keyboard shortcut
+      // Actually, we need direct access to the Ace editor instance. The ref
+      // only exposes paste() and focus(). We'll dispatch the command via a
+      // custom event. Simpler: just re-run the expansion logic inline.
+      // The expandSelectStar function is already imported by QueryEditor.
+      // Let's dispatch a DOM custom event that the QueryEditor listens for.
+      const editorContainer = document.querySelector("[data-test='QueryEditor'] .ace_editor");
+      if (editorContainer) {
+        editorContainer.dispatchEvent(new CustomEvent("jrnybi:expand-select-star"));
+      }
+    }
+  }, []);
 
   const handleApplyViewSuggestion = useCallback(
     (baseTable, viewName, alias) => {
@@ -288,6 +309,7 @@ function QuerySource(props) {
                       autocompleteEnabled={autocompleteAvailable && autocompleteEnabled}
                       onChange={handleQueryEditorChange}
                       onSelectionChange={setSelectedText}
+                      onSelectStarDetected={setSelectStarMatches}
                     />
 
                     <ViewSuggestionBanner
@@ -295,6 +317,11 @@ function QuerySource(props) {
                       cursorPosition={cursorPosition}
                       schema={schema}
                       onApplySuggestion={handleApplyViewSuggestion}
+                    />
+
+                    <SelectStarHintBanner
+                      selectStarMatches={selectStarMatches}
+                      onExpand={handleExpandSelectStar}
                     />
 
                     <QueryEditor.Controls

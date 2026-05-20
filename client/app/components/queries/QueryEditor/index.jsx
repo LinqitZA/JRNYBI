@@ -4,7 +4,7 @@ import cx from "classnames";
 import ace from "ace-builds";
 import { AceEditor, snippetsModule, updateSchemaCompleter, getSchemaRawData, getFKGraphData } from "./ace";
 import { detectFKAtCursor, applyFKResolution, findFKColumnsInSelect } from "./fkResolution";
-import { SQL_SNIPPETS, JRNY_TEMPLATES, expandSelectStar } from "./querySnippets";
+import { SQL_SNIPPETS, JRNY_TEMPLATES, expandSelectStar, findSelectStarPositions } from "./querySnippets";
 import { srNotify } from "@/lib/accessibility";
 import { SchemaItemType } from "@/components/queries/SchemaBrowser";
 import resizeObserver from "@/services/resizeObserver";
@@ -15,8 +15,11 @@ import "./index.less";
 
 const editorProps = { $blockScrolling: Infinity };
 
+const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
+const EXPAND_SHORTCUT_LABEL = isMac ? "⌘⇧E" : "Ctrl+Shift+E";
+
 const QueryEditor = React.forwardRef(function(
-  { className, syntax, value, autocompleteEnabled, schema, onChange, onSelectionChange, ...props },
+  { className, syntax, value, autocompleteEnabled, schema, onChange, onSelectionChange, onSelectStarDetected, ...props },
   ref
 ) {
   const [container, setContainer] = useState(null);
@@ -57,13 +60,15 @@ const QueryEditor = React.forwardRef(function(
       // FK column markers: dotted underline on FK columns in SELECT clause
       const Range = ace.acequire("ace/range").Range;
       let markerIds = [];
+      let selectStarMarkerIds = [];
+      let selectStarGutterRows = [];
       let markerTimeout = null;
 
       function updateFKMarkers() {
         const rawSchema = getSchemaRawData(editorId);
         const fkGraph = getFKGraphData(editorId);
 
-        // Remove old markers
+        // Remove old FK markers
         markerIds.forEach(id => editor.session.removeMarker(id));
         markerIds = [];
 
@@ -81,13 +86,60 @@ const QueryEditor = React.forwardRef(function(
         }
       }
 
+      function updateSelectStarMarkers() {
+        const rawSchema = getSchemaRawData(editorId);
+
+        // Remove old SELECT * markers
+        selectStarMarkerIds.forEach(id => editor.session.removeMarker(id));
+        selectStarMarkerIds = [];
+
+        // Remove old gutter decorations
+        selectStarGutterRows.forEach(row =>
+          editor.session.removeGutterDecoration(row, "select-star-gutter")
+        );
+        selectStarGutterRows = [];
+
+        if (!rawSchema) {
+          if (onSelectStarDetected) onSelectStarDetected([]);
+          return;
+        }
+
+        try {
+          const queryText = editor.session.getValue();
+          const matches = findSelectStarPositions(queryText, rawSchema);
+
+          matches.forEach(m => {
+            // Add highlight marker on the * character
+            const range = new Range(m.row, m.col, m.row, m.col + 1);
+            const id = editor.session.addMarker(range, "select-star-marker", "text", false);
+            selectStarMarkerIds.push(id);
+
+            // Add gutter lightbulb decoration
+            editor.session.addGutterDecoration(m.row, "select-star-gutter");
+            selectStarGutterRows.push(m.row);
+          });
+
+          // Notify parent about detected SELECT * patterns (for the banner)
+          if (onSelectStarDetected) {
+            onSelectStarDetected(matches);
+          }
+        } catch (e) {
+          // Never let marker logic break the editor
+          if (onSelectStarDetected) onSelectStarDetected([]);
+        }
+      }
+
       // Initial marker update
       updateFKMarkers();
+      updateSelectStarMarkers();
 
       // Update markers on text changes (debounced)
       function onEditorChange() {
         if (markerTimeout) clearTimeout(markerTimeout);
-        markerTimeout = setTimeout(updateFKMarkers, 500);
+        markerTimeout = setTimeout(() => {
+          updateFKMarkers();
+          updateSelectStarMarkers();
+        }, 500);
       }
 
       editor.session.on("change", onEditorChange);
@@ -95,6 +147,10 @@ const QueryEditor = React.forwardRef(function(
       return () => {
         updateSchemaCompleter(editorId, null);
         markerIds.forEach(id => editor.session.removeMarker(id));
+        selectStarMarkerIds.forEach(id => editor.session.removeMarker(id));
+        selectStarGutterRows.forEach(row =>
+          editor.session.removeGutterDecoration(row, "select-star-gutter")
+        );
         editor.session.off("change", onEditorChange);
         if (markerTimeout) clearTimeout(markerTimeout);
       };
@@ -182,6 +238,13 @@ const QueryEditor = React.forwardRef(function(
       },
     });
 
+    // Listen for programmatic expand requests from the SelectStarHintBanner
+    const editorEl = editor.container;
+    function handleExpandEvent() {
+      editor.commands.exec("expandSelectStar", editor);
+    }
+    editorEl.addEventListener("jrnybi:expand-select-star", handleExpandEvent);
+
     // Reset Completer in case dot is pressed
     editor.commands.on("afterExec", e => {
       if (e.command.name === "insertstring" && e.args === "." && editor.completer) {
@@ -266,6 +329,7 @@ QueryEditor.propTypes = {
   schema: PropTypes.arrayOf(SchemaItemType),
   onChange: PropTypes.func,
   onSelectionChange: PropTypes.func,
+  onSelectStarDetected: PropTypes.func,
 };
 
 QueryEditor.defaultProps = {
@@ -276,8 +340,10 @@ QueryEditor.defaultProps = {
   schema: [],
   onChange: () => {},
   onSelectionChange: () => {},
+  onSelectStarDetected: null,
 };
 
 QueryEditor.Controls = QueryEditorControls;
 
 export default QueryEditor;
+export { EXPAND_SHORTCUT_LABEL };

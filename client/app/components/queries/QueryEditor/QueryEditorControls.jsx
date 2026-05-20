@@ -10,6 +10,21 @@ import AutocompleteToggle from "./AutocompleteToggle";
 import "./QueryEditorControls.less";
 import AutoLimitCheckbox from "@/components/queries/QueryEditor/AutoLimitCheckbox";
 
+const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
+const mod = isMac ? "⌘" : "Ctrl";
+const shift = isMac ? "⇧" : "Shift";
+
+const EDITOR_SHORTCUTS_TOOLTIP = (
+  <div style={{ fontSize: 12, lineHeight: 1.6 }}>
+    <div><b>Editor Shortcuts</b></div>
+    <div>{mod}+{shift}+E &mdash; Expand SELECT *</div>
+    <div>{mod}+. &mdash; Resolve FK column</div>
+    <div>{mod}+{shift}+F &mdash; Format query</div>
+    <div>{mod}+Enter &mdash; Execute query</div>
+    <div>Esc &mdash; Exit editor</div>
+  </div>
+);
+
 export function ButtonTooltip({ title, shortcut, ...props }) {
   shortcut = humanReadableShortcut(shortcut, 1); // show only primary shortcut
   title =
@@ -79,6 +94,14 @@ export default function EditorControl({
           </Button>
         </ButtonTooltip>
       )}
+      <Tooltip placement="top" title={EDITOR_SHORTCUTS_TOOLTIP} overlayStyle={{ maxWidth: 280 }}>
+        <Button
+          className="query-editor-controls-button m-r-5"
+          size="small"
+          style={{ fontSize: 12, padding: "0 6px", opacity: 0.65 }}>
+          <span className="fa fa-keyboard-o" />
+        </Button>
+      </Tooltip>
       {autocompleteToggleProps !== false && (
         <AutocompleteToggle
           available={autocompleteToggleProps.available}

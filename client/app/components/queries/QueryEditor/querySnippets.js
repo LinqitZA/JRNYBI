@@ -465,5 +465,59 @@ export function expandSelectStar(editor, rawSchema) {
   return true;
 }
 
+// ---- SELECT * position detection for inline hints --------------------------------
+
+/**
+ * Find all SELECT * FROM <table> patterns in the query and return their positions.
+ * Used by the editor to add inline markers and hints for discoverability.
+ *
+ * @param {string} queryText - The full query text from the editor
+ * @param {Array}  rawSchema - Raw schema data for resolving table names
+ * @returns {Array} Array of { row, col, tableName, columnCount, fullTableName }
+ */
+export function findSelectStarPositions(queryText, rawSchema) {
+  if (!queryText || !rawSchema) return [];
+
+  const results = [];
+  const regex = /\bSELECT\s+(\*)\s+FROM\s+([a-zA-Z_][a-zA-Z0-9_.]*)/gi;
+  let m;
+
+  while ((m = regex.exec(queryText)) !== null) {
+    // Find the position of * within this match
+    const selectKeyword = m[0];
+    const starOffset = selectKeyword.search(/\*/);
+    const starIndex = m.index + starOffset;
+
+    const tableName = m[2];
+
+    // Resolve table in schema
+    const matchedTable = rawSchema.find(s => {
+      if (s.name === tableName) return true;
+      if (s.name.endsWith(`.${tableName}`)) return true;
+      return false;
+    });
+
+    const columnCount =
+      matchedTable && matchedTable.columns ? matchedTable.columns.length : 0;
+    const fullTableName = matchedTable ? matchedTable.name : tableName;
+
+    // Convert absolute offset to row/col
+    let row = 0;
+    let col = 0;
+    for (let i = 0; i < starIndex; i++) {
+      if (queryText[i] === "\n") {
+        row++;
+        col = 0;
+      } else {
+        col++;
+      }
+    }
+
+    results.push({ row, col, tableName, fullTableName, columnCount });
+  }
+
+  return results;
+}
+
 // ---- Helpers needed by expandSelectStar -----------------------------------------
 import ace from "ace-builds";
