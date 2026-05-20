@@ -453,11 +453,150 @@ class JRNYPostgreSQL(PostgreSQL):
 
         return fk_map
 
+    def _get_view_dependencies(self):
+        """
+        Query pg_depend + pg_rewrite + pg_class to map each view to its
+        underlying base tables.
+
+        Returns:
+            dict: Mapping of "schema.view_name" -> ["schema.base_table", ...]
+        """
+        query = """
+        SELECT DISTINCT
+            vs.nspname  AS view_schema,
+            vc.relname  AS view_name,
+            ts.nspname  AS table_schema,
+            tc.relname  AS table_name
+        FROM pg_depend d
+        JOIN pg_rewrite r    ON r.oid = d.objid
+        JOIN pg_class vc     ON vc.oid = r.ev_class
+        JOIN pg_namespace vs ON vs.oid = vc.relnamespace
+        JOIN pg_class tc     ON tc.oid = d.refobjid
+        JOIN pg_namespace ts ON ts.oid = tc.relnamespace
+        WHERE d.classid  = 'pg_rewrite'::regclass
+          AND d.deptype   = 'n'
+          AND vc.relkind  IN ('v', 'm')
+          AND tc.relkind  IN ('r', 'p', 'f')
+          AND vc.oid      <> tc.oid
+          AND vs.nspname  NOT IN ('pg_catalog', 'information_schema')
+          AND ts.nspname  NOT IN ('pg_catalog', 'information_schema')
+          AND has_schema_privilege(vs.nspname, 'usage')
+          AND has_schema_privilege(ts.nspname, 'usage')
+        ORDER BY view_schema, view_name, table_schema, table_name
+        """
+
+        try:
+            results, error = self.run_query(query, None)
+            if error is not None:
+                logger.warning("Failed to fetch view dependencies: %s", error)
+                return {}
+        except Exception:
+            logger.warning("Exception fetching view dependencies", exc_info=True)
+            return {}
+
+        view_deps = {}
+        if results and results.get("rows"):
+            for row in results["rows"]:
+                view_key = "{}.{}".format(
+                    row.get("view_schema", ""), row.get("view_name", "")
+                )
+                table_key = "{}.{}".format(
+                    row.get("table_schema", ""), row.get("table_name", "")
+                )
+                if view_key not in view_deps:
+                    view_deps[view_key] = []
+                view_deps[view_key].append(table_key)
+
+        logger.debug(
+            "Found view dependencies for %d views", len(view_deps)
+        )
+        return view_deps
+
+    def _get_comments(self):
+        """
+        Fetch table and column COMMENT ON annotations from pg_catalog.
+
+        Uses obj_description() for table-level comments and
+        col_description() for column-level comments, filtered to JRNY schemas.
+
+        Returns:
+            tuple: (table_comments, column_comments) where:
+                - table_comments: dict mapping "schema.table" -> description string
+                - column_comments: dict mapping ("schema.table", column_name) -> description string
+        """
+        schema_list = ",".join("'{}'".format(s) for s in JRNY_SCHEMAS)
+
+        query = """
+        SELECT
+            c.table_schema,
+            c.table_name,
+            c.column_name,
+            c.ordinal_position,
+            obj_description(
+                (quote_ident(c.table_schema) || '.' || quote_ident(c.table_name))::regclass,
+                'pg_class'
+            ) AS table_comment,
+            col_description(
+                (quote_ident(c.table_schema) || '.' || quote_ident(c.table_name))::regclass,
+                c.ordinal_position
+            ) AS column_comment
+        FROM information_schema.columns c
+        WHERE c.table_schema IN ({schemas})
+          AND has_schema_privilege(c.table_schema, 'usage')
+          AND has_table_privilege(
+                quote_ident(c.table_schema) || '.' || quote_ident(c.table_name),
+                'select'
+              )
+        ORDER BY c.table_schema, c.table_name, c.ordinal_position
+        """.format(schemas=schema_list)
+
+        try:
+            results, error = self.run_query(query, None)
+            if error is not None:
+                logger.warning("Failed to fetch comments: %s", error)
+                return {}, {}
+        except Exception:
+            logger.warning("Exception fetching comments", exc_info=True)
+            return {}, {}
+
+        table_comments = {}
+        column_comments = {}
+
+        if results and results.get("rows"):
+            for row in results["rows"]:
+                schema_name = row.get("table_schema", "")
+                table_name = row.get("table_name", "")
+                full_name = "{}.{}".format(schema_name, table_name)
+                col_name = row.get("column_name", "")
+
+                tc = row.get("table_comment")
+                if tc and full_name not in table_comments:
+                    table_comments[full_name] = tc
+
+                cc = row.get("column_comment")
+                if cc:
+                    column_comments[(full_name, col_name)] = cc
+
+        logger.debug(
+            "Fetched %d table comments and %d column comments",
+            len(table_comments),
+            len(column_comments),
+        )
+        return table_comments, column_comments
+
     def get_schema(self, get_stats=False):
         """
         Override to enrich the schema payload with foreign key relationship
-        data.  Each column that is a foreign key gets an additional 'fk'
+        data, view dependency information, and COMMENT ON annotations.
+
+        Each column that is a foreign key gets an additional 'fk'
         field: {"schema": str, "table": str, "column": str}.
+
+        Each view entry gets a 'source_tables' field containing the list of
+        base tables that the view selects from.
+
+        Tables get a 'description' field from COMMENT ON TABLE.
+        Columns get a 'description' field from COMMENT ON COLUMN.
         """
         from redash import settings
 
@@ -487,6 +626,36 @@ class JRNYPostgreSQL(PostgreSQL):
             logger.debug(
                 "Enriched schema with %d foreign key relationships", len(fk_map)
             )
+
+        # Fetch view dependencies and add source_tables to view entries
+        view_deps = self._get_view_dependencies()
+        if view_deps:
+            for table_name, table_info in schema_dict.items():
+                if table_name in view_deps:
+                    table_info["source_tables"] = view_deps[table_name]
+
+        # Fetch COMMENT ON annotations and merge into schema
+        table_comments, column_comments = self._get_comments()
+        if table_comments or column_comments:
+            for table_name, table_info in schema_dict.items():
+                # Add table-level description
+                if table_name in table_comments:
+                    table_info["description"] = table_comments[table_name]
+
+                # Add column-level descriptions
+                for column in table_info.get("columns", []):
+                    col_name = column.get("name") if isinstance(column, dict) else column
+                    key = (table_name, col_name)
+                    if key in column_comments:
+                        if isinstance(column, dict):
+                            column["description"] = column_comments[key]
+                        else:
+                            # Column is a plain string — upgrade to dict
+                            idx = table_info["columns"].index(column)
+                            table_info["columns"][idx] = {
+                                "name": column,
+                                "description": column_comments[key],
+                            }
 
         return list(schema_dict.values())
 
