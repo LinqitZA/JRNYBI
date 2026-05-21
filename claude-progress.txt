@@ -1674,3 +1674,51 @@ Agent: Handling feature #104
 ## Current Status
 - Features passing: 105+ (106 total)
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+
+## Session 36: 2026-05-21
+Agent: Handling feature #103
+
+### Feature #103: Add Foreign Key column to Data Dictionary (PASSING)
+- **Backend** (redash/handlers/jrny_data_dictionary.py):
+  * Added `_build_fk_map()` method to JRNYDataDictionaryResource
+  * Reuses query runner's FK methods: `_get_foreign_keys()`, `_get_view_dependencies()`,
+    `_get_view_column_origins()`, `_infer_view_fk_from_origins()`, `_get_comments()`, `_parse_fk_comments()`
+  * Three FK sources with priority: comment FKs < inferred view FKs < direct FKs
+  * Added fk_map parameter to `_build_nested_response()` for column enrichment
+  * Each column now has `"fk": {"schema", "table", "column"}` or `"fk": null`
+  * `fk:schema.table.column` annotations stripped from display comments
+  * Graceful fallback: if FK fetch fails, returns empty dict (no error)
+- **Frontend** (client/app/pages/jrny/DataDictionary.jsx):
+  * Added `LinkOutlined` icon import from @ant-design/icons
+  * Added "FK" column header between Default and Description
+  * ColumnRow renders FK as Tooltip with "References schema.table.column" and LinkOutlined icon
+  * FK badge styled with blue background, link icon, and reference text
+  * Columns without FK show "-" (dd-null class)
+- **CSS** (client/app/pages/jrny/DataDictionary.less):
+  * `.dd-col-fk`: flex: 0 0 200px for FK column width
+  * `.dd-fk-badge`: inline-flex with blue background (#eff6ff), blue border (#bfdbfe), rounded corners
+  * `.dd-fk-icon`: LinkOutlined icon styling (11px, JRNY blue)
+  * `.dd-fk-ref`: reference text with ellipsis overflow
+
+## Verification
+- API returns 15 FK relationships across all 3 sources:
+  * Direct FKs (7): cashbook.transactions.bank_account_id, core.branches.org_id, core.contacts.org_id, sales.quotes.customer_id, sales.sales_orders.customer_id, finance.invoices.customer_id, procurement.purchase_orders.supplier_id
+  * Inferred view FKs (4): reporting.v_customer_orders.customer_id, reporting.v_customers.org_id, reporting.v_sales_summary.customer_id, reporting.v_suppliers.org_id
+  * Comment-annotated FKs (4): reporting.v_cashbook_transactions.bank_account_id, reporting.v_invoices.customer_id, reporting.v_purchase_orders.supplier_id, reporting.v_sales_orders.customer_id
+- All 142 columns have `fk` field (15 with data, 127 with null)
+- fk: annotations stripped from display comments (e.g., "Bank account FK" not "fk:cashbook.bank_accounts.id Bank account FK")
+- Unauthenticated access returns 401
+- Server logs show 200 with no errors
+- No mock data patterns in any modified files
+- Compiled JS/CSS contain all FK classes and strings
+- Committed as dae73423
+
+## Files Modified
+- redash/handlers/jrny_data_dictionary.py - Added FK fetching, fk_map parameter, comment stripping
+- client/app/pages/jrny/DataDictionary.jsx - FK column header, ColumnRow FK display with tooltip
+- client/app/pages/jrny/DataDictionary.less - FK column CSS styles
+
+## Current Status
+- Features passing: 102 (102/106 = 96.2%)
+- Feature #103 complete
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
