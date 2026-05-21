@@ -1510,3 +1510,29 @@ Agent: Handling feature #99
 - JWT auth working (HS256 dev mode)
 - Admin JWT token generated for testing
 - API key auth has pre-existing issue (permissions not resolved from groups)
+
+## Session 32: 2026-05-21
+Agent: Batch agent handling features #97, #98
+
+### Feature #97: Fix admin Outdated Queries page 404 — base path prefix missing (PASSING)
+- Changed axios.get('/api/admin/queries/outdated') to axios.get('api/admin/queries/outdated')
+- Removed leading slash so URL resolves relative to <base href="/bi/"> when behind reverse proxy
+- Compiled JS confirms relative path: .get("api/admin/queries/outdated")
+- API endpoint returns 200 with valid JSON response: {"queries": [], "updated_at": "..."}
+- No mock data patterns in modified file
+- Committed as 7b6e3343
+
+### Feature #98: Fix admin RQ Status page 404 — base path prefix missing (PASSING)
+- Jobs.jsx already had the fix applied by parallel agent (session 31, commit 61097222)
+- Verified compiled JS contains relative path: .get("api/admin/queries/rq_status")
+- API endpoint returns 200 with valid queue/worker data (4 queues, 1 worker)
+- No mock data patterns in modified file
+
+## Files Modified
+- client/app/pages/admin/OutdatedQueries.jsx - Relative URL for admin API call
+
+## Current Status
+- Features passing: 100 (100/100 = 100%)
+- Total features: 100
+- ALL FEATURES COMPLETE
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
