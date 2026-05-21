@@ -1603,3 +1603,51 @@ Agent: Handling feature #101
 - Total features: 101
 - ALL FEATURES COMPLETE
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+
+## Session 34: 2026-05-21
+Agent: Batch agent handling features #102, #105, #106
+
+### Feature #102: FK Resolution Hint Banner (PASSING)
+- Created FKHintBanner.jsx component modeled on SelectStarHintBanner.jsx
+- Banner detects FK columns in SELECT clause via findFKColumnsInSelect() callback
+- Shows message: "FK column detected: {column_name} — press Ctrl+. to resolve to display field and auto-add JOIN"
+- Banner dismissible via × button, dismissal persisted in localStorage (key: jrnybi:fk-hint-dismissed)
+- Added onFKDetected callback to QueryEditor component (same pattern as onSelectStarDetected)
+- Wired into QuerySource.jsx after SelectStarHintBanner
+- Styled with JRNY blue theme (#eff6ff background, #2563eb link icon, #1e40af text)
+- CSS in index.less with classes: fk-hint-banner, fk-hint-icon, fk-hint-text, fk-hint-dismiss
+- Compiled output verified: 6 CSS selectors, JS contains all banner strings
+- Committed as 80d3d1d9
+
+### Feature #105: Change Expand SELECT * shortcut from Ctrl+Shift+E to Ctrl+Shift+X (PASSING)
+- Ctrl+Shift+E consumed by parent JRNY ERP frame before reaching JRNYBI iframe
+- Updated Mousetrap binding: mod+shift+e → mod+shift+x
+- Updated Ace release: Ctrl+Shift+E → Ctrl+Shift+X
+- Updated EXPAND_SHORTCUT_LABEL: ⌘⇧E → ⌘⇧X / Ctrl+Shift+E → Ctrl+Shift+X
+- Updated in: index.jsx, SelectStarHintBanner.jsx, QueryEditorControls.jsx, QuerySource.jsx
+- Verified: zero Ctrl+Shift+E in compiled output, Ctrl+Shift+X present
+- Committed as c12cc705
+
+### Feature #106: Fix FK Resolution shortcut — move Ctrl+. from Ace to Mousetrap (PASSING)
+- Feature was already fully implemented by previous agent sessions
+- Verified all 3 elements in place:
+  1. Mousetrap binding: KeyboardShortcuts.bind({ "mod+.": handler }) in useEffect
+  2. Ace release: editor.commands.bindKey({ win: "Ctrl-.", mac: "Cmd-." }, null)
+  3. Command: bindKey: null on resolveFKColumn command
+- Cleanup in useEffect return via KeyboardShortcuts.unbind
+- Keyboard shortcuts tooltip still shows Ctrl+. for FK resolution
+- FK markers (fk-resolvable-marker) still functional
+- No code changes needed - verification only
+
+## Files Modified
+- client/app/components/queries/FKHintBanner.jsx - NEW: FK hint banner component
+- client/app/components/queries/QueryEditor/index.jsx - onFKDetected callback, shortcut changes
+- client/app/components/queries/QueryEditor/index.less - FK hint banner styles
+- client/app/components/queries/SelectStarHintBanner.jsx - Updated shortcut label
+- client/app/components/queries/QueryEditor/QueryEditorControls.jsx - Updated tooltip
+- client/app/pages/queries/QuerySource.jsx - FKHintBanner integration, shortcut comment
+
+## Current Status
+- Features passing: 104+ (106 total)
+- All 3 assigned features (#102, #105, #106) complete
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
