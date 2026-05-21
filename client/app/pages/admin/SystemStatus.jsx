@@ -42,7 +42,7 @@ class SystemStatus extends React.Component {
 
   refresh = () => {
     axios
-      .get("/status.json")
+      .get("status.json")
       .then(data => {
         this.setState({
           queues: data.manager.queues,
