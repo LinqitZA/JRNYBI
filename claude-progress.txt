@@ -1532,7 +1532,41 @@ Agent: Batch agent handling features #97, #98
 - client/app/pages/admin/OutdatedQueries.jsx - Relative URL for admin API call
 
 ## Current Status
-- Features passing: 100 (100/100 = 100%)
+- Features passing: 97 (97/100 = 97%)
 - Total features: 100
-- ALL FEATURES COMPLETE
+
+## Session (2026-05-21)
+Agent: Handling feature #100
+
+### Feature #100: Streamline report creation - direct from query visualization to reports page (PASSING)
+- Added `reportCategory` option to Report visualization's getOptions.ts (default: empty string)
+- Created PublishSettings.tsx tab in viz-lib Report editor with:
+  - Category dropdown populated from GET /api/jrny/report-categories
+  - Info banner when category selected ("Ready to publish" guidance)
+- Created PublishReportButton.jsx in client/app/pages/queries/components/:
+  - "Publish to Reports" button appears in tab bar when REPORT visualization is active
+  - On click, opens modal with category dropdown
+  - Publish flow: 1) create dashboard, 2) add viz widget, 3) set `report:<category>` tag + un-draft
+  - Shows success notification with link to Reports page
+- Integrated into QueryVisualizationTabs.jsx (both QuerySource and QueryView pages)
+- End-to-end API test verified:
+  - Dashboard created with correct name, tags, and REPORT widget
+  - Report appears in Reports page under correct category
+  - Existing tagged-dashboard workflow still works unchanged
+- Server restart persistence test passed: dashboard, tags, and widgets survive restart
+- No mock data patterns in any modified files
+- Committed as 3d95857d
+
+## Files Modified
+- viz-lib/src/visualizations/report/getOptions.ts - Added reportCategory option
+- viz-lib/src/visualizations/report/Editor/PublishSettings.tsx - NEW: Publish tab with category dropdown
+- viz-lib/src/visualizations/report/Editor/index.tsx - Added Publish tab
+- client/app/pages/queries/components/PublishReportButton.jsx - NEW: Publish to Reports button + modal
+- client/app/pages/queries/components/QueryVisualizationTabs.jsx - Integrated PublishReportButton
+- client/app/pages/queries/QuerySource.jsx - Pass query prop to QueryVisualizationTabs
+- client/app/pages/queries/QueryView.jsx - Pass query prop to QueryVisualizationTabs
+
+## Current Status
+- Features passing: 97 (97/100 = 97%)
+- Total features: 100
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
