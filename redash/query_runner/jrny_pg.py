@@ -427,9 +427,14 @@ class JRNYPostgreSQL(PostgreSQL):
 
     def _get_foreign_keys(self):
         """
-        Query foreign key relationships from information_schema, filtered to
-        JRNY schemas.  Respects has_table_privilege and has_schema_privilege
-        so that only accessible FK metadata is returned.
+        Query foreign key relationships from pg_catalog, filtered to
+        JRNY schemas.  Uses pg_constraint with unnest(conkey, confkey)
+        WITH ORDINALITY to correctly pair FK/referenced columns
+        positionally (handles composite FKs without Cartesian products).
+
+        Unlike information_schema.constraint_column_usage, pg_constraint
+        does not require table ownership — only has_table_privilege SELECT
+        access, which the jrnybi_reader role already has.
 
         Returns:
             dict: Mapping of (source_schema.source_table, source_column)
@@ -439,29 +444,29 @@ class JRNYPostgreSQL(PostgreSQL):
 
         query = """
         SELECT
-            tc.table_schema   AS fk_schema,
-            tc.table_name     AS fk_table,
-            kcu.column_name   AS fk_column,
-            ccu.table_schema  AS ref_schema,
-            ccu.table_name    AS ref_table,
-            ccu.column_name   AS ref_column
-        FROM information_schema.table_constraints tc
-        JOIN information_schema.key_column_usage kcu
-          ON tc.constraint_name    = kcu.constraint_name
-         AND tc.constraint_schema  = kcu.constraint_schema
-        JOIN information_schema.constraint_column_usage ccu
-          ON tc.constraint_name    = ccu.constraint_name
-         AND tc.constraint_schema  = ccu.constraint_schema
-        WHERE tc.constraint_type = 'FOREIGN KEY'
-          AND tc.table_schema IN ({schemas})
-          AND has_table_privilege(
-                quote_ident(tc.table_schema) || '.' || quote_ident(tc.table_name),
-                'select')
-          AND has_schema_privilege(tc.table_schema, 'usage')
-          AND has_table_privilege(
-                quote_ident(ccu.table_schema) || '.' || quote_ident(ccu.table_name),
-                'select')
-          AND has_schema_privilege(ccu.table_schema, 'usage')
+            n_fk.nspname    AS fk_schema,
+            c_fk.relname    AS fk_table,
+            a_fk.attname    AS fk_column,
+            n_ref.nspname   AS ref_schema,
+            c_ref.relname   AS ref_table,
+            a_ref.attname   AS ref_column
+        FROM pg_constraint con
+        JOIN pg_class c_fk      ON con.conrelid = c_fk.oid
+        JOIN pg_namespace n_fk   ON c_fk.relnamespace = n_fk.oid
+        JOIN pg_class c_ref     ON con.confrelid = c_ref.oid
+        JOIN pg_namespace n_ref  ON c_ref.relnamespace = n_ref.oid
+        CROSS JOIN LATERAL unnest(con.conkey, con.confkey)
+            WITH ORDINALITY AS cols(fk_attnum, ref_attnum, ord)
+        JOIN pg_attribute a_fk
+          ON a_fk.attrelid = con.conrelid  AND a_fk.attnum = cols.fk_attnum
+        JOIN pg_attribute a_ref
+          ON a_ref.attrelid = con.confrelid AND a_ref.attnum = cols.ref_attnum
+        WHERE con.contype = 'f'
+          AND n_fk.nspname IN ({schemas})
+          AND has_table_privilege(c_fk.oid, 'select')
+          AND has_schema_privilege(n_fk.oid, 'usage')
+          AND has_table_privilege(c_ref.oid, 'select')
+          AND has_schema_privilege(n_ref.oid, 'usage')
         """.format(schemas=schema_list)
 
         try:
