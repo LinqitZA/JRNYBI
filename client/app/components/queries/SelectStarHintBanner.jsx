@@ -2,12 +2,12 @@ import React, { useState, useCallback } from "react";
 import PropTypes from "prop-types";
 
 const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
-const EXPAND_SHORTCUT_LABEL = isMac ? "⌘⇧E" : "Ctrl+Shift+E";
+const EXPAND_SHORTCUT_LABEL = isMac ? "⌘⇧X" : "Ctrl+Shift+X";
 
 /**
  * SelectStarHintBanner - Shows a non-intrusive hint when SELECT * FROM <table>
  * patterns are detected in the query editor.  Tells the user they can press
- * Ctrl+Shift+E (Cmd+Shift+E on Mac) to expand * to the full column list,
+ * Ctrl+Shift+X (Cmd+Shift+X on Mac) to expand * to the full column list,
  * or click the "Expand" button for one-click expansion.
  *
  * Renders below the editor, above the controls bar, in the same slot as

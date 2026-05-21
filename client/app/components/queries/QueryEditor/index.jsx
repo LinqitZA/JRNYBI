@@ -17,7 +17,7 @@ import "./index.less";
 const editorProps = { $blockScrolling: Infinity };
 
 const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
-const EXPAND_SHORTCUT_LABEL = isMac ? "⌘⇧E" : "Ctrl+Shift+E";
+const EXPAND_SHORTCUT_LABEL = isMac ? "⌘⇧X" : "Ctrl+Shift+X";
 
 const QueryEditor = React.forwardRef(function(
   { className, syntax, value, autocompleteEnabled, schema, onChange, onSelectionChange, onSelectStarDetected, onFKDetected, ...props },
@@ -190,14 +190,14 @@ const QueryEditor = React.forwardRef(function(
     [editorRef, onSelectionChange]
   );
 
-  // Bind Ctrl+Shift+E via Mousetrap (browser intercepts before Ace sees it)
+  // Bind Ctrl+Shift+X via Mousetrap (Ctrl+Shift+E consumed by parent JRNY ERP iframe)
   useEffect(() => {
     if (editorRef) {
       const editor = editorRef.editor;
       const expandHandler = () => {
         editor.commands.exec("expandSelectStar", editor);
       };
-      const shortcuts = { "mod+shift+e": expandHandler };
+      const shortcuts = { "mod+shift+x": expandHandler };
       KeyboardShortcuts.bind(shortcuts);
       return () => {
         KeyboardShortcuts.unbind(shortcuts);
@@ -227,8 +227,8 @@ const QueryEditor = React.forwardRef(function(
     // Release Cmd/Ctrl+Shift+F for format query action
     editor.commands.bindKey({ win: "Ctrl+Shift+F", mac: "Cmd+Shift+F" }, null);
 
-    // Release Cmd/Ctrl+Shift+E so Mousetrap can handle it (browser intercepts before Ace sees it)
-    editor.commands.bindKey({ win: "Ctrl+Shift+E", mac: "Cmd+Shift+E" }, null);
+    // Release Cmd/Ctrl+Shift+X so Mousetrap can handle it (Ctrl+Shift+E consumed by parent JRNY ERP iframe)
+    editor.commands.bindKey({ win: "Ctrl+Shift+X", mac: "Cmd+Shift+X" }, null);
 
     // Release Ctrl+. / Cmd+. so Mousetrap can handle it (browser emoji picker intercepts before Ace sees it)
     editor.commands.bindKey({ win: "Ctrl-.", mac: "Cmd-." }, null);
@@ -275,7 +275,7 @@ const QueryEditor = React.forwardRef(function(
     // SELECT * expansion: registered as named command (keyboard shortcut via Mousetrap below)
     editor.commands.addCommand({
       name: "expandSelectStar",
-      bindKey: null, // Key released to Mousetrap to avoid browser interception of Ctrl+Shift+E
+      bindKey: null, // Key released to Mousetrap to avoid browser interception of Ctrl+Shift+X
       exec: ed => {
         const rawSchema = getSchemaRawData(ed.id);
         if (rawSchema) {

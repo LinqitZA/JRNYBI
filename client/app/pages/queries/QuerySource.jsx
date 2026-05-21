@@ -171,7 +171,7 @@ function QuerySource(props) {
     if (editorRef.current) {
       editorRef.current.focus();
       // Trigger the editor's built-in expandSelectStar command
-      // The QueryEditor registers this as "expandSelectStar" on Ctrl+Shift+E
+      // The QueryEditor registers this as "expandSelectStar" on Ctrl+Shift+X
       const aceEditor = editorRef.current;
       // Use the paste API to trigger focus, then simulate the keyboard shortcut
       // Actually, we need direct access to the Ace editor instance. The ref

@@ -17,7 +17,7 @@ const shift = isMac ? "⇧" : "Shift";
 const EDITOR_SHORTCUTS_TOOLTIP = (
   <div style={{ fontSize: 12, lineHeight: 1.6 }}>
     <div><b>Editor Shortcuts</b></div>
-    <div>{mod}+{shift}+E &mdash; Expand SELECT *</div>
+    <div>{mod}+{shift}+X &mdash; Expand SELECT *</div>
     <div>{mod}+. &mdash; Resolve FK column</div>
     <div>{mod}+{shift}+F &mdash; Format query</div>
     <div>{mod}+Enter &mdash; Execute query</div>
