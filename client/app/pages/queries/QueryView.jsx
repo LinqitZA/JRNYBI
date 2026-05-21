@@ -171,6 +171,7 @@ function QueryView(props) {
               onChangeTab={setSelectedVisualization}
               onAddVisualization={addVisualization}
               onDeleteVisualization={deleteVisualization}
+              query={query}
               refreshButton={
                 policy.canRun(query) && (
                   <Button

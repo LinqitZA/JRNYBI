@@ -8,6 +8,7 @@ import Button from "antd/lib/button";
 import Modal from "antd/lib/modal";
 import VisualizationRenderer from "@/components/visualizations/VisualizationRenderer";
 import PlainButton from "@/components/PlainButton";
+import PublishReportButton from "./PublishReportButton";
 
 import "./QueryVisualizationTabs.less";
 
@@ -93,6 +94,7 @@ export default function QueryVisualizationTabs({
   onDeleteVisualization,
   refreshButton,
   canRefresh,
+  query,
   ...props
 }) {
   const visualizations = useMemo(
@@ -100,22 +102,33 @@ export default function QueryVisualizationTabs({
     [props.visualizations]
   );
 
+  // Find the currently selected visualization for publish button
+  const selectedVisualization = useMemo(
+    () => find(visualizations, { id: selectedTab }) || null,
+    [visualizations, selectedTab]
+  );
+
   const tabsProps = {};
   if (find(visualizations, { id: selectedTab })) {
     tabsProps.activeKey = `${selectedTab}`;
   }
 
-  if (showNewVisualizationButton) {
+  if (showNewVisualizationButton || (selectedVisualization && selectedVisualization.type === "REPORT")) {
     tabsProps.tabBarExtraContent = (
-      <Button
-        className="add-visualization-button"
-        data-test="NewVisualization"
-        type="link"
-        onClick={() => onAddVisualization()}
-      >
-        <i className="fa fa-plus" aria-hidden="true" />
-        <span className="m-l-5 hidden-xs">Add Visualization</span>
-      </Button>
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <PublishReportButton visualization={selectedVisualization} query={query} />
+        {showNewVisualizationButton && (
+          <Button
+            className="add-visualization-button"
+            data-test="NewVisualization"
+            type="link"
+            onClick={() => onAddVisualization()}
+          >
+            <i className="fa fa-plus" aria-hidden="true" />
+            <span className="m-l-5 hidden-xs">Add Visualization</span>
+          </Button>
+        )}
+      </div>
     );
   }
 
@@ -184,6 +197,7 @@ QueryVisualizationTabs.propTypes = {
   onDeleteVisualization: PropTypes.func,
   refreshButton: PropTypes.node,
   canRefresh: PropTypes.bool,
+  query: PropTypes.object, // eslint-disable-line react/forbid-prop-types
 };
 
 QueryVisualizationTabs.defaultProps = {
@@ -197,4 +211,5 @@ QueryVisualizationTabs.defaultProps = {
   onDeleteVisualization: () => {},
   refreshButton: null,
   canRefresh: true,
+  query: null,
 };

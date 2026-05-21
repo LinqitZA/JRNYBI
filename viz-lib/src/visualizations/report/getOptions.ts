@@ -32,6 +32,7 @@ const DEFAULT_OPTIONS = {
   itemsPerPage: 25,
   paginationSize: "default",
   metricCards: [] as MetricCard[],
+  reportCategory: "" as string,
 };
 
 export default function getOptions(options: any, { columns }: any) {
