@@ -1651,3 +1651,26 @@ Agent: Batch agent handling features #102, #105, #106
 - Features passing: 104+ (106 total)
 - All 3 assigned features (#102, #105, #106) complete
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+
+## Session 35: 2026-05-21
+Agent: Handling feature #104
+
+### Feature #104: Fix FK Resolution shortcut — move Ctrl+. from Ace to Mousetrap (PASSING)
+- Feature was already fully implemented by parallel agent in commit 80d3d1d9 (session 34)
+- Verified all implementation elements in compiled JS (app.6126efab8104789d6825.js):
+  1. Mousetrap binding: {"mod+.":()=>{e.commands.exec("resolveFKColumn",e)}} with bind/unbind
+  2. Ace release: bindKey({win:"Ctrl-.",mac:"Cmd-."},null) in initEditor
+  3. Ace command: addCommand({name:"resolveFKColumn",bindKey:null,exec:...})
+- KeyboardShortcuts.bind() uses Mousetrap.bindGlobal() which calls event.preventDefault()
+  → This blocks Chrome's emoji picker from intercepting Ctrl+.
+- Keyboard shortcuts tooltip confirmed: mod+. — Resolve FK column
+- FK marker logic (fk-resolvable-marker) untouched and functional
+- No mock data patterns in QueryEditor source files
+- Server healthy (ping returns PONG, API returns 200)
+- Rebuilt frontend (webpack compiled successfully, new hash deployed via volume mount)
+- No code changes needed - verification-only session
+- Marked feature #104 as passing
+
+## Current Status
+- Features passing: 105+ (106 total)
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
