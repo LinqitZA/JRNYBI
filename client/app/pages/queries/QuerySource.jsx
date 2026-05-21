@@ -25,6 +25,7 @@ import wrapQueryPage from "./components/wrapQueryPage";
 import QueryExecutionMetadata from "./components/QueryExecutionMetadata";
 import ViewSuggestionBanner from "@/components/queries/ViewSuggestionBanner";
 import SelectStarHintBanner from "@/components/queries/SelectStarHintBanner";
+import FKHintBanner from "@/components/queries/FKHintBanner";
 
 import { getEditorComponents } from "@/components/queries/editor-components";
 import useQuery from "./hooks/useQuery";
@@ -164,6 +165,7 @@ function QuerySource(props) {
   const [selectedText, setSelectedText] = useState(null);
   const [cursorPosition, setCursorPosition] = useState(0);
   const [selectStarMatches, setSelectStarMatches] = useState([]);
+  const [fkMatches, setFkMatches] = useState([]);
 
   const handleExpandSelectStar = useCallback(() => {
     if (editorRef.current) {
@@ -310,6 +312,7 @@ function QuerySource(props) {
                       onChange={handleQueryEditorChange}
                       onSelectionChange={setSelectedText}
                       onSelectStarDetected={setSelectStarMatches}
+                      onFKDetected={setFkMatches}
                     />
 
                     <ViewSuggestionBanner
@@ -322,6 +325,10 @@ function QuerySource(props) {
                     <SelectStarHintBanner
                       selectStarMatches={selectStarMatches}
                       onExpand={handleExpandSelectStar}
+                    />
+
+                    <FKHintBanner
+                      fkMatches={fkMatches}
                     />
 
                     <QueryEditor.Controls

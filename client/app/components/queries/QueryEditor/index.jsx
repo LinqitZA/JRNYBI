@@ -20,7 +20,7 @@ const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform)
 const EXPAND_SHORTCUT_LABEL = isMac ? "⌘⇧E" : "Ctrl+Shift+E";
 
 const QueryEditor = React.forwardRef(function(
-  { className, syntax, value, autocompleteEnabled, schema, onChange, onSelectionChange, onSelectStarDetected, ...props },
+  { className, syntax, value, autocompleteEnabled, schema, onChange, onSelectionChange, onSelectStarDetected, onFKDetected, ...props },
   ref
 ) {
   const [container, setContainer] = useState(null);
@@ -73,7 +73,10 @@ const QueryEditor = React.forwardRef(function(
         markerIds.forEach(id => editor.session.removeMarker(id));
         markerIds = [];
 
-        if (!rawSchema || !fkGraph) return;
+        if (!rawSchema || !fkGraph) {
+          if (onFKDetected) onFKDetected([]);
+          return;
+        }
 
         try {
           const fkCols = findFKColumnsInSelect(editor, rawSchema, fkGraph);
@@ -82,8 +85,14 @@ const QueryEditor = React.forwardRef(function(
             const id = editor.session.addMarker(range, "fk-resolvable-marker", "text", false);
             markerIds.push(id);
           });
+
+          // Notify parent about detected FK columns (for the hint banner)
+          if (onFKDetected) {
+            onFKDetected(fkCols);
+          }
         } catch (e) {
           // Never let marker logic break the editor
+          if (onFKDetected) onFKDetected([]);
         }
       }
 
@@ -196,6 +205,21 @@ const QueryEditor = React.forwardRef(function(
     }
   }, [editorRef]);
 
+  // Bind Ctrl+. via Mousetrap (browser emoji picker intercepts before Ace sees it)
+  useEffect(() => {
+    if (editorRef) {
+      const editor = editorRef.editor;
+      const fkResolveHandler = () => {
+        editor.commands.exec("resolveFKColumn", editor);
+      };
+      const shortcuts = { "mod+.": fkResolveHandler };
+      KeyboardShortcuts.bind(shortcuts);
+      return () => {
+        KeyboardShortcuts.unbind(shortcuts);
+      };
+    }
+  }, [editorRef]);
+
   const initEditor = useCallback(editor => {
     // Release Cmd/Ctrl+L to the browser
     editor.commands.bindKey({ win: "Ctrl+L", mac: "Cmd+L" }, null);
@@ -205,6 +229,9 @@ const QueryEditor = React.forwardRef(function(
 
     // Release Cmd/Ctrl+Shift+E so Mousetrap can handle it (browser intercepts before Ace sees it)
     editor.commands.bindKey({ win: "Ctrl+Shift+E", mac: "Cmd+Shift+E" }, null);
+
+    // Release Ctrl+. / Cmd+. so Mousetrap can handle it (browser emoji picker intercepts before Ace sees it)
+    editor.commands.bindKey({ win: "Ctrl-.", mac: "Cmd-." }, null);
 
     // Release Ctrl+P for open new parameter dialog
     editor.commands.bindKey({ win: "Ctrl+P", mac: null }, null);
@@ -230,10 +257,10 @@ const QueryEditor = React.forwardRef(function(
       }
     });
 
-    // FK resolution: Ctrl+. to resolve FK column to its display field
+    // FK resolution: registered as named command (keyboard shortcut via Mousetrap below)
     editor.commands.addCommand({
       name: "resolveFKColumn",
-      bindKey: { win: "Ctrl-.", mac: "Cmd-." },
+      bindKey: null, // Key released to Mousetrap to avoid browser interception of Ctrl+.
       exec: ed => {
         const rawSchema = getSchemaRawData(ed.id);
         const fkGraph = getFKGraphData(ed.id);
@@ -349,6 +376,7 @@ QueryEditor.propTypes = {
   onChange: PropTypes.func,
   onSelectionChange: PropTypes.func,
   onSelectStarDetected: PropTypes.func,
+  onFKDetected: PropTypes.func,
 };
 
 QueryEditor.defaultProps = {
@@ -360,6 +388,7 @@ QueryEditor.defaultProps = {
   onChange: () => {},
   onSelectionChange: () => {},
   onSelectStarDetected: null,
+  onFKDetected: null,
 };
 
 QueryEditor.Controls = QueryEditorControls;

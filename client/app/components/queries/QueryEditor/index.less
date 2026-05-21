@@ -191,3 +191,63 @@
     }
   }
 }
+
+// ---- FK resolution hint banner ----
+.fk-hint-banner {
+  border-top: 1px solid #e2e8f0;
+  background-color: #eff6ff;
+  padding: 5px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #1e40af;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+
+  .fk-hint-icon {
+    color: #2563eb;
+    font-size: 14px;
+    margin-right: 6px;
+    flex-shrink: 0;
+  }
+
+  .fk-hint-text {
+    code {
+      background-color: #dbeafe;
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-size: 11px;
+      color: #1e3a8a;
+    }
+
+    kbd {
+      display: inline-block;
+      padding: 1px 5px;
+      font-size: 11px;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, monospace;
+      font-weight: 600;
+      color: #1e293b;
+      background-color: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      border-radius: 3px;
+      box-shadow: 0 1px 0 #cbd5e1;
+      line-height: 1.4;
+    }
+  }
+
+  .fk-hint-dismiss {
+    margin-left: auto;
+    background: none;
+    border: none;
+    padding: 2px 4px;
+    cursor: pointer;
+    color: #9ca3af;
+    font-size: 14px;
+    line-height: 1;
+
+    &:hover {
+      color: #6b7280;
+    }
+  }
+}
