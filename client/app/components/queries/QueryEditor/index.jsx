@@ -7,6 +7,7 @@ import { detectFKAtCursor, applyFKResolution, findFKColumnsInSelect } from "./fk
 import { SQL_SNIPPETS, JRNY_TEMPLATES, expandSelectStar, findSelectStarPositions } from "./querySnippets";
 import { srNotify } from "@/lib/accessibility";
 import { SchemaItemType } from "@/components/queries/SchemaBrowser";
+import KeyboardShortcuts from "@/services/KeyboardShortcuts";
 import resizeObserver from "@/services/resizeObserver";
 import QuerySnippet from "@/services/query-snippet";
 
@@ -180,12 +181,30 @@ const QueryEditor = React.forwardRef(function(
     [editorRef, onSelectionChange]
   );
 
+  // Bind Ctrl+Shift+E via Mousetrap (browser intercepts before Ace sees it)
+  useEffect(() => {
+    if (editorRef) {
+      const editor = editorRef.editor;
+      const expandHandler = () => {
+        editor.commands.exec("expandSelectStar", editor);
+      };
+      const shortcuts = { "mod+shift+e": expandHandler };
+      KeyboardShortcuts.bind(shortcuts);
+      return () => {
+        KeyboardShortcuts.unbind(shortcuts);
+      };
+    }
+  }, [editorRef]);
+
   const initEditor = useCallback(editor => {
     // Release Cmd/Ctrl+L to the browser
     editor.commands.bindKey({ win: "Ctrl+L", mac: "Cmd+L" }, null);
 
     // Release Cmd/Ctrl+Shift+F for format query action
     editor.commands.bindKey({ win: "Ctrl+Shift+F", mac: "Cmd+Shift+F" }, null);
+
+    // Release Cmd/Ctrl+Shift+E so Mousetrap can handle it (browser intercepts before Ace sees it)
+    editor.commands.bindKey({ win: "Ctrl+Shift+E", mac: "Cmd+Shift+E" }, null);
 
     // Release Ctrl+P for open new parameter dialog
     editor.commands.bindKey({ win: "Ctrl+P", mac: null }, null);
@@ -226,10 +245,10 @@ const QueryEditor = React.forwardRef(function(
       },
     });
 
-    // SELECT * expansion: Ctrl+Shift+E to expand * to column list
+    // SELECT * expansion: registered as named command (keyboard shortcut via Mousetrap below)
     editor.commands.addCommand({
       name: "expandSelectStar",
-      bindKey: { win: "Ctrl-Shift-E", mac: "Cmd-Shift-E" },
+      bindKey: null, // Key released to Mousetrap to avoid browser interception of Ctrl+Shift+E
       exec: ed => {
         const rawSchema = getSchemaRawData(ed.id);
         if (rawSchema) {
