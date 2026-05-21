@@ -1446,3 +1446,38 @@ Agent: Handling feature #93
 - Features passing: 88+ (93 total)
 - Feature #93 complete
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+
+## Session 30: 2026-05-21
+Agent: Batch agent handling features #94, #95, #96
+
+### Feature #94: Fix Ctrl+Shift+E shortcut for SELECT * expansion (PASSING)
+- Root cause: Browser intercepts Ctrl+Shift+E before Ace Editor sees it
+- Fix: Released Ctrl+Shift+E from Ace keybinding (bindKey null, like Ctrl+Shift+F)
+- Registered shortcut through Mousetrap.bindGlobal via KeyboardShortcuts service
+- Same pattern as working Ctrl+Shift+F (format query) shortcut
+- expandSelectStar command still registered for programmatic exec from banner click
+- EXPAND_SHORTCUT_LABEL unchanged (still shows Ctrl+Shift+E in banner)
+- Committed as e0b06879
+
+### Feature #95: Fix New Category button on Report Categories admin page (PASSING)
+- Root cause: `open={visible}` is Ant Design 5.x syntax; project uses AntD 4.4.3
+- Fix: Changed `open={visible}` to `visible={visible}` on line 96 of ReportCategories.jsx
+- AntD 4 Modal uses `visible` prop, not `open` (which is silently ignored)
+- Committed as bd5e0405
+
+### Feature #96: Fix admin Status page 404 - base path prefix missing (PASSING)
+- Root cause: `axios.get('/status.json')` uses absolute path, bypasses /bi/ base href
+- Fix: Changed to `axios.get('status.json')` (relative) so browser resolves against base href
+- Verified /status.json API returns correct system status data
+- Committed as ecbaa743
+
+## Files Modified
+- client/app/components/queries/QueryEditor/index.jsx - Mousetrap binding for Ctrl+Shift+E
+- client/app/pages/admin/ReportCategories.jsx - AntD 4 visible prop fix
+- client/app/pages/admin/SystemStatus.jsx - Relative URL for status.json
+
+## Current Status
+- Features passing: 96 (96/100 = 96%)
+- Total features: 100
+- All 3 assigned features (#94, #95, #96) implemented and verified
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
