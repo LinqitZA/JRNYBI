@@ -4,7 +4,8 @@ JRNY Data Dictionary API Handler
 Endpoint: GET /api/jrny/data-dictionary
 
 Returns metadata about the JRNY ERP read-replica database schemas,
-including tables, columns, data types, and COMMENT ON annotations.
+including tables, columns, data types, COMMENT ON annotations, and
+foreign key relationships.
 
 Response structure:
 {
@@ -22,7 +23,16 @@ Response structure:
               "data_type": "uuid",
               "nullable": false,
               "default": null,
-              "comment": "Primary key"
+              "comment": "Primary key",
+              "fk": null
+            },
+            {
+              "name": "customer_id",
+              "data_type": "uuid",
+              "nullable": true,
+              "default": null,
+              "comment": "Customer foreign key",
+              "fk": {"schema": "core", "table": "contacts", "column": "id"}
             }
           ]
         }
@@ -37,6 +47,7 @@ Requires authentication (returns 401 for unauthenticated requests).
 """
 
 import logging
+import re
 from collections import OrderedDict
 
 from redash import models
@@ -96,7 +107,7 @@ ORDER BY
 """
 
 
-def _build_nested_response(rows):
+def _build_nested_response(rows, fk_map=None):
     """
     Transform flat query rows into nested schema -> tables -> columns hierarchy.
 
@@ -104,10 +115,18 @@ def _build_nested_response(rows):
         rows: List of dicts with keys: table_schema, table_name, table_type,
               table_comment, column_name, data_type, is_nullable, column_default,
               ordinal_position, column_comment
+        fk_map: Optional dict mapping (full_table_name, column_name) ->
+                {"schema": str, "table": str, "column": str} for FK relationships.
 
     Returns:
         dict with "schemas" key containing the nested hierarchy.
     """
+    if fk_map is None:
+        fk_map = {}
+
+    # Regex to strip fk:schema.table.column annotations from comment text
+    fk_comment_re = re.compile(r"\s*fk:\w+\.\w+\.\w+\s*")
+
     schemas = OrderedDict()
 
     for row in rows:
@@ -127,14 +146,25 @@ def _build_nested_response(rows):
                 "columns": [],
             }
 
+        # Look up FK relationship for this column
+        full_table_name = "{}.{}".format(schema_name, table_name)
+        col_name = row["column_name"]
+        fk_info = fk_map.get((full_table_name, col_name))
+
+        # Clean the fk: annotation from the display comment
+        comment = row.get("column_comment")
+        if comment:
+            comment = fk_comment_re.sub("", comment).strip() or None
+
         # Add column
         schemas[schema_name][table_name]["columns"].append(
             {
-                "name": row["column_name"],
+                "name": col_name,
                 "data_type": row["data_type"],
                 "nullable": row.get("is_nullable", True),
                 "default": row.get("column_default"),
-                "comment": row.get("column_comment"),
+                "comment": comment,
+                "fk": fk_info,
             }
         )
 
@@ -197,11 +227,97 @@ class JRNYDataDictionaryResource(BaseResource):
             # No data returned — could be connection issue or empty schemas
             return {"schemas": []}
 
-        # Build nested response
-        result = _build_nested_response(data["rows"])
+        # Fetch FK data by reusing the query runner's FK methods.
+        # This provides three sources of FK relationships:
+        #   1. Direct FKs from pg_constraint (_get_foreign_keys)
+        #   2. Inferred view FKs from base table column tracing
+        #   3. Comment-annotated FKs (fk:schema.table.column)
+        fk_map = self._build_fk_map(query_runner, data["rows"])
+
+        # Build nested response with FK enrichment
+        result = _build_nested_response(data["rows"], fk_map=fk_map)
 
         self.record_event(
             {"action": "view", "object_type": "data_dictionary"}
         )
 
         return result
+
+    def _build_fk_map(self, query_runner, rows):
+        """
+        Build a merged FK map using the query runner's FK-related methods.
+
+        Combines three FK sources (same logic as JRNYPostgreSQL.get_schema()):
+          1. Direct FKs from pg_constraint
+          2. Inferred view FKs from base table column origin tracing
+          3. Comment-annotated FKs (fk:schema.table.column in COMMENT ON)
+
+        Args:
+            query_runner: JRNYPostgreSQL instance with FK query methods.
+            rows: Data dictionary query result rows (used to build schema_dict
+                  for view FK inference).
+
+        Returns:
+            dict: Merged FK map: (full_table_name, col_name) ->
+                  {"schema": str, "table": str, "column": str}
+        """
+        try:
+            # 1. Direct FKs from pg_constraint
+            fk_map = query_runner._get_foreign_keys()
+
+            # 2. Inferred view FKs (requires view deps and column origins)
+            view_deps = query_runner._get_view_dependencies()
+
+            if view_deps:
+                # Build a minimal schema_dict from the data dictionary rows
+                # for _infer_view_fk_from_origins (needs table -> columns mapping)
+                schema_dict = {}
+                for row in rows:
+                    full_name = "{}.{}".format(
+                        row["table_schema"], row["table_name"]
+                    )
+                    if full_name not in schema_dict:
+                        schema_dict[full_name] = {
+                            "name": full_name,
+                            "columns": [],
+                        }
+                    schema_dict[full_name]["columns"].append(
+                        {"name": row["column_name"]}
+                    )
+
+                view_column_origins = query_runner._get_view_column_origins(
+                    view_deps
+                )
+                inferred_fks = query_runner._infer_view_fk_from_origins(
+                    fk_map, view_column_origins, schema_dict
+                )
+            else:
+                inferred_fks = {}
+
+            # 3. Comment-annotated FKs
+            _, column_comments = query_runner._get_comments()
+            comment_fks = query_runner._parse_fk_comments(column_comments)
+
+            # Merge all FK maps (same priority as get_schema):
+            # comment FKs < inferred FKs < direct FKs
+            merged = {}
+            merged.update(comment_fks)
+            merged.update(inferred_fks)
+            merged.update(fk_map)
+
+            logger.debug(
+                "Data dictionary FK map: %d total "
+                "(direct: %d, inferred: %d, comments: %d)",
+                len(merged),
+                len(fk_map),
+                len(inferred_fks),
+                len(comment_fks),
+            )
+            return merged
+
+        except Exception:
+            logger.warning(
+                "Failed to fetch FK data for data dictionary",
+                exc_info=True,
+            )
+            return {}

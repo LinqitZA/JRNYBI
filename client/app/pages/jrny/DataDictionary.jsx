@@ -25,6 +25,7 @@ import {
   CopyOutlined,
   EditOutlined,
   SearchOutlined,
+  LinkOutlined,
 } from "@ant-design/icons";
 import { axios } from "@/services/axios";
 import notification from "@/services/notification";
@@ -171,6 +172,7 @@ function TableNode({ schema, table, expandedTables, toggleTable, searchTerm, foc
             <span className="dd-col-type">Type</span>
             <span className="dd-col-nullable">Nullable</span>
             <span className="dd-col-default">Default</span>
+            <span className="dd-col-fk">FK</span>
             <span className="dd-col-comment">Description</span>
           </div>
           {table.columns.map((col) => (
@@ -187,6 +189,9 @@ function ColumnRow({ column, searchTerm }) {
   const isHighlighted =
     searchTerm && column.name.toLowerCase().includes(searchTerm.toLowerCase());
 
+  const fk = column.fk;
+  const fkDisplay = fk ? `${fk.schema}.${fk.table}.${fk.column}` : null;
+
   return (
     <div className={`dd-column-row ${isHighlighted ? "dd-highlighted" : ""}`}>
       <span className="dd-col-name">{column.name}</span>
@@ -196,6 +201,18 @@ function ColumnRow({ column, searchTerm }) {
       <span className="dd-col-nullable">{column.nullable ? "YES" : "NO"}</span>
       <span className="dd-col-default">
         {column.default ? <code>{column.default}</code> : <span className="dd-null">-</span>}
+      </span>
+      <span className="dd-col-fk">
+        {fk ? (
+          <Tooltip title={`References ${fkDisplay}`}>
+            <span className="dd-fk-badge">
+              <LinkOutlined className="dd-fk-icon" />
+              <span className="dd-fk-ref">{fk.schema}.{fk.table}.{fk.column}</span>
+            </span>
+          </Tooltip>
+        ) : (
+          <span className="dd-null">-</span>
+        )}
       </span>
       <span className="dd-col-comment">{column.comment || ""}</span>
     </div>

@@ -327,6 +327,44 @@
     }
   }
 
+  .dd-col-fk {
+    flex: 0 0 200px;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    .dd-fk-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 1px 6px;
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 3px;
+      color: @dd-primary;
+      cursor: default;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .dd-fk-icon {
+      font-size: 11px;
+      color: @dd-primary;
+      flex-shrink: 0;
+    }
+
+    .dd-fk-ref {
+      font-size: 11px;
+      color: @dd-primary;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
   .dd-col-comment {
     flex: 1;
     font-size: 12px;
