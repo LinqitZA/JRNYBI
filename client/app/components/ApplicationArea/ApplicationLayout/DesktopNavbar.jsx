@@ -13,6 +13,7 @@ import logoUrl from "@/assets/images/jrnybi_logo.svg";
 import DesktopOutlinedIcon from "@ant-design/icons/DesktopOutlined";
 import CodeOutlinedIcon from "@ant-design/icons/CodeOutlined";
 import AlertOutlinedIcon from "@ant-design/icons/AlertOutlined";
+import FileTextOutlinedIcon from "@ant-design/icons/FileTextOutlined";
 import PlusOutlinedIcon from "@ant-design/icons/PlusOutlined";
 import QuestionCircleOutlinedIcon from "@ant-design/icons/QuestionCircleOutlined";
 import SettingOutlinedIcon from "@ant-design/icons/SettingOutlined";
@@ -51,6 +52,7 @@ function useNavbarActiveState() {
       ),
       dataSources: includes(["DataSources.List"], currentRoute.id),
       alerts: includes(["Alerts.List", "Alerts.New", "Alerts.View", "Alerts.Edit"], currentRoute.id),
+      reports: includes(["Reports.List", "Reports.Category"], currentRoute.id),
       dataDictionary: includes(["JRNY.DataDictionary"], currentRoute.id),
     }),
     [currentRoute.id]
@@ -80,6 +82,14 @@ export default function DesktopNavbar() {
               <Link href="dashboards">
                 <DesktopOutlinedIcon aria-label="Dashboard navigation button" />
                 <span className="desktop-navbar-label">Dashboards</span>
+              </Link>
+            </Menu.Item>
+          )}
+          {currentUser.hasPermission("list_dashboards") && (
+            <Menu.Item key="reports" className={activeState.reports ? "navbar-active-item" : null}>
+              <Link href="reports">
+                <FileTextOutlinedIcon aria-label="Reports navigation button" />
+                <span className="desktop-navbar-label">Reports</span>
               </Link>
             </Menu.Item>
           )}

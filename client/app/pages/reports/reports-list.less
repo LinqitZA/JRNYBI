@@ -1,0 +1,142 @@
+@import "~@/assets/less/jrny-theme.less";
+
+.page-reports-list {
+  .reports-loading {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 200px;
+  }
+
+  .reports-empty {
+    text-align: center;
+    padding: 60px 20px;
+
+    .reports-empty-hint {
+      margin-top: 16px;
+      color: #6b7280;
+      font-size: 13px;
+
+      code {
+        background: #f1f5f9;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 12px;
+        color: @jrny-primary;
+      }
+    }
+  }
+
+  .reports-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 16px;
+  }
+
+  .report-card {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 20px;
+    transition: all 0.2s ease;
+    display: flex;
+    flex-direction: column;
+
+    &:hover {
+      border-color: @jrny-primary;
+      box-shadow: 0 2px 8px rgba(37, 99, 235, 0.1);
+    }
+
+    .report-card-header {
+      margin-bottom: 12px;
+
+      .report-card-title-row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .report-card-title {
+        font-size: 15px;
+        font-weight: 600;
+        color: #1e293b;
+        text-decoration: none;
+        line-height: 1.4;
+        flex: 1;
+
+        &:hover {
+          color: @jrny-primary;
+        }
+      }
+
+      .report-card-star {
+        border: none;
+        background: none;
+        padding: 2px;
+        cursor: pointer;
+        color: #cbd5e1;
+        font-size: 16px;
+        flex-shrink: 0;
+        transition: color 0.15s ease;
+
+        &:hover {
+          color: #facc15;
+        }
+
+        &.favorited {
+          color: #facc15;
+        }
+      }
+    }
+
+    .report-card-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      font-size: 12px;
+      color: #94a3b8;
+      margin-bottom: 16px;
+
+      .report-card-meta-item {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+    }
+
+    .report-card-footer {
+      margin-top: auto;
+      padding-top: 12px;
+      border-top: 1px solid #f1f5f9;
+
+      .report-card-view-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        font-weight: 500;
+        color: @jrny-primary;
+        text-decoration: none;
+
+        &:hover {
+          color: darken(@jrny-primary, 10%);
+        }
+
+        .anticon {
+          font-size: 10px;
+        }
+      }
+    }
+  }
+}
+
+@media (max-width: 990px) {
+  .page-reports-list .page-header-actions {
+    width: auto;
+  }
+
+  .page-reports-list .reports-grid {
+    grid-template-columns: 1fr;
+  }
+}
