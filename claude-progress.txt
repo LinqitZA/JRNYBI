@@ -1570,3 +1570,36 @@ Agent: Handling feature #100
 - Features passing: 97 (97/100 = 97%)
 - Total features: 100
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+
+## Session 33: 2026-05-21
+Agent: Handling feature #101
+
+### Feature #101: Fix FK schema query — replace information_schema.constraint_column_usage with pg_catalog (PASSING)
+- Root cause: `_get_foreign_keys()` used `information_schema.constraint_column_usage` which only returns
+  columns for tables OWNED by the connected role. Since jrnybi_reader doesn't own ERP tables, FK query
+  always returned 0 rows.
+- Additional bug: Old query joined key_column_usage to constraint_column_usage only on constraint_name +
+  constraint_schema, producing Cartesian product for composite FKs (2-col FK yields 4 rows instead of 2).
+- Fix: Replaced SQL with pg_catalog-based query using:
+  * pg_constraint (FK definitions, no ownership restriction)
+  * pg_class + pg_namespace (table/schema names)
+  * pg_attribute (column names)
+  * unnest(conkey, confkey) WITH ORDINALITY for positional column pairing
+- Same column aliases maintained (fk_schema, fk_table, fk_column, ref_schema, ref_table, ref_column)
+  so result parsing code unchanged.
+- Verified with test_reader non-owner role:
+  * Old query (information_schema): 0 rows returned
+  * New query (pg_catalog): 7 rows returned
+- Schema API now returns 15 FK columns: 7 base + 8 inferred from views
+- Schema refresh job completed successfully, FK link icons available in frontend
+- No mock data patterns in modified file
+- Committed as 210eafc8
+
+## Files Modified
+- redash/query_runner/jrny_pg.py - Replaced information_schema FK query with pg_catalog
+
+## Current Status
+- Features passing: 101 (101/101 = 100%)
+- Total features: 101
+- ALL FEATURES COMPLETE
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
