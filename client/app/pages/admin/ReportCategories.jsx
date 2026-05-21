@@ -31,7 +31,7 @@ import {
 
 import routeWithUserSession from "@/components/ApplicationArea/routeWithUserSession";
 import RequireAdmin from "@/components/ApplicationArea/RequireAdmin";
-import Layout from "@/components/admin/Layout";
+import wrapSettingsTab from "@/components/SettingsWrapper";
 import { axios } from "@/services/axios";
 import notification from "@/services/notification";
 import routes from "@/services/routes";
@@ -93,7 +93,7 @@ function CategoryFormModal({ visible, category, onSave, onCancel, existingIds })
   return (
     <Modal
       title={isEdit ? "Edit Category" : "New Category"}
-      open={visible}
+      visible={visible}
       onOk={handleOk}
       onCancel={onCancel}
       okText={isEdit ? "Save" : "Create"}
@@ -352,49 +352,58 @@ function ReportCategories() {
   ];
 
   return (
-    <Layout activeTab="report_categories">
-      <div className="report-categories-page">
-        <div className="page-header-row">
-          <div>
-            <h3>Report Categories</h3>
-            <p className="page-subtitle">
-              Manage the categories that organize reports in the Reports navigation. Drag to reorder.
-            </p>
-          </div>
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-            New Category
-          </Button>
+    <div className="report-categories-page">
+      <div className="page-header-row">
+        <div>
+          <h3>Report Categories</h3>
+          <p className="page-subtitle">
+            Manage the categories that organize reports in the Reports navigation. Drag to reorder.
+          </p>
         </div>
-
-        <Table
-          dataSource={categories}
-          columns={columns}
-          rowKey="id"
-          loading={loading}
-          pagination={false}
-          size="middle"
-          locale={{ emptyText: "No categories defined. Click 'New Category' to create one." }}
-        />
-
-        <div className="uncategorized-note">
-          <FolderOutlined style={{ marginRight: 8 }} />
-          Reports without a matching category will appear under <strong>Uncategorized</strong> in the Reports page.
-        </div>
-
-        <CategoryFormModal
-          visible={modalVisible}
-          category={editingCategory}
-          onSave={handleSave}
-          onCancel={() => {
-            setModalVisible(false);
-            setEditingCategory(null);
-          }}
-          existingIds={categories.map(c => c.id)}
-        />
+        <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+          New Category
+        </Button>
       </div>
-    </Layout>
+
+      <Table
+        dataSource={categories}
+        columns={columns}
+        rowKey="id"
+        loading={loading}
+        pagination={false}
+        size="middle"
+        locale={{ emptyText: "No categories defined. Click 'New Category' to create one." }}
+      />
+
+      <div className="uncategorized-note">
+        <FolderOutlined style={{ marginRight: 8 }} />
+        Reports without a matching category will appear under <strong>Uncategorized</strong> in the Reports page.
+      </div>
+
+      <CategoryFormModal
+        visible={modalVisible}
+        category={editingCategory}
+        onSave={handleSave}
+        onCancel={() => {
+          setModalVisible(false);
+          setEditingCategory(null);
+        }}
+        existingIds={categories.map(c => c.id)}
+      />
+    </div>
   );
 }
+
+const ReportCategoriesPage = wrapSettingsTab(
+  "Admin.ReportCategories",
+  {
+    permission: "admin",
+    title: "Report Categories",
+    path: "admin/report-categories",
+    order: 8,
+  },
+  ReportCategories
+);
 
 routes.register(
   "Admin.ReportCategories",
@@ -403,7 +412,7 @@ routes.register(
     title: "Report Categories",
     render: pageProps => (
       <RequireAdmin>
-        <ReportCategories {...pageProps} />
+        <ReportCategoriesPage {...pageProps} />
       </RequireAdmin>
     ),
   })
