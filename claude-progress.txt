@@ -1481,3 +1481,32 @@ Agent: Batch agent handling features #94, #95, #96
 - Total features: 100
 - All 3 assigned features (#94, #95, #96) implemented and verified
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+
+## Session 31: 2026-05-21
+Agent: Handling feature #99
+
+### Feature #99: Add Report Categories link to admin settings menu (PASSING)
+- Feature already implemented by parallel agent in commit bd5e0405 (Feature #95 session)
+- Changes verified in place:
+  * Line 34: `import wrapSettingsTab from "@/components/SettingsWrapper"` (replaces Layout import)
+  * Lines 397-406: `wrapSettingsTab("Admin.ReportCategories", {permission: "admin", title: "Report Categories", path: "admin/report-categories", order: 8}, ReportCategories)`
+  * Route registration uses wrapped `ReportCategoriesPage` instead of raw `ReportCategories`
+  * Layout wrapper removed from JSX (wrapSettingsTab provides the settings page chrome)
+- Compiled JS verification:
+  * `permission:"admin",title:"Report Categories",path:"admin/report-categories",order:8` found in app.c595669b19ad6bdc4c93.js
+  * Route registration at `/admin/report-categories` confirmed
+  * Settings tab appears at order 8 (after Account at order 7)
+- Permission verification:
+  * Admin user (groups {1,2}): hasPermission("admin") = true, sees tab
+  * Regular user (groups {2}): no "admin" permission, tab hidden via settingsMenu.isAvailable()
+- No mock data patterns found in ReportCategories.jsx
+- Frontend rebuilt and deployed to Docker container
+- Marked as passing
+
+## Current Status
+- Features passing: 98 (98/100 = 98%)
+- Total features: 100
+- Server at http://localhost:5001
+- JWT auth working (HS256 dev mode)
+- Admin JWT token generated for testing
+- API key auth has pre-existing issue (permissions not resolved from groups)
