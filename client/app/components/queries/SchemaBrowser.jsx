@@ -189,8 +189,8 @@ function SchemaItem({ item, expanded, onToggle, onSelect, onNavigateToTable, inc
                 <Tooltip
                   title={
                     "Insert column name into query text" +
-                    (fkTooltip ? "\n" + fkTooltip : "") +
-                    (columnDescription ? "\n" + columnDescription : "")
+                    (fkTooltip ? "\n\n" + fkTooltip : "") +
+                    (columnDescription ? "\n\n" + columnDescription : "")
                   }
                   mouseEnterDelay={0}
                   mouseLeaveDelay={0}
