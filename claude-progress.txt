@@ -1817,3 +1817,45 @@ Agent: Handling feature #110
 - Features passing: 108+ (111 total)
 - Feature #110 complete
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+
+## Session 23: 2026-05-22
+Agent: Batch agent handling features #108, #109
+
+### Feature #108: Change FK Resolution shortcut to Ctrl+Shift+J and add Resolve button (PASSING)
+- Changed capture-phase keydown listener from Ctrl+. to Ctrl+Shift+J (works reliably inside JRNY ERP iframe)
+- Updated FK_SHORTCUT_LABEL from "Ctrl+." to "Ctrl+Shift+J" (Mac: ⌘⇧J)
+- Added resolveAllFKColumns Ace command that iterates all detected FK columns bottom-to-top
+- Added "Resolve now" button to FKHintBanner following SelectStarHintBanner pattern
+- Added jrnybi:resolve-fk-columns custom DOM event for programmatic resolution
+- Created handleResolveFKColumns callback in QuerySource.jsx dispatching custom event
+- Added .fk-hint-action CSS styles matching .select-star-hint-action pattern
+- Updated keyboard shortcuts tooltip in QueryEditorControls.jsx
+- Released Ctrl+Shift+J in Ace editor bindings (was Ctrl+.)
+- Verified: all elements compiled into production JS/CSS bundle
+- Committed (included in 3946090e by parallel agent)
+
+### Feature #109: Auto-qualify column names with table prefix in SELECT clause (PASSING)
+- Created qualifySelectColumns() function in fkResolution.js
+- Builds column-to-table ownership map from schema metadata via buildColumnOwnerMap()
+- parseSelectColumns() handles commas inside parentheses, DISTINCT/ALL keywords
+- analyzeSelectExpr() classifies columns as simple or complex, detects existing qualifiers and AS aliases
+- qualifyExpressionColumns() handles function calls and complex expressions using regex
+- Handles ambiguity: columns in multiple tables default to base table (FROM clause) qualifier
+- Skips already-qualified columns (e.g., o.order_date), SQL keywords, and function names
+- Preserves AS aliases when qualifying (e.g., name AS customer_name → orders.name AS customer_name)
+- Integrated into applyFKResolution() - runs after JOIN is added to prevent ambiguity
+- Comprehensive QUALIFY_SKIP_KEYWORDS set covers SQL keywords, functions, types
+- Committed as 3229238d
+
+## Files Modified
+- client/app/components/queries/QueryEditor/index.jsx - Ctrl+Shift+J shortcut, resolveAllFKColumns, event listener
+- client/app/components/queries/QueryEditor/index.less - .fk-hint-action styles
+- client/app/components/queries/QueryEditor/QueryEditorControls.jsx - Updated tooltip
+- client/app/components/queries/FKHintBanner.jsx - onResolve prop, Resolve now button, updated label
+- client/app/pages/queries/QuerySource.jsx - handleResolveFKColumns callback, onResolve prop
+- client/app/components/queries/QueryEditor/fkResolution.js - qualifySelectColumns + helper functions
+
+## Current Status
+- Features passing: 109+ (111 total)
+- Features #108 and #109 complete
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
