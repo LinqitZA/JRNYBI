@@ -1782,3 +1782,38 @@ Agent: Handling feature #107
 - Features passing: 107 (107/107 = 100%)
 - Feature #107 complete
 - Server at http://localhost:5001
+
+## Session 38: 2026-05-22
+Agent: Handling feature #110
+
+### Feature #110: Add CRM schema to data dictionary and schema browser (PASSING)
+- Added 'crm' to JRNY_SCHEMAS list in redash/query_runner/jrny_pg.py (line 64)
+  - Propagates to FK queries (_get_foreign_keys, line 444)
+  - Propagates to view dependencies (_get_view_dependencies, line 528)
+  - Propagates to COMMENT ON queries (_get_comments, line 747)
+  - Propagates to default search_path config (line 131)
+- Added 'crm' to WHERE IN clause in redash/handlers/jrny_data_dictionary.py (line 87)
+- Added WHEN 'crm' THEN 7 to ORDER BY CASE in jrny_data_dictionary.py (sort after cashbook)
+- Added crm to search_path string in redash/cli/data_sources.py (line 317)
+- Added CREATE SCHEMA IF NOT EXISTS crm in seed/create_dev_schemas.sql
+- Created 3 CRM dev tables: leads, opportunities, activities
+- Added FK constraints: opportunities→contacts, activities→contacts, activities→opportunities
+- Added COMMENT ON for all 3 CRM tables and FK columns
+- Verified: data dictionary API returns 8 schemas (CRM at position 8)
+- Verified: CRM schema has 3 tables with correct columns, types, comments
+- Verified: FK relationships resolve correctly (cross-schema to core.contacts and intra-schema crm→crm)
+- Verified: schema browser refresh shows crm.leads, crm.opportunities, crm.activities
+- Verified: zero mock data patterns in all modified files
+- Docker image rebuilt, server restarted, all tests pass
+- Committed as a8857c4c
+
+## Files Modified
+- redash/query_runner/jrny_pg.py - Added 'crm' to JRNY_SCHEMAS
+- redash/handlers/jrny_data_dictionary.py - Added 'crm' to SQL WHERE, ORDER BY, and docstring
+- redash/cli/data_sources.py - Added crm to search_path
+- seed/create_dev_schemas.sql - CRM schema, tables, FK constraints, comments
+
+## Current Status
+- Features passing: 108+ (111 total)
+- Feature #110 complete
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
