@@ -10,6 +10,7 @@ DO $$ BEGIN
   EXECUTE 'CREATE SCHEMA IF NOT EXISTS inventory';
   EXECUTE 'CREATE SCHEMA IF NOT EXISTS procurement';
   EXECUTE 'CREATE SCHEMA IF NOT EXISTS cashbook';
+  EXECUTE 'CREATE SCHEMA IF NOT EXISTS crm';
 END $$;
 
 -- Reporting schema views (as tables for dev)
@@ -304,6 +305,56 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- CRM schema
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='crm' AND table_name='leads') THEN
+    EXECUTE '
+      CREATE TABLE crm.leads (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        lead_name TEXT,
+        email TEXT,
+        phone TEXT,
+        source TEXT,
+        status TEXT DEFAULT ''new'',
+        assigned_to UUID,
+        org_id UUID,
+        created_at TIMESTAMP DEFAULT now()
+      )';
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='crm' AND table_name='opportunities') THEN
+    EXECUTE '
+      CREATE TABLE crm.opportunities (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        opportunity_name TEXT,
+        contact_id UUID,
+        stage TEXT DEFAULT ''prospecting'',
+        amount NUMERIC(12,2),
+        close_date DATE,
+        org_id UUID,
+        created_at TIMESTAMP DEFAULT now()
+      )';
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='crm' AND table_name='activities') THEN
+    EXECUTE '
+      CREATE TABLE crm.activities (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        activity_type TEXT,
+        subject TEXT,
+        contact_id UUID,
+        opportunity_id UUID,
+        notes TEXT,
+        activity_date TIMESTAMP DEFAULT now(),
+        org_id UUID
+      )';
+  END IF;
+END $$;
+
 -- Add foreign key constraints for schema relationship testing
 -- Note: Using DO blocks so constraints are idempotent (skip if already exists)
 DO $$ BEGIN
@@ -373,6 +424,36 @@ DO $$ BEGIN
   ) THEN
     ALTER TABLE cashbook.transactions
       ADD CONSTRAINT fk_transactions_bank_account FOREIGN KEY (bank_account_id) REFERENCES cashbook.bank_accounts(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_opportunities_contact' AND table_schema = 'crm'
+  ) THEN
+    ALTER TABLE crm.opportunities
+      ADD CONSTRAINT fk_opportunities_contact FOREIGN KEY (contact_id) REFERENCES core.contacts(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_activities_contact' AND table_schema = 'crm'
+  ) THEN
+    ALTER TABLE crm.activities
+      ADD CONSTRAINT fk_activities_contact FOREIGN KEY (contact_id) REFERENCES core.contacts(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_activities_opportunity' AND table_schema = 'crm'
+  ) THEN
+    ALTER TABLE crm.activities
+      ADD CONSTRAINT fk_activities_opportunity FOREIGN KEY (opportunity_id) REFERENCES crm.opportunities(id);
   END IF;
 END $$;
 
@@ -562,3 +643,10 @@ COMMENT ON TABLE procurement.purchase_orders IS 'Purchase orders to suppliers';
 
 COMMENT ON TABLE cashbook.bank_accounts IS 'Bank account records';
 COMMENT ON TABLE cashbook.transactions IS 'Bank transactions';
+
+COMMENT ON TABLE crm.leads IS 'Sales leads and prospects';
+COMMENT ON TABLE crm.opportunities IS 'Sales opportunities pipeline';
+COMMENT ON COLUMN crm.opportunities.contact_id IS 'fk:core.contacts.id Related contact';
+COMMENT ON TABLE crm.activities IS 'CRM activity log (calls, emails, meetings)';
+COMMENT ON COLUMN crm.activities.contact_id IS 'fk:core.contacts.id Related contact';
+COMMENT ON COLUMN crm.activities.opportunity_id IS 'fk:crm.opportunities.id Related opportunity';

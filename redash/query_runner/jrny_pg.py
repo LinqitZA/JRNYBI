@@ -61,6 +61,7 @@ JRNY_SCHEMAS = [
     "inventory",
     "procurement",
     "cashbook",
+    "crm",
 ]
 
 

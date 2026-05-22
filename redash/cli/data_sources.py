@@ -314,7 +314,7 @@ def seed_jrny(organization="JRNY", force=False):
         "dbname": replica_db,
         "user": replica_user,
         "password": replica_password,
-        "search_path": "reporting,core,sales,finance,inventory,procurement,cashbook",
+        "search_path": "reporting,core,sales,finance,inventory,procurement,cashbook,crm",
         "sslmode": "prefer",
         "dsn": "application_name=jrnybi",
     }

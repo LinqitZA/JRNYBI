@@ -41,7 +41,7 @@ Response structure:
   ]
 }
 
-Schemas included: reporting, core, sales, finance, inventory, procurement, cashbook
+Schemas included: reporting, core, sales, finance, inventory, procurement, cashbook, crm
 
 Requires authentication (returns 401 for unauthenticated requests).
 """
@@ -85,7 +85,7 @@ JOIN information_schema.tables t
     ON c.table_schema = t.table_schema
     AND c.table_name = t.table_name
 WHERE c.table_schema IN ('reporting', 'core', 'sales', 'finance',
-                          'inventory', 'procurement', 'cashbook')
+                          'inventory', 'procurement', 'cashbook', 'crm')
   AND has_schema_privilege(c.table_schema, 'usage')
   AND has_table_privilege(
         quote_ident(c.table_schema) || '.' || quote_ident(c.table_name),
@@ -100,7 +100,8 @@ ORDER BY
         WHEN 'inventory' THEN 4
         WHEN 'procurement' THEN 5
         WHEN 'cashbook' THEN 6
-        ELSE 7
+        WHEN 'crm' THEN 7
+        ELSE 8
     END,
     c.table_name,
     c.ordinal_position
