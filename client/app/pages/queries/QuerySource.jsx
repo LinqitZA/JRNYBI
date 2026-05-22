@@ -170,18 +170,19 @@ function QuerySource(props) {
   const handleExpandSelectStar = useCallback(() => {
     if (editorRef.current) {
       editorRef.current.focus();
-      // Trigger the editor's built-in expandSelectStar command
-      // The QueryEditor registers this as "expandSelectStar" on Ctrl+Shift+X
-      const aceEditor = editorRef.current;
-      // Use the paste API to trigger focus, then simulate the keyboard shortcut
-      // Actually, we need direct access to the Ace editor instance. The ref
-      // only exposes paste() and focus(). We'll dispatch the command via a
-      // custom event. Simpler: just re-run the expansion logic inline.
-      // The expandSelectStar function is already imported by QueryEditor.
-      // Let's dispatch a DOM custom event that the QueryEditor listens for.
       const editorContainer = document.querySelector("[data-test='QueryEditor'] .ace_editor");
       if (editorContainer) {
         editorContainer.dispatchEvent(new CustomEvent("jrnybi:expand-select-star"));
+      }
+    }
+  }, []);
+
+  const handleResolveFKColumns = useCallback(() => {
+    if (editorRef.current) {
+      editorRef.current.focus();
+      const editorContainer = document.querySelector("[data-test='QueryEditor'] .ace_editor");
+      if (editorContainer) {
+        editorContainer.dispatchEvent(new CustomEvent("jrnybi:resolve-fk-columns"));
       }
     }
   }, []);
@@ -329,6 +330,7 @@ function QuerySource(props) {
 
                     <FKHintBanner
                       fkMatches={fkMatches}
+                      onResolve={handleResolveFKColumns}
                     />
 
                     <QueryEditor.Controls

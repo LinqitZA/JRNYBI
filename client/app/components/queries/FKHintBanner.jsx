@@ -2,20 +2,21 @@ import React, { useState, useCallback, useEffect } from "react";
 import PropTypes from "prop-types";
 
 const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
-const FK_SHORTCUT_LABEL = isMac ? "⌘." : "Ctrl+.";
+const FK_SHORTCUT_LABEL = isMac ? "⌘⇧J" : "Ctrl+Shift+J";
 const DISMISS_KEY = "jrnybi:fk-hint-dismissed";
 
 /**
  * FKHintBanner - Shows a non-intrusive hint when FK columns are detected
  * in the SELECT clause of the query editor.  Tells the user they can press
- * Ctrl+. (Cmd+. on Mac) to resolve FK columns to human-readable display
- * fields with automatic JOIN generation.
+ * Ctrl+Shift+J (Cmd+Shift+J on Mac) to resolve FK columns to human-readable
+ * display fields with automatic JOIN generation, or click "Resolve now" to
+ * resolve all detected FK columns in one action.
  *
  * Renders below the editor, in the same slot as SelectStarHintBanner and
  * ViewSuggestionBanner.  Automatically hides when no FK columns remain.
  * Dismissal is remembered in localStorage so the banner doesn't reappear.
  */
-export default function FKHintBanner({ fkMatches }) {
+export default function FKHintBanner({ fkMatches, onResolve }) {
   const [dismissed, setDismissed] = useState(() => {
     try {
       return localStorage.getItem(DISMISS_KEY) === "true";
@@ -23,6 +24,10 @@ export default function FKHintBanner({ fkMatches }) {
       return false;
     }
   });
+
+  const handleResolve = useCallback(() => {
+    if (onResolve) onResolve();
+  }, [onResolve]);
 
   const handleDismiss = useCallback(() => {
     setDismissed(true);
@@ -74,6 +79,9 @@ export default function FKHintBanner({ fkMatches }) {
         <kbd>{FK_SHORTCUT_LABEL}</kbd>
         {" to resolve to display field and auto-add JOIN"}
       </span>
+      <button type="button" className="fk-hint-action" onClick={handleResolve}>
+        Resolve now
+      </button>
       <button
         type="button"
         className="fk-hint-dismiss"
@@ -96,8 +104,10 @@ FKHintBanner.propTypes = {
       fkInfo: PropTypes.object,
     })
   ),
+  onResolve: PropTypes.func,
 };
 
 FKHintBanner.defaultProps = {
   fkMatches: [],
+  onResolve: null,
 };

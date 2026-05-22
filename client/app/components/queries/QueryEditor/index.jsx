@@ -206,12 +206,12 @@ const QueryEditor = React.forwardRef(function(
     }
   }, [editorRef]);
 
-  // Bind Ctrl+. via capture-phase listener (Mousetrap bubble-phase doesn't fire inside JRNY ERP iframe)
+  // Bind Ctrl+Shift+J via capture-phase listener (Ctrl+. doesn't work inside JRNY ERP iframe)
   useEffect(() => {
     if (editorRef) {
       const editor = editorRef.editor;
       const handler = (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === ".") {
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "J" || e.key === "j")) {
           if (!editor.isFocused()) return;
           e.preventDefault();
           e.stopPropagation();
@@ -233,8 +233,8 @@ const QueryEditor = React.forwardRef(function(
     // Release Cmd/Ctrl+Shift+X so capture-phase listener can handle it
     editor.commands.bindKey({ win: "Ctrl+Shift+X", mac: "Cmd+Shift+X" }, null);
 
-    // Release Ctrl+. / Cmd+. so capture-phase listener can handle it
-    editor.commands.bindKey({ win: "Ctrl-.", mac: "Cmd-." }, null);
+    // Release Ctrl+Shift+J / Cmd+Shift+J so capture-phase listener can handle it
+    editor.commands.bindKey({ win: "Ctrl-Shift-J", mac: "Cmd-Shift-J" }, null);
 
     // Release Ctrl+P for open new parameter dialog
     editor.commands.bindKey({ win: "Ctrl+P", mac: null }, null);
@@ -263,7 +263,7 @@ const QueryEditor = React.forwardRef(function(
     // FK resolution: registered as named command (keyboard shortcut via capture-phase listener above)
     editor.commands.addCommand({
       name: "resolveFKColumn",
-      bindKey: null, // Key released to capture-phase listener to avoid browser interception of Ctrl+.
+      bindKey: null, // Key released to capture-phase listener to avoid browser interception
       exec: ed => {
         const rawSchema = getSchemaRawData(ed.id);
         const fkGraph = getFKGraphData(ed.id);
@@ -271,6 +271,41 @@ const QueryEditor = React.forwardRef(function(
         const fkInfo = detectFKAtCursor(ed, rawSchema, fkGraph);
         if (fkInfo) {
           applyFKResolution(ed, fkInfo);
+        }
+      },
+    });
+
+    // Resolve ALL FK columns at once: iterates bottom-to-top to preserve positions
+    editor.commands.addCommand({
+      name: "resolveAllFKColumns",
+      bindKey: null,
+      exec: ed => {
+        const rawSchema = getSchemaRawData(ed.id);
+        const fkGraph = getFKGraphData(ed.id);
+        if (!rawSchema || !fkGraph) return;
+
+        // Re-detect FK columns for each pass (positions shift after each resolution)
+        let resolved = 0;
+        const maxPasses = 50; // safety limit
+        for (let pass = 0; pass < maxPasses; pass++) {
+          const fkCols = findFKColumnsInSelect(ed, rawSchema, fkGraph);
+          if (fkCols.length === 0) break;
+
+          // Resolve the last FK column (bottom-most) to preserve earlier positions
+          const last = fkCols[fkCols.length - 1];
+          if (last.fkInfo) {
+            // Position cursor on this FK column so detectFKAtCursor can find it
+            ed.moveCursorTo(last.row, last.startCol + 1);
+            const fkInfo = detectFKAtCursor(ed, rawSchema, fkGraph);
+            if (fkInfo) {
+              applyFKResolution(ed, fkInfo);
+              resolved++;
+            } else {
+              break; // Can't resolve, stop to avoid infinite loop
+            }
+          } else {
+            break;
+          }
         }
       },
     });
@@ -293,6 +328,12 @@ const QueryEditor = React.forwardRef(function(
       editor.commands.exec("expandSelectStar", editor);
     }
     editorEl.addEventListener("jrnybi:expand-select-star", handleExpandEvent);
+
+    // Listen for programmatic FK resolution requests from the FKHintBanner
+    function handleResolveFKEvent() {
+      editor.commands.exec("resolveAllFKColumns", editor);
+    }
+    editorEl.addEventListener("jrnybi:resolve-fk-columns", handleResolveFKEvent);
 
     // Reset Completer in case dot is pressed
     editor.commands.on("afterExec", e => {
