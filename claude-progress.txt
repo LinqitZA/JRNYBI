@@ -1722,3 +1722,29 @@ Agent: Handling feature #103
 - Features passing: 102 (102/106 = 96.2%)
 - Feature #103 complete
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+
+## Session 37: 2026-05-22
+Agent: Handling feature #107
+
+### Feature #107: Fix keyboard shortcuts in iframe — use capture-phase listeners instead of Mousetrap (PASSING)
+- Replaced Mousetrap-based KeyboardShortcuts.bind/unbind with direct capture-phase event listeners
+- Mousetrap registers handlers in bubble phase (addEventListener type, callback, false))
+- Inside JRNY ERP iframe, keydown events don't reach document in bubble phase (parent frame intercepts)
+- Fix: document.addEventListener('keydown', handler, true) — capture phase fires first
+- Both Ctrl+. (FK Resolution) and Ctrl+Shift+X (Expand SELECT*) now use capture-phase listeners
+- Both handlers check editor.isFocused() before executing — won't fire outside query editor
+- Both handlers call preventDefault() + stopPropagation() — blocks browser emoji picker and other defaults
+- Proper cleanup via removeEventListener in useEffect return
+- Ace bindKey(null) releases retained — prevents Ace from also processing these keys
+- Removed unused KeyboardShortcuts import (no longer needed in this file)
+- Verified: compiled JS has 2 capture-phase addEventListener calls, 2 isFocused checks, 2 cleanup calls
+- Build hash: app.7614d0a1c5e1a427a973, deployed to Docker container
+- Committed as 86f3369e
+
+## Files Modified
+- client/app/components/queries/QueryEditor/index.jsx - Capture-phase listeners replacing Mousetrap
+
+## Current Status
+- Features passing: 107 (107/107 = 100%)
+- Feature #107 complete
+- Server at http://localhost:5001
