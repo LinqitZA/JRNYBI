@@ -7,7 +7,6 @@ import { detectFKAtCursor, applyFKResolution, findFKColumnsInSelect } from "./fk
 import { SQL_SNIPPETS, JRNY_TEMPLATES, expandSelectStar, findSelectStarPositions } from "./querySnippets";
 import { srNotify } from "@/lib/accessibility";
 import { SchemaItemType } from "@/components/queries/SchemaBrowser";
-import KeyboardShortcuts from "@/services/KeyboardShortcuts";
 import resizeObserver from "@/services/resizeObserver";
 import QuerySnippet from "@/services/query-snippet";
 
@@ -190,33 +189,37 @@ const QueryEditor = React.forwardRef(function(
     [editorRef, onSelectionChange]
   );
 
-  // Bind Ctrl+Shift+X via Mousetrap (Ctrl+Shift+E consumed by parent JRNY ERP iframe)
+  // Bind Ctrl+Shift+X via capture-phase listener (Mousetrap bubble-phase doesn't fire inside JRNY ERP iframe)
   useEffect(() => {
     if (editorRef) {
       const editor = editorRef.editor;
-      const expandHandler = () => {
-        editor.commands.exec("expandSelectStar", editor);
+      const handler = (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "X") {
+          if (!editor.isFocused()) return;
+          e.preventDefault();
+          e.stopPropagation();
+          editor.commands.exec("expandSelectStar", editor);
+        }
       };
-      const shortcuts = { "mod+shift+x": expandHandler };
-      KeyboardShortcuts.bind(shortcuts);
-      return () => {
-        KeyboardShortcuts.unbind(shortcuts);
-      };
+      document.addEventListener("keydown", handler, true);
+      return () => document.removeEventListener("keydown", handler, true);
     }
   }, [editorRef]);
 
-  // Bind Ctrl+. via Mousetrap (browser emoji picker intercepts before Ace sees it)
+  // Bind Ctrl+. via capture-phase listener (Mousetrap bubble-phase doesn't fire inside JRNY ERP iframe)
   useEffect(() => {
     if (editorRef) {
       const editor = editorRef.editor;
-      const fkResolveHandler = () => {
-        editor.commands.exec("resolveFKColumn", editor);
+      const handler = (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === ".") {
+          if (!editor.isFocused()) return;
+          e.preventDefault();
+          e.stopPropagation();
+          editor.commands.exec("resolveFKColumn", editor);
+        }
       };
-      const shortcuts = { "mod+.": fkResolveHandler };
-      KeyboardShortcuts.bind(shortcuts);
-      return () => {
-        KeyboardShortcuts.unbind(shortcuts);
-      };
+      document.addEventListener("keydown", handler, true);
+      return () => document.removeEventListener("keydown", handler, true);
     }
   }, [editorRef]);
 
@@ -227,10 +230,10 @@ const QueryEditor = React.forwardRef(function(
     // Release Cmd/Ctrl+Shift+F for format query action
     editor.commands.bindKey({ win: "Ctrl+Shift+F", mac: "Cmd+Shift+F" }, null);
 
-    // Release Cmd/Ctrl+Shift+X so Mousetrap can handle it (Ctrl+Shift+E consumed by parent JRNY ERP iframe)
+    // Release Cmd/Ctrl+Shift+X so capture-phase listener can handle it
     editor.commands.bindKey({ win: "Ctrl+Shift+X", mac: "Cmd+Shift+X" }, null);
 
-    // Release Ctrl+. / Cmd+. so Mousetrap can handle it (browser emoji picker intercepts before Ace sees it)
+    // Release Ctrl+. / Cmd+. so capture-phase listener can handle it
     editor.commands.bindKey({ win: "Ctrl-.", mac: "Cmd-." }, null);
 
     // Release Ctrl+P for open new parameter dialog
@@ -257,10 +260,10 @@ const QueryEditor = React.forwardRef(function(
       }
     });
 
-    // FK resolution: registered as named command (keyboard shortcut via Mousetrap below)
+    // FK resolution: registered as named command (keyboard shortcut via capture-phase listener above)
     editor.commands.addCommand({
       name: "resolveFKColumn",
-      bindKey: null, // Key released to Mousetrap to avoid browser interception of Ctrl+.
+      bindKey: null, // Key released to capture-phase listener to avoid browser interception of Ctrl+.
       exec: ed => {
         const rawSchema = getSchemaRawData(ed.id);
         const fkGraph = getFKGraphData(ed.id);
@@ -272,10 +275,10 @@ const QueryEditor = React.forwardRef(function(
       },
     });
 
-    // SELECT * expansion: registered as named command (keyboard shortcut via Mousetrap below)
+    // SELECT * expansion: registered as named command (keyboard shortcut via capture-phase listener above)
     editor.commands.addCommand({
       name: "expandSelectStar",
-      bindKey: null, // Key released to Mousetrap to avoid browser interception of Ctrl+Shift+X
+      bindKey: null, // Key released to capture-phase listener to avoid browser interception of Ctrl+Shift+X
       exec: ed => {
         const rawSchema = getSchemaRawData(ed.id);
         if (rawSchema) {
