@@ -332,6 +332,345 @@ export function findFKColumnsInSelect(editor, rawSchema, fkGraph) {
   return markers;
 }
 
+// ---- Column qualification -------------------------------------------------------
+
+/**
+ * Build a map of column names to their owning table qualifiers.
+ * For each table in the query, looks up its schema entry and records which
+ * columns belong to it.
+ *
+ * @param {Array} tables    - Table refs from parseSQLContext
+ * @param {Array} rawSchema - Raw schema data
+ * @returns {Map<string, Array<{qualifier: string, tableName: string}>>}
+ *   Map from lowercase column name to array of owning tables
+ */
+function buildColumnOwnerMap(tables, rawSchema) {
+  const colMap = new Map(); // lowerColName -> [{qualifier, tableName}]
+
+  for (const tableRef of tables) {
+    const qualifier = tableRef.alias || tableRef.name;
+    const fullName = findSchemaTableName(tableRef, rawSchema);
+    if (!fullName) continue;
+
+    const schemaItem = rawSchema.find(s => s.name === fullName);
+    if (!schemaItem || !schemaItem.columns) continue;
+
+    for (const col of schemaItem.columns) {
+      const colName = get(col, "name", "");
+      if (!colName) continue;
+      const lower = colName.toLowerCase();
+      if (!colMap.has(lower)) {
+        colMap.set(lower, []);
+      }
+      colMap.get(lower).push({ qualifier, tableName: fullName });
+    }
+  }
+
+  return colMap;
+}
+
+/**
+ * Parse the SELECT clause into individual column expressions.
+ * Handles commas inside parentheses (function calls) and AS aliases.
+ *
+ * @param {string} selectText - The text between SELECT and FROM
+ * @returns {Array<{expr: string, start: number, end: number, alias: string|null}>}
+ */
+function parseSelectColumns(selectText) {
+  const cols = [];
+  let depth = 0;
+  let start = 0;
+
+  // Skip leading DISTINCT/ALL
+  const trimmed = selectText.trimStart();
+  const offset = selectText.length - trimmed.length;
+  const upperTrimmed = trimmed.toUpperCase();
+  let scanStart = offset;
+  if (upperTrimmed.startsWith("DISTINCT ")) {
+    scanStart = offset + 9;
+  } else if (upperTrimmed.startsWith("ALL ")) {
+    scanStart = offset + 4;
+  }
+
+  start = scanStart;
+
+  for (let i = scanStart; i <= selectText.length; i++) {
+    const ch = i < selectText.length ? selectText[i] : ","; // virtual comma at end
+    if (ch === "(") { depth++; continue; }
+    if (ch === ")") { depth--; continue; }
+    if (ch === "," && depth === 0) {
+      const expr = selectText.substring(start, i).trim();
+      if (expr.length > 0) {
+        cols.push({ expr, start, end: i });
+      }
+      start = i + 1;
+    }
+  }
+
+  return cols;
+}
+
+/**
+ * Extract the column reference from a SELECT expression.
+ * Handles: "col", "t.col", "col AS alias", "t.col AS alias",
+ * "FUNC(col)", "COALESCE(col, 'x') AS alias"
+ *
+ * Returns info about whether it's already qualified and the bare column name.
+ */
+function analyzeSelectExpr(expr) {
+  const trimmed = expr.trim();
+
+  // Check for AS alias - find the last " AS " (case-insensitive) that's not inside parens
+  let aliasKeywordIdx = -1;
+  let depth = 0;
+  const upper = trimmed.toUpperCase();
+  for (let i = 0; i < trimmed.length - 3; i++) {
+    if (trimmed[i] === "(") { depth++; continue; }
+    if (trimmed[i] === ")") { depth--; continue; }
+    if (depth === 0 && upper.substring(i, i + 4) === " AS " && /\s/.test(trimmed[i])) {
+      aliasKeywordIdx = i;
+    }
+  }
+
+  let mainExpr = trimmed;
+  let alias = null;
+  if (aliasKeywordIdx >= 0) {
+    mainExpr = trimmed.substring(0, aliasKeywordIdx).trim();
+    alias = trimmed.substring(aliasKeywordIdx + 4).trim();
+  }
+
+  // Check if it's a simple column reference (possibly qualified)
+  const simpleColRe = /^([a-zA-Z_][a-zA-Z0-9_]*\.)?([a-zA-Z_][a-zA-Z0-9_]*)$/;
+  const simpleMatch = mainExpr.match(simpleColRe);
+  if (simpleMatch) {
+    return {
+      type: "simple",
+      qualifier: simpleMatch[1] ? simpleMatch[1].slice(0, -1) : null, // remove trailing dot
+      columnName: simpleMatch[2],
+      mainExpr,
+      alias,
+      fullExpr: trimmed,
+    };
+  }
+
+  // It's a complex expression (function call, CASE, arithmetic, etc.)
+  // We'll try to qualify column references inside it
+  return {
+    type: "complex",
+    qualifier: null,
+    columnName: null,
+    mainExpr,
+    alias,
+    fullExpr: trimmed,
+  };
+}
+
+/**
+ * Qualify column references inside a complex expression (function calls, etc.)
+ * Only qualifies identifiers that match known column names and aren't SQL keywords.
+ *
+ * @param {string} expr - The expression text
+ * @param {Map} colMap  - Column owner map from buildColumnOwnerMap
+ * @param {string} baseQualifier - The base table's qualifier (alias or name)
+ * @returns {string} The expression with qualified column references
+ */
+function qualifyExpressionColumns(expr, colMap, baseQualifier) {
+  // Match word-boundary identifiers, but skip those that are already qualified (preceded by a dot)
+  // or that are SQL keywords/functions
+  return expr.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g, (match, ident, offset) => {
+    // Skip if preceded by a dot (already qualified like t.col)
+    if (offset > 0 && expr[offset - 1] === ".") return match;
+    // Skip if followed by a dot (it's a qualifier itself like t.col)
+    if (offset + match.length < expr.length && expr[offset + match.length] === ".") return match;
+    // Skip if followed by "(" (it's a function name)
+    const afterMatch = expr.substring(offset + match.length).trimStart();
+    if (afterMatch.startsWith("(")) return match;
+    // Skip SQL keywords
+    if (isKnownKeyword(ident)) return match;
+    // Skip string/number literals
+    if (/^\d/.test(ident)) return match;
+
+    const lower = ident.toLowerCase();
+    const owners = colMap.get(lower);
+    if (!owners || owners.length === 0) return match;
+
+    // If only one table has this column, use that table's qualifier
+    if (owners.length === 1) {
+      return `${owners[0].qualifier}.${ident}`;
+    }
+
+    // Ambiguous: prefer the base table
+    const baseOwner = owners.find(o => o.qualifier === baseQualifier);
+    if (baseOwner) {
+      return `${baseOwner.qualifier}.${ident}`;
+    }
+
+    // Fall back to first owner
+    return `${owners[0].qualifier}.${ident}`;
+  });
+}
+
+/**
+ * Check if a string is a known SQL keyword (should not be qualified).
+ */
+const QUALIFY_SKIP_KEYWORDS = new Set([
+  "SELECT", "FROM", "WHERE", "JOIN", "ON", "AND", "OR", "NOT", "IN", "EXISTS",
+  "BETWEEN", "LIKE", "ILIKE", "IS", "NULL", "TRUE", "FALSE", "CASE", "WHEN",
+  "THEN", "ELSE", "END", "AS", "ORDER", "BY", "GROUP", "HAVING", "LIMIT",
+  "OFFSET", "UNION", "ALL", "INTERSECT", "EXCEPT", "DISTINCT", "ASC", "DESC",
+  "LEFT", "RIGHT", "INNER", "OUTER", "CROSS", "FULL", "NATURAL",
+  "CAST", "COALESCE", "GREATEST", "LEAST", "EXTRACT", "FILTER",
+  "COUNT", "SUM", "AVG", "MIN", "MAX", "UPPER", "LOWER", "TRIM",
+  "CONCAT", "LENGTH", "SUBSTRING", "REPLACE", "ROUND", "CEIL", "FLOOR",
+  "NOW", "CURRENT_DATE", "CURRENT_TIMESTAMP", "DATE_TRUNC", "DATE_PART",
+  "TO_CHAR", "TO_DATE", "TO_NUMBER", "TO_TIMESTAMP",
+  "NULLS", "FIRST", "LAST", "OVER", "PARTITION", "ROWS", "RANGE",
+  "PRECEDING", "FOLLOWING", "UNBOUNDED", "CURRENT", "ROW",
+  "BOOLEAN", "INTEGER", "TEXT", "VARCHAR", "NUMERIC", "DATE", "TIMESTAMP",
+  "INTERVAL", "JSON", "JSONB", "UUID", "ARRAY",
+]);
+
+function isKnownKeyword(word) {
+  return QUALIFY_SKIP_KEYWORDS.has(word.toUpperCase());
+}
+
+/**
+ * Qualify unqualified column names in the SELECT clause with their table prefix.
+ * This prevents ambiguity when JOINs are added.
+ *
+ * @param {string}  queryText  - The full SQL query text
+ * @param {Array}   rawSchema  - Raw schema data
+ * @returns {string} The query text with qualified column names, or original if no changes
+ */
+export function qualifySelectColumns(queryText, rawSchema) {
+  if (!queryText || !rawSchema) return queryText;
+
+  try {
+    // Parse context to get tables
+    const ctx = parseSQLContext(queryText, queryText.length);
+    if (!ctx.tables || ctx.tables.length === 0) return queryText;
+
+    // Build column ownership map
+    const colMap = buildColumnOwnerMap(ctx.tables, rawSchema);
+    if (colMap.size === 0) return queryText;
+
+    // Find SELECT clause boundaries
+    const upperQuery = queryText.toUpperCase();
+    const selectIdx = upperQuery.indexOf("SELECT");
+    if (selectIdx < 0) return queryText;
+
+    // Skip past SELECT keyword
+    const afterSelect = selectIdx + 6; // "SELECT".length
+
+    // Find end of SELECT clause (FROM keyword at depth 0)
+    let fromIdx = -1;
+    let depth = 0;
+    for (let i = afterSelect; i < queryText.length - 3; i++) {
+      if (queryText[i] === "(") { depth++; continue; }
+      if (queryText[i] === ")") { depth--; continue; }
+      if (depth === 0 && upperQuery.substring(i, i + 4) === "FROM") {
+        // Verify word boundaries
+        const before = i > 0 ? queryText[i - 1] : " ";
+        const after = i + 4 < queryText.length ? queryText[i + 4] : " ";
+        if (!/[a-zA-Z0-9_]/.test(before) && !/[a-zA-Z0-9_]/.test(after)) {
+          fromIdx = i;
+          break;
+        }
+      }
+    }
+
+    if (fromIdx < 0) return queryText;
+
+    const selectText = queryText.substring(afterSelect, fromIdx);
+
+    // Determine the base table qualifier (first table in FROM clause)
+    const baseTable = ctx.tables[0];
+    const baseQualifier = baseTable ? (baseTable.alias || baseTable.name) : null;
+    if (!baseQualifier) return queryText;
+
+    // Parse SELECT columns
+    const columns = parseSelectColumns(selectText);
+    if (columns.length === 0) return queryText;
+
+    // Process columns right-to-left to preserve offsets
+    let result = queryText;
+    for (let ci = columns.length - 1; ci >= 0; ci--) {
+      const col = columns[ci];
+      const info = analyzeSelectExpr(col.expr);
+
+      if (info.type === "simple") {
+        // Skip if already qualified
+        if (info.qualifier) continue;
+
+        // Skip * (SELECT *)
+        if (info.columnName === "*") continue;
+
+        // Look up which table owns this column
+        const lower = info.columnName.toLowerCase();
+        const owners = colMap.get(lower);
+        if (!owners || owners.length === 0) continue; // Unknown column, leave as-is
+
+        let qualifier;
+        if (owners.length === 1) {
+          qualifier = owners[0].qualifier;
+        } else {
+          // Ambiguous: use base table
+          const baseOwner = owners.find(o => o.qualifier === baseQualifier);
+          qualifier = baseOwner ? baseOwner.qualifier : owners[0].qualifier;
+        }
+
+        // Build new expression
+        const qualifiedExpr = info.alias
+          ? `${qualifier}.${info.columnName} AS ${info.alias}`
+          : `${qualifier}.${info.columnName}`;
+
+        // Replace in the SELECT text portion
+        const absStart = afterSelect + col.start;
+        const absEnd = afterSelect + col.end;
+        const originalChunk = result.substring(absStart, absEnd);
+
+        // Find the expression within the chunk (accounting for whitespace)
+        const exprIdx = originalChunk.indexOf(col.expr);
+        if (exprIdx >= 0) {
+          const replaceStart = absStart + exprIdx;
+          const replaceEnd = replaceStart + col.expr.length;
+          result =
+            result.substring(0, replaceStart) +
+            qualifiedExpr +
+            result.substring(replaceEnd);
+        }
+      } else if (info.type === "complex") {
+        // Try to qualify column references inside the expression
+        const qualifiedMain = qualifyExpressionColumns(info.mainExpr, colMap, baseQualifier);
+        if (qualifiedMain !== info.mainExpr) {
+          const newExpr = info.alias
+            ? `${qualifiedMain} AS ${info.alias}`
+            : qualifiedMain;
+
+          const absStart = afterSelect + col.start;
+          const absEnd = afterSelect + col.end;
+          const originalChunk = result.substring(absStart, absEnd);
+
+          const exprIdx = originalChunk.indexOf(col.expr);
+          if (exprIdx >= 0) {
+            const replaceStart = absStart + exprIdx;
+            const replaceEnd = replaceStart + col.expr.length;
+            result =
+              result.substring(0, replaceStart) +
+              newExpr +
+              result.substring(replaceEnd);
+          }
+        }
+      }
+    }
+
+    return result;
+  } catch (e) {
+    // Never break the editor
+    return queryText;
+  }
+}
+
 /**
  * Apply FK resolution: add the display column and JOIN to the query.
  *
@@ -418,6 +757,12 @@ export function applyFKResolution(editor, fkInfo, onChange) {
       joinClause +
       (insertPos < newQueryText.length ? "\n" : "") +
       newQueryText.substring(insertPos);
+
+    // 3. Auto-qualify unqualified SELECT columns to prevent ambiguity from the new JOIN
+    const rawSchema = fkInfo.rawSchema || [];
+    if (rawSchema.length > 0) {
+      newQueryText = qualifySelectColumns(newQueryText, rawSchema);
+    }
   }
 
   // Apply the change to the editor
