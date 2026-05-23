@@ -7,6 +7,7 @@ import routeWithUserSession from "@/components/ApplicationArea/routeWithUserSess
 import EmptyState, { EmptyStateHelpMessage } from "@/components/empty-state/EmptyState";
 import DynamicComponent from "@/components/DynamicComponent";
 import PlainButton from "@/components/PlainButton";
+import ReportsDashboard from "@/components/ReportsDashboard";
 
 import { axios } from "@/services/axios";
 import recordEvent from "@/services/recordEvent";
@@ -87,6 +88,7 @@ export default function Home() {
           />
         </DynamicComponent>
         <DynamicComponent name="HomeExtra" />
+        <ReportsDashboard />
         <DashboardAndQueryFavoritesList />
       </div>
     </div>
