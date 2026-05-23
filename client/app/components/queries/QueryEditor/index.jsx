@@ -236,6 +236,10 @@ const QueryEditor = React.forwardRef(function(
     // Release Ctrl+Shift+J / Cmd+Shift+J so capture-phase listener can handle it
     editor.commands.bindKey({ win: "Ctrl-Shift-J", mac: "Cmd-Shift-J" }, null);
 
+    // Release Ctrl+. / Cmd+. from Ace (original FK shortcut, now Ctrl+Shift+J) to prevent
+    // Ace from intercepting and allow browser/parent frame to handle normally
+    editor.commands.bindKey({ win: "Ctrl-.", mac: "Cmd-." }, null);
+
     // Release Ctrl+P for open new parameter dialog
     editor.commands.bindKey({ win: "Ctrl+P", mac: null }, null);
     // Lineup only mac
