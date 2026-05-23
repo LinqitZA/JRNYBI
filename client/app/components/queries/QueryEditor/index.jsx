@@ -206,12 +206,12 @@ const QueryEditor = React.forwardRef(function(
     }
   }, [editorRef]);
 
-  // Bind Ctrl+Shift+J via capture-phase listener (Ctrl+. doesn't work inside JRNY ERP iframe)
+  // Bind Ctrl+Shift+L via capture-phase listener (Ctrl+. doesn't work inside JRNY ERP iframe)
   useEffect(() => {
     if (editorRef) {
       const editor = editorRef.editor;
       const handler = (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "J" || e.key === "j")) {
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "L" || e.key === "l")) {
           if (!editor.isFocused()) return;
           e.preventDefault();
           e.stopPropagation();
@@ -233,10 +233,10 @@ const QueryEditor = React.forwardRef(function(
     // Release Cmd/Ctrl+Shift+X so capture-phase listener can handle it
     editor.commands.bindKey({ win: "Ctrl+Shift+X", mac: "Cmd+Shift+X" }, null);
 
-    // Release Ctrl+Shift+J / Cmd+Shift+J so capture-phase listener can handle it
-    editor.commands.bindKey({ win: "Ctrl-Shift-J", mac: "Cmd-Shift-J" }, null);
+    // Release Ctrl+Shift+L / Cmd+Shift+L so capture-phase listener can handle it
+    editor.commands.bindKey({ win: "Ctrl-Shift-L", mac: "Cmd-Shift-L" }, null);
 
-    // Release Ctrl+. / Cmd+. from Ace (original FK shortcut, now Ctrl+Shift+J) to prevent
+    // Release Ctrl+. / Cmd+. from Ace (original FK shortcut, now Ctrl+Shift+L) to prevent
     // Ace from intercepting and allow browser/parent frame to handle normally
     editor.commands.bindKey({ win: "Ctrl-.", mac: "Cmd-." }, null);
 

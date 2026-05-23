@@ -2,13 +2,13 @@ import React, { useState, useCallback, useEffect } from "react";
 import PropTypes from "prop-types";
 
 const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
-const FK_SHORTCUT_LABEL = isMac ? "⌘⇧J" : "Ctrl+Shift+J";
+const FK_SHORTCUT_LABEL = isMac ? "⌘⇧L" : "Ctrl+Shift+L";
 const DISMISS_KEY = "jrnybi:fk-hint-dismissed";
 
 /**
  * FKHintBanner - Shows a non-intrusive hint when FK columns are detected
  * in the SELECT clause of the query editor.  Tells the user they can press
- * Ctrl+Shift+J (Cmd+Shift+J on Mac) to resolve FK columns to human-readable
+ * Ctrl+Shift+L (Cmd+Shift+L on Mac) to resolve FK columns to human-readable
  * display fields with automatic JOIN generation, or click "Resolve now" to
  * resolve all detected FK columns in one action.
  *

@@ -22,6 +22,9 @@ const DISPLAY_COLUMN_NAMES = [
   "code",
 ];
 
+/** Column types that are unlikely to be useful display columns. */
+const SKIP_TYPES = ["uuid", "timestamp", "timestamptz", "date", "boolean", "bytea", "jsonb", "json"];
+
 /**
  * Determine the best "display column" for a table using heuristics.
  *
@@ -29,6 +32,8 @@ const DISPLAY_COLUMN_NAMES = [
  *   1. Columns with COMMENT containing 'display_column'
  *   2. Common display column names (name, title, description, label, etc.)
  *   3. First non-ID text/varchar column
+ *   4. First non-ID, non-UUID, non-timestamp column (regardless of type)
+ *   5. Last resort: first column that isn't 'id'
  *
  * @param {Object} table - A schema table entry with columns array
  * @returns {string|null} The display column name, or null if none found
@@ -68,6 +73,24 @@ export function resolveDisplayColumn(table) {
     );
   });
   if (textCol) return get(textCol, "name");
+
+  // 4. First non-ID, non-UUID, non-timestamp column (regardless of type info)
+  const broadCol = columns.find(c => {
+    const colName = get(c, "name", "").toLowerCase();
+    const colType = get(c, "type", "").toLowerCase();
+    if (colName === "id" || colName.endsWith("_id")) return false;
+    // Skip columns whose type is clearly non-display
+    if (colType && SKIP_TYPES.some(t => colType.includes(t))) return false;
+    return true;
+  });
+  if (broadCol) return get(broadCol, "name");
+
+  // 5. Last resort: first column that isn't 'id' — partial resolution is better than none
+  const anyCol = columns.find(c => {
+    const colName = get(c, "name", "").toLowerCase();
+    return colName !== "id" && !colName.endsWith("_id");
+  });
+  if (anyCol) return get(anyCol, "name");
 
   return null;
 }
@@ -200,7 +223,7 @@ export function detectFKAtCursor(editor, rawSchema, fkGraph) {
         const matchingPair = edge.joinPairs.find(
           p => p.thisCol === columnName
         );
-        if (matchingPair && edge.displayColumn) {
+        if (matchingPair) {
           return {
             edge,
             tableRef,
@@ -208,7 +231,7 @@ export function detectFKAtCursor(editor, rawSchema, fkGraph) {
             fullWord,
             fullTableName: fullName,
             matchingPair,
-            displayColumn: edge.displayColumn,
+            displayColumn: edge.displayColumn || null,
             relatedTable: edge.relatedTable,
             ctx,
             wordRange,
@@ -254,7 +277,6 @@ export function findFKColumnsInSelect(editor, rawSchema, fkGraph) {
       const edges = fkGraph[fullName];
       if (!edges) continue;
       for (const edge of edges) {
-        if (!edge.displayColumn) continue;
         for (const pair of edge.joinPairs) {
           fkColumns.push({
             tableRef,
@@ -329,11 +351,15 @@ export function findFKColumnsInSelect(editor, rawSchema, fkGraph) {
             ? fk.edge.relatedTable.split(".").pop()
             : fk.edge.relatedTable;
 
+          const label = fk.edge.displayColumn
+            ? `Resolve → Show ${shortRelated}.${fk.edge.displayColumn}`
+            : `Resolve → JOIN ${shortRelated}`;
+
           markers.push({
             row,
             startCol: col,
             endCol,
-            label: `Resolve → Show ${shortRelated}.${fk.edge.displayColumn}`,
+            label,
             fkInfo: fk,
           });
           break; // Only mark first occurrence per pattern
@@ -714,26 +740,63 @@ export function applyFKResolution(editor, fkInfo, onChange) {
     newAlias = generateAlias(edge.relatedTable, existingAliases);
   }
 
-  const displayRef = `${newAlias}.${edge.displayColumn}`;
-
-  // Build the column name for the display (e.g., customer_name)
-  const fkColShort = fkInfo.columnName.replace(/_id$/, "");
-  const displayAlias = `${fkColShort}_${edge.displayColumn}`;
-
   let newQueryText = queryText;
 
-  // 1. Add display column after the FK column in SELECT
-  // Find the FK column reference near the cursor
-  const searchStart = Math.max(0, queryText.indexOf(fullWord));
-  const replaceIdx = queryText.indexOf(fullWord, searchStart);
+  // 1. Add display column after the FK column in SELECT (only if displayColumn is available)
+  if (edge.displayColumn) {
+    const displayRef = `${newAlias}.${edge.displayColumn}`;
 
-  if (replaceIdx >= 0) {
-    const afterFK = replaceIdx + fullWord.length;
-    const insertText = `, ${displayRef} AS ${displayAlias}`;
-    newQueryText =
-      newQueryText.substring(0, afterFK) +
-      insertText +
-      newQueryText.substring(afterFK);
+    // Build the column name for the display (e.g., customer_name)
+    const fkColShort = fkInfo.columnName.replace(/_id$/, "");
+    const displayAlias = `${fkColShort}_${edge.displayColumn}`;
+
+    // Find the FK column reference near the cursor
+    const searchStart = Math.max(0, queryText.indexOf(fullWord));
+    const replaceIdx = queryText.indexOf(fullWord, searchStart);
+
+    if (replaceIdx >= 0) {
+      const afterFK = replaceIdx + fullWord.length;
+
+      // Detect whether the SELECT clause is multi-line by checking if a newline
+      // exists between SELECT and the FK column position.
+      const textBeforeFK = newQueryText.substring(0, replaceIdx);
+      const lastNewline = textBeforeFK.lastIndexOf("\n");
+      const isMultiLine = lastNewline >= 0 && lastNewline > textBeforeFK.toUpperCase().lastIndexOf("SELECT");
+
+      if (isMultiLine) {
+        // Multi-line SELECT: detect the indentation of the FK column's line
+        const lineStart = lastNewline + 1;
+        const lineContent = textBeforeFK.substring(lineStart);
+        const indentMatch = lineContent.match(/^(\s*)/);
+        const indent = indentMatch ? indentMatch[1] : "  ";
+
+        // Check if there's a trailing comma immediately after the FK column word
+        const afterFKText = newQueryText.substring(afterFK);
+        const commaMatch = afterFKText.match(/^(\s*),/);
+
+        if (commaMatch) {
+          // Trailing comma style (e.g., "  customer_id,\n  status")
+          // Insert the display column on a new line AFTER the existing comma
+          const commaEnd = afterFK + commaMatch[0].length; // position right after the comma
+          newQueryText =
+            newQueryText.substring(0, commaEnd) +
+            `\n${indent}${displayRef} AS ${displayAlias},` +
+            newQueryText.substring(commaEnd);
+        } else {
+          // No trailing comma (e.g., last column before FROM): add comma + new line
+          newQueryText =
+            newQueryText.substring(0, afterFK) +
+            `,\n${indent}${displayRef} AS ${displayAlias}` +
+            newQueryText.substring(afterFK);
+        }
+      } else {
+        // Single-line SELECT: insert with comma + space (no newline)
+        newQueryText =
+          newQueryText.substring(0, afterFK) +
+          `, ${displayRef} AS ${displayAlias}` +
+          newQueryText.substring(afterFK);
+      }
+    }
   }
 
   // 2. Add JOIN if not already present

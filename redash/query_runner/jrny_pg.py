@@ -389,7 +389,7 @@ class JRNYPostgreSQL(PostgreSQL):
             SELECT s.nspname AS table_schema,
                    c.relname AS table_name,
                    a.attname AS column_name,
-                   NULL::text AS data_type,
+                   format_type(a.atttypid, a.atttypmod) AS data_type,
                    CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END AS is_nullable
             FROM pg_class c
             JOIN pg_namespace s
