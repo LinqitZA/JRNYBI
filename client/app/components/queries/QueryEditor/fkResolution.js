@@ -149,7 +149,9 @@ export function detectFKAtCursor(editor, rawSchema, fkGraph) {
   const cursorOffset = posToOffset(session, pos);
 
   try {
-    const ctx = parseSQLContext(queryText, cursorOffset);
+    // Parse the FULL query (not just up to cursor) to discover all tables in FROM clause.
+    // The cursor position is only needed for getWordRange (line 156) which uses row/column directly.
+    const ctx = parseSQLContext(queryText, queryText.length);
     if (!ctx.tables || ctx.tables.length === 0) return null;
 
     // Get the word under cursor
@@ -282,9 +284,13 @@ export function findFKColumnsInSelect(editor, rawSchema, fkGraph) {
 
     const selectText = queryText.substring(selectIdx, selectEnd);
 
-    // Search for FK column references in the SELECT text
+    // Search for FK column references in the SELECT text.
+    // Track matched positions to avoid duplicates: when a qualified match (e.g. o.customer_id)
+    // exists, skip the unqualified match (customer_id) at the same position.
+    const markedPositions = new Set(); // "row:col" keys
+
     for (const fk of fkColumns) {
-      // Match both qualified (alias.column) and unqualified (column)
+      // Try qualified pattern first, then unqualified
       const patterns = [
         `${fk.alias}.${fk.columnName}`,
         fk.columnName,
@@ -310,6 +316,15 @@ export function findFKColumnsInSelect(editor, rawSchema, fkGraph) {
             }
           }
 
+          // Deduplicate: skip if a qualified match already covers this column at this position.
+          // For unqualified patterns, check if a qualified match already exists that ends at the same endCol.
+          const endCol = col + pattern.length;
+          const posKey = `${row}:${endCol}:${fk.columnName}`;
+          if (markedPositions.has(posKey)) {
+            break; // Already have a (qualified) marker for this FK column at this position
+          }
+          markedPositions.add(posKey);
+
           const shortRelated = fk.edge.relatedTable.includes(".")
             ? fk.edge.relatedTable.split(".").pop()
             : fk.edge.relatedTable;
@@ -317,7 +332,7 @@ export function findFKColumnsInSelect(editor, rawSchema, fkGraph) {
           markers.push({
             row,
             startCol: col,
-            endCol: col + pattern.length,
+            endCol,
             label: `Resolve → Show ${shortRelated}.${fk.edge.displayColumn}`,
             fkInfo: fk,
           });

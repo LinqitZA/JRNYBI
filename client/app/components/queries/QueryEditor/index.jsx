@@ -275,7 +275,8 @@ const QueryEditor = React.forwardRef(function(
       },
     });
 
-    // Resolve ALL FK columns at once: iterates bottom-to-top to preserve positions
+    // Resolve ALL FK columns at once: collects all FK columns up front, then iterates
+    // bottom-to-top so position shifts from earlier resolutions don't affect later ones.
     editor.commands.addCommand({
       name: "resolveAllFKColumns",
       bindKey: null,
@@ -284,27 +285,53 @@ const QueryEditor = React.forwardRef(function(
         const fkGraph = getFKGraphData(ed.id);
         if (!rawSchema || !fkGraph) return;
 
-        // Re-detect FK columns for each pass (positions shift after each resolution)
-        let resolved = 0;
-        const maxPasses = 50; // safety limit
-        for (let pass = 0; pass < maxPasses; pass++) {
-          const fkCols = findFKColumnsInSelect(ed, rawSchema, fkGraph);
-          if (fkCols.length === 0) break;
+        // Collect all FK columns up front (single detection pass)
+        const fkCols = findFKColumnsInSelect(ed, rawSchema, fkGraph);
+        if (fkCols.length === 0) return;
 
-          // Resolve the last FK column (bottom-most) to preserve earlier positions
-          const last = fkCols[fkCols.length - 1];
-          if (last.fkInfo) {
-            // Position cursor on this FK column so detectFKAtCursor can find it
-            ed.moveCursorTo(last.row, last.startCol + 1);
-            const fkInfo = detectFKAtCursor(ed, rawSchema, fkGraph);
-            if (fkInfo) {
-              applyFKResolution(ed, fkInfo);
-              resolved++;
-            } else {
-              break; // Can't resolve, stop to avoid infinite loop
-            }
+        // Deduplicate by FK column name + table to avoid resolving the same FK twice
+        const seen = new Set();
+        const uniqueFKCols = [];
+        for (const col of fkCols) {
+          const key = `${col.fkInfo.fullName}:${col.fkInfo.columnName}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            uniqueFKCols.push(col);
+          }
+        }
+
+        // Resolve bottom-to-top: sort by row desc, then startCol desc
+        uniqueFKCols.sort((a, b) => b.row - a.row || b.startCol - a.startCol);
+
+        // Resolve each FK column one at a time, re-detecting after each
+        // because positions shift after each resolution
+        for (let i = 0; i < uniqueFKCols.length; i++) {
+          // After each resolution, re-detect to get updated positions
+          if (i > 0) {
+            // Re-scan to find remaining FK columns with updated positions
+            const updatedCols = findFKColumnsInSelect(ed, rawSchema, fkGraph);
+            if (updatedCols.length === 0) break;
+
+            // Find the FK column that matches the one we want to resolve next
+            const targetFK = uniqueFKCols[i];
+            const targetKey = `${targetFK.fkInfo.fullName}:${targetFK.fkInfo.columnName}`;
+            const updated = updatedCols.find(c => {
+              const k = `${c.fkInfo.fullName}:${c.fkInfo.columnName}`;
+              return k === targetKey;
+            });
+            if (!updated) continue; // This FK was already resolved or no longer present
+
+            // Use updated position
+            ed.moveCursorTo(updated.row, updated.startCol + 1);
           } else {
-            break;
+            // First iteration: use original position
+            const col = uniqueFKCols[i];
+            ed.moveCursorTo(col.row, col.startCol + 1);
+          }
+
+          const fkInfo = detectFKAtCursor(ed, rawSchema, fkGraph);
+          if (fkInfo) {
+            applyFKResolution(ed, fkInfo);
           }
         }
       },
