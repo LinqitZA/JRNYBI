@@ -2017,4 +2017,39 @@ Agent: Batch agent handling features #113, #114
 - Features passing: 114 (114/119 = 95.8%)
 - Features #113 and #114 complete
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+
+## Session 42: 2026-05-23
+Agent: Single agent handling feature #119
+
+### Feature #119: Context-aware SQL keyword autocomplete (PASSING)
+- Replaced Ace's built-in langTools.keyWordCompleter with custom contextKeywordCompleter
+- Created KEYWORD_PRIORITY_MAP defining priority/secondary keywords for every SQL clause context:
+  * null (empty query): SELECT, WITH, INSERT, UPDATE, DELETE (priority 300)
+  * SELECT: FROM, DISTINCT, CASE, COALESCE, CAST (priority 300)
+  * FROM: WHERE, JOIN, LEFT JOIN, RIGHT JOIN, ORDER BY, GROUP BY (priority 300)
+  * WHERE: AND, OR, IN, BETWEEN, LIKE, ILIKE, IS, NOT, EXISTS, ANY, ALL (priority 300)
+  * ORDER BY: ASC, DESC, NULLS FIRST, NULLS LAST (priority 300)
+  * GROUP BY: HAVING, ORDER BY, LIMIT (priority 300)
+  * All JOIN variants: ON (priority 300)
+  * ON: AND, OR, WHERE, JOIN (priority 300)
+  * HAVING, LIMIT, OFFSET, SET, INTO, VALUES, UPDATE, DELETE, WITH, UNION, etc. all mapped
+  * Secondary keywords scored at 80 (below table/column at 100-200)
+- Added isInsideCaseExpression() to detect unmatched CASE blocks and prioritize WHEN, THEN, ELSE, END
+- Added getLastToken() helper for sub-context detection (ORDER BY column → ASC/DESC)
+- Multi-word keywords as single completions: LEFT JOIN, RIGHT JOIN, FULL OUTER JOIN,
+  ORDER BY, GROUP BY, NULLS FIRST, NULLS LAST, IS NOT NULL, IS NULL, LEFT OUTER JOIN,
+  RIGHT OUTER JOIN, NOT IN, NOT EXISTS, NOT LIKE, NOT BETWEEN
+- Uses existing parseSQLContext() infrastructure (no changes to sqlContext.js needed)
+- Frontend rebuilt with pnpm (hash: app.169f2e9bc59936358690), deployed to Docker container
+- Compiled JS verified: NULLS FIRST, NULLS LAST, FULL OUTER JOIN strings present
+- No mock data patterns detected in modified file
+- Server healthy (PONG on /ping, 200 on new JS bundle)
+
+## Files Modified
+- client/app/components/queries/QueryEditor/ace.js - Replaced langTools.keyWordCompleter with contextKeywordCompleter
+
+## Current Status
+- Features passing: 115 (115/119 = 96.6%)
+- Feature #119 complete
+- Server at http://localhost:5001
 - Frontend build hash: app.169f2e9bc59936358690

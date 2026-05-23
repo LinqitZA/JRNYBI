@@ -563,11 +563,347 @@ function posToOffset(session, pos) {
   return offset;
 }
 
+// ---- Context-aware SQL keyword completer ---------------------------------------
+
+/**
+ * Keyword priority map: for each SQL clause context, defines which keywords
+ * should appear first (high score) vs secondary (lower score).
+ *
+ * Priority keywords: score 300 (above table/column suggestions at 200)
+ * Secondary keywords: score 80 (below table/column suggestions)
+ * Unlisted keywords: hidden for that context
+ */
+const KEYWORD_PRIORITY_MAP = {
+  // Start of query or empty — suggest statement starters
+  null: {
+    priority: ["SELECT", "WITH", "INSERT", "UPDATE", "DELETE"],
+    secondary: ["CREATE", "DROP", "ALTER", "EXPLAIN"],
+  },
+
+  // After SELECT — suggest FROM, column-related keywords
+  SELECT: {
+    priority: ["FROM", "DISTINCT", "CASE", "COALESCE", "CAST"],
+    secondary: ["AS", "NULLIF", "GREATEST", "LEAST", "EXTRACT", "EXISTS", "NOT"],
+  },
+
+  // After FROM — suggest WHERE, JOINs, ordering, grouping
+  FROM: {
+    priority: ["WHERE", "JOIN", "LEFT JOIN", "RIGHT JOIN", "INNER JOIN", "FULL OUTER JOIN",
+               "ORDER BY", "GROUP BY", "CROSS JOIN"],
+    secondary: ["HAVING", "LIMIT", "OFFSET", "UNION", "INTERSECT", "EXCEPT",
+                 "NATURAL JOIN", "LEFT OUTER JOIN", "RIGHT OUTER JOIN", "LATERAL", "AS"],
+  },
+
+  // After WHERE — suggest logical operators, comparison keywords
+  WHERE: {
+    priority: ["AND", "OR", "IN", "BETWEEN", "LIKE", "ILIKE", "IS", "NOT", "EXISTS", "ANY", "ALL"],
+    secondary: ["CASE", "WHEN", "IS NULL", "IS NOT NULL", "NOT IN", "NOT EXISTS",
+                 "NOT LIKE", "NOT BETWEEN", "ORDER BY", "GROUP BY", "LIMIT", "HAVING"],
+  },
+
+  // After ORDER BY — suggest ASC, DESC, NULLS handling
+  "ORDER BY": {
+    priority: ["ASC", "DESC", "NULLS FIRST", "NULLS LAST"],
+    secondary: ["LIMIT", "OFFSET", "FETCH"],
+  },
+
+  // After GROUP BY — suggest HAVING, ORDER BY
+  "GROUP BY": {
+    priority: ["HAVING", "ORDER BY", "LIMIT"],
+    secondary: ["UNION", "INTERSECT", "EXCEPT", "WINDOW"],
+  },
+
+  // After JOIN — suggest ON (after table name is entered)
+  JOIN: {
+    priority: ["ON"],
+    secondary: ["AS"],
+  },
+  "LEFT JOIN": {
+    priority: ["ON"],
+    secondary: ["AS"],
+  },
+  "RIGHT JOIN": {
+    priority: ["ON"],
+    secondary: ["AS"],
+  },
+  "INNER JOIN": {
+    priority: ["ON"],
+    secondary: ["AS"],
+  },
+  "OUTER JOIN": {
+    priority: ["ON"],
+    secondary: ["AS"],
+  },
+  "CROSS JOIN": {
+    priority: ["ON"],
+    secondary: ["AS"],
+  },
+  "FULL JOIN": {
+    priority: ["ON"],
+    secondary: ["AS"],
+  },
+  "NATURAL JOIN": {
+    priority: [],
+    secondary: ["WHERE", "ORDER BY", "GROUP BY"],
+  },
+  "LEFT OUTER JOIN": {
+    priority: ["ON"],
+    secondary: ["AS"],
+  },
+  "RIGHT OUTER JOIN": {
+    priority: ["ON"],
+    secondary: ["AS"],
+  },
+  "FULL OUTER JOIN": {
+    priority: ["ON"],
+    secondary: ["AS"],
+  },
+
+  // After ON — suggest logical connectors, next clauses
+  ON: {
+    priority: ["AND", "OR", "WHERE", "JOIN", "LEFT JOIN", "RIGHT JOIN", "INNER JOIN"],
+    secondary: ["ORDER BY", "GROUP BY", "FULL OUTER JOIN", "CROSS JOIN"],
+  },
+
+  // After HAVING — suggest logical operators
+  HAVING: {
+    priority: ["AND", "OR", "IN", "BETWEEN", "LIKE", "NOT", "EXISTS"],
+    secondary: ["ORDER BY", "LIMIT", "UNION"],
+  },
+
+  // After LIMIT — suggest OFFSET
+  LIMIT: {
+    priority: ["OFFSET"],
+    secondary: ["UNION", "INTERSECT", "EXCEPT"],
+  },
+
+  // After OFFSET — suggest FETCH, LIMIT
+  OFFSET: {
+    priority: ["FETCH", "LIMIT"],
+    secondary: ["UNION", "INTERSECT", "EXCEPT"],
+  },
+
+  // After SET (UPDATE ... SET) — suggest WHERE
+  SET: {
+    priority: ["WHERE"],
+    secondary: ["AND", "FROM", "RETURNING"],
+  },
+
+  // After INSERT INTO — suggest VALUES, SELECT
+  INTO: {
+    priority: ["VALUES", "SELECT"],
+    secondary: ["DEFAULT", "RETURNING"],
+  },
+
+  // After VALUES
+  VALUES: {
+    priority: ["RETURNING"],
+    secondary: ["ON"],
+  },
+
+  // After UPDATE — suggest SET
+  UPDATE: {
+    priority: ["SET"],
+    secondary: ["AS"],
+  },
+
+  // After DELETE — suggest FROM
+  DELETE: {
+    priority: ["FROM"],
+    secondary: ["WHERE", "USING"],
+  },
+
+  // After WITH — suggest AS, SELECT
+  WITH: {
+    priority: ["AS", "SELECT"],
+    secondary: ["RECURSIVE"],
+  },
+
+  // After UNION/INTERSECT/EXCEPT — suggest SELECT, ALL
+  UNION: {
+    priority: ["SELECT", "ALL"],
+    secondary: [],
+  },
+  INTERSECT: {
+    priority: ["SELECT", "ALL"],
+    secondary: [],
+  },
+  EXCEPT: {
+    priority: ["SELECT", "ALL"],
+    secondary: [],
+  },
+
+  // After RETURNING — mostly end of statement
+  RETURNING: {
+    priority: [],
+    secondary: ["AS"],
+  },
+
+  // After WINDOW — suggest AS
+  WINDOW: {
+    priority: ["AS"],
+    secondary: ["ORDER BY", "PARTITION"],
+  },
+};
+
+/**
+ * Detect if the cursor is inside a CASE expression by scanning backwards
+ * through the SQL text for unmatched CASE keywords.
+ */
+function isInsideCaseExpression(queryText, cursorOffset) {
+  if (!queryText) return false;
+  const before = queryText.substring(0, cursorOffset).toUpperCase();
+  let caseDepth = 0;
+  // Simple scan: count CASE vs END keywords
+  const caseRe = /\b(CASE|END)\b/g;
+  let m;
+  while ((m = caseRe.exec(before)) !== null) {
+    if (m[1] === "CASE") caseDepth++;
+    else if (m[1] === "END") caseDepth--;
+  }
+  return caseDepth > 0;
+}
+
+/**
+ * Detect the last significant token before the cursor (excluding whitespace).
+ * This helps determine sub-context like "after ORDER BY col" → suggest ASC/DESC.
+ */
+function getLastToken(queryText, cursorOffset) {
+  if (!queryText || cursorOffset <= 0) return "";
+  const before = queryText.substring(0, cursorOffset).trimEnd();
+  // Find the last whitespace-delimited token
+  const lastSpaceIdx = before.lastIndexOf(" ");
+  const lastNewlineIdx = before.lastIndexOf("\n");
+  const lastSep = Math.max(lastSpaceIdx, lastNewlineIdx);
+  if (lastSep < 0) return before.toUpperCase();
+  return before.substring(lastSep + 1).toUpperCase();
+}
+
+/**
+ * Context-aware SQL keyword completer that replaces Ace's built-in keyWordCompleter.
+ *
+ * Uses parseSQLContext() to determine which SQL clause the cursor is in,
+ * then filters and scores keywords based on context relevance.
+ */
+const contextKeywordCompleter = {
+  getCompletions: (editor, session, pos, prefix, callback) => {
+    // Only complete if there's a prefix to match
+    if (!prefix || prefix.length === 0) {
+      callback(null, []);
+      return;
+    }
+
+    const queryText = session.getValue();
+    const cursorOffset = posToOffset(session, pos);
+
+    let clause = null;
+    try {
+      const ctx = parseSQLContext(queryText, cursorOffset);
+      clause = ctx.clause;
+    } catch (e) {
+      // Fall back to null clause (start-of-query suggestions)
+    }
+
+    // Check if we're inside a CASE expression — override suggestions
+    const inCase = isInsideCaseExpression(queryText, cursorOffset);
+
+    const completions = [];
+    const prefixUpper = prefix.toUpperCase();
+
+    if (inCase) {
+      // Inside CASE: prioritize CASE-specific keywords
+      const casePriority = ["WHEN", "THEN", "ELSE", "END"];
+      const caseSecondary = ["AND", "OR", "IN", "BETWEEN", "LIKE", "ILIKE", "IS", "NOT",
+                             "IS NULL", "IS NOT NULL", "NULL", "TRUE", "FALSE"];
+
+      casePriority.forEach(kw => {
+        if (kw.toUpperCase().startsWith(prefixUpper)) {
+          completions.push({
+            name: kw,
+            value: kw,
+            score: 300,
+            meta: "keyword",
+          });
+        }
+      });
+
+      caseSecondary.forEach(kw => {
+        if (kw.toUpperCase().startsWith(prefixUpper)) {
+          completions.push({
+            name: kw,
+            value: kw,
+            score: 80,
+            meta: "keyword",
+          });
+        }
+      });
+
+      callback(null, completions);
+      return;
+    }
+
+    // Look up the clause context in the priority map
+    const contextConfig = KEYWORD_PRIORITY_MAP[clause] || KEYWORD_PRIORITY_MAP[null];
+
+    if (contextConfig) {
+      // Add priority keywords at high score
+      contextConfig.priority.forEach(kw => {
+        if (kw.toUpperCase().startsWith(prefixUpper)) {
+          completions.push({
+            name: kw,
+            value: kw,
+            score: 300,
+            meta: "keyword",
+          });
+        }
+      });
+
+      // Add secondary keywords at lower score
+      contextConfig.secondary.forEach(kw => {
+        if (kw.toUpperCase().startsWith(prefixUpper)) {
+          completions.push({
+            name: kw,
+            value: kw,
+            score: 80,
+            meta: "keyword",
+          });
+        }
+      });
+    }
+
+    // For ORDER BY context: if the last token before cursor isn't a keyword,
+    // the user likely just typed a column name — push ASC/DESC to top
+    if (clause === "ORDER BY") {
+      const lastTok = getLastToken(queryText, cursorOffset - prefix.length);
+      if (lastTok && !KEYWORD_SET_FOR_COMPLETER.has(lastTok) && lastTok !== ",") {
+        // User just typed a column name; ASC/DESC should already be priority
+        // from the map above, but let's also suggest NULLS FIRST/LAST
+      }
+    }
+
+    callback(null, completions);
+  },
+};
+
+/**
+ * Quick keyword set for checking if the last token is a keyword.
+ * Used by the context-aware completer for sub-context detection.
+ */
+const KEYWORD_SET_FOR_COMPLETER = new Set([
+  "SELECT", "FROM", "WHERE", "JOIN", "ON", "AND", "OR", "NOT", "IN", "EXISTS",
+  "BETWEEN", "LIKE", "ILIKE", "IS", "NULL", "TRUE", "FALSE", "CASE", "WHEN",
+  "THEN", "ELSE", "END", "AS", "ORDER", "BY", "GROUP", "HAVING", "LIMIT",
+  "OFFSET", "UNION", "ALL", "INTERSECT", "EXCEPT", "INSERT", "INTO", "VALUES",
+  "UPDATE", "SET", "DELETE", "ASC", "DESC", "NULLS", "FIRST", "LAST",
+  "LEFT", "RIGHT", "INNER", "OUTER", "CROSS", "FULL", "NATURAL", "DISTINCT",
+  "WITH", "RETURNING", "WINDOW", "OVER", "PARTITION",
+]);
+
 // ---- Completer setup ----------------------------------------------------------
 
 langTools.setCompleters([
   langTools.snippetCompleter,
-  langTools.keyWordCompleter,
+  contextKeywordCompleter,
   langTools.textCompleter,
   {
     identifierRegexps: [/[a-zA-Z_0-9.\-\u00A2-\uFFFF]/],
