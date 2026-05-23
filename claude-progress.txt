@@ -1898,3 +1898,31 @@ Agent: Batch agent handling features #112, #106
 - Features passing: 112 (112/112 = 100%)
 - All features complete
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+
+## Session 40: 2026-05-23
+Agent: Handling feature #115
+
+### Feature #115: Hide Gravatar profile image from navbar (PASSING)
+- Removed `<img className="profile__image_thumb" src={currentUser.profile_image_url}>` from DesktopNavbar.jsx
+- Replaced with user initials avatar in a styled blue circle:
+  * `getUserInitials()` helper: extracts first+last name initials (e.g., "Admin User" → "AU")
+  * Falls back to UserOutlined icon if no name available
+  * 30px diameter circle, JRNY blue (#2563eb) background, white text, font-weight 600
+- MobileNavbar.jsx checked: no gravatar image pattern found (uses hamburger menu only)
+- Profile dropdown menu still functions: Menu.SubMenu structure intact
+- No external gravatar.com requests from navbar: 0 matches in compiled JS
+- profile_image_url preserved in backend (used by QueryMetadata, ItemsTable per spec)
+- Profile avatar CSS: `.profile-avatar` with flexbox centering, border-radius 50%
+- Frontend rebuilt (webpack hash: app.9d1f8240cf6aeac915fe), deployed to Docker container
+- No mock data patterns detected
+- Committed as 8340a94c
+
+## Files Modified
+- client/app/components/ApplicationArea/ApplicationLayout/DesktopNavbar.jsx - Removed gravatar img, added initials avatar
+- client/app/components/ApplicationArea/ApplicationLayout/DesktopNavbar.less - Replaced .profile__image_thumb with .profile-avatar styles
+
+## Current Status
+- Features passing: 113 (113/119 = 95.0%)
+- Total features: 119
+- Feature #115 complete
+- Server at http://localhost:5001
