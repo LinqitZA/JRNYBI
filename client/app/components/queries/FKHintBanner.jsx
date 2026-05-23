@@ -56,6 +56,18 @@ export default function FKHintBanner({ fkMatches, onResolve }) {
 
   const isMultiple = uniqueColumns.length > 1;
 
+  // Detect multiple FK columns referencing the same target table
+  const targetTableCounts = {};
+  for (const m of fkMatches) {
+    const target = m.fkInfo && m.fkInfo.edge ? m.fkInfo.edge.relatedTable : null;
+    if (target) {
+      targetTableCounts[target] = (targetTableCounts[target] || 0) + 1;
+    }
+  }
+  const multiRefTargets = Object.entries(targetTableCounts)
+    .filter(([, count]) => count > 1)
+    .map(([table, count]) => ({ table, count }));
+
   return (
     <div className="fk-hint-banner" role="status" aria-live="polite">
       <i className="fa fa-link fk-hint-icon" aria-hidden="true" />
@@ -90,6 +102,16 @@ export default function FKHintBanner({ fkMatches, onResolve }) {
         title="Dismiss">
         &times;
       </button>
+      {multiRefTargets.length > 0 && (
+        <div className="fk-hint-multi-ref">
+          {multiRefTargets.map(({ table, count }) => (
+            <span key={table} className="fk-multi-ref-note">
+              <i className="fa fa-exclamation-triangle" aria-hidden="true" />{" "}
+              Note: {count} columns reference <strong>{table}</strong> — use separate aliases for each
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -122,7 +122,6 @@
 
         // FK link icon on foreign key columns
         .fk-icon {
-          color: @primary-color;
           font-size: 10px;
           margin-right: 3px;
           cursor: pointer;
@@ -132,6 +131,24 @@
             opacity: 1;
             text-decoration: underline;
           }
+        }
+
+        // Cardinality badge next to FK columns
+        .cardinality-badge {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          height: 12px;
+          padding: 0 3px;
+          margin-right: 3px;
+          border-radius: 3px;
+          border: 1px solid;
+          font-size: 8px;
+          font-weight: 700;
+          line-height: 12px;
+          letter-spacing: 0.3px;
+          flex-shrink: 0;
+          vertical-align: middle;
         }
 
         // Highlight FK columns with a subtle left border
