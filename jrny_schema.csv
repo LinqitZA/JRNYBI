@@ -1,0 +1,1001 @@
+schema_name,table_name,table_type,column_name,column_position,data_type,is_nullable,column_comment
+cashbook,bank_accounts,table,id,1,uuid,NO,Primary key (UUID)
+cashbook,bank_accounts,table,bank_name,2,character varying(255),NO,Name of the banking institution
+cashbook,bank_accounts,table,branch_code,3,character varying(20),NO,Bank branch/sort code
+cashbook,bank_accounts,table,account_number,4,character varying(50),NO,Unique bank account number
+cashbook,bank_accounts,table,account_name,5,character varying(255),YES,"Friendly name for the account (e.g. ""Main Operating"")"
+cashbook,bank_accounts,table,account_type,6,character varying(30),YES,Account type (default: Current)
+cashbook,bank_accounts,table,gl_account_id,7,uuid,YES,Linked General Ledger control account → finance.gl_accounts.id
+cashbook,bank_accounts,table,currency,8,character varying(10),NO,ISO 4217 currency code (default: ZAR)
+cashbook,bank_accounts,table,opening_balance,9,"numeric(19,2)",YES,"Opening balance at account setup. Precision 19,2"
+cashbook,bank_accounts,table,current_balance,10,"numeric(19,2)",YES,"Running current balance. Precision 19,2"
+cashbook,bank_accounts,table,is_active,11,boolean,NO,Whether the bank account is active and available for transactions
+cashbook,bank_accounts,table,created_at,12,timestamp with time zone,NO,Row creation timestamp. Timestamp with timezone
+cashbook,bank_accounts,table,updated_at,13,timestamp with time zone,NO,Last update timestamp. Timestamp with timezone
+cashbook,reconciliations,table,id,1,uuid,NO,Primary key (UUID)
+cashbook,reconciliations,table,bank_account_id,2,uuid,NO,Bank account being reconciled → cashbook.bank_accounts.id
+cashbook,reconciliations,table,reconciliation_date,3,date,NO,Cut-off date for this reconciliation
+cashbook,reconciliations,table,statement_balance,4,"numeric(19,2)",NO,"Bank statement balance at the reconciliation date. Precision 19,2"
+cashbook,reconciliations,table,book_balance,5,"numeric(19,2)",NO,"GL book balance at the reconciliation date. Precision 19,2"
+cashbook,reconciliations,table,difference,6,"numeric(19,2)",NO,"Unresolved difference (statement_balance - book_balance). Precision 19,2"
+cashbook,reconciliations,table,status,7,character varying(30),NO,"Reconciliation state (In Progress, Completed, Approved). Default: In Progress"
+cashbook,reconciliations,table,matched_count,8,integer,NO,Number of statement lines matched in this reconciliation
+cashbook,reconciliations,table,unmatched_count,9,integer,NO,Number of statement lines still unmatched
+cashbook,reconciliations,table,approved_by,10,uuid,YES,User who approved the completed reconciliation → core.users.id
+cashbook,reconciliations,table,approved_at,11,timestamp with time zone,YES,When the reconciliation was approved. Timestamp with timezone
+cashbook,reconciliations,table,notes,12,text,YES,Free-form notes or commentary on the reconciliation
+cashbook,reconciliations,table,created_by,13,uuid,YES,User who initiated the reconciliation → core.users.id
+cashbook,reconciliations,table,created_at,14,timestamp with time zone,NO,Row creation timestamp. Timestamp with timezone
+cashbook,reconciliations,table,updated_at,15,timestamp with time zone,NO,Last update timestamp. Timestamp with timezone
+cashbook,statement_imports,table,id,1,uuid,NO,Primary key (UUID)
+cashbook,statement_imports,table,bank_account_id,2,uuid,NO,Bank account this import belongs to → cashbook.bank_accounts.id
+cashbook,statement_imports,table,file_name,3,character varying(255),NO,Original uploaded file name
+cashbook,statement_imports,table,file_format,4,character varying(30),NO,"File format of the import (CSV, OFX, MT940, etc.). Default: CSV"
+cashbook,statement_imports,table,import_date,5,timestamp with time zone,NO,When the import was processed. Timestamp with timezone
+cashbook,statement_imports,table,line_count,6,integer,NO,Number of statement lines parsed from the file
+cashbook,statement_imports,table,opening_balance,7,"numeric(19,2)",YES,"Opening balance declared in the statement file. Precision 19,2"
+cashbook,statement_imports,table,closing_balance,8,"numeric(19,2)",YES,"Closing balance declared in the statement file. Precision 19,2"
+cashbook,statement_imports,table,status,9,character varying(30),NO,"Import processing status (Imported, Processing, Error, etc.). Default: Imported"
+cashbook,statement_imports,table,imported_by,10,uuid,YES,User who performed the import → core.users.id
+cashbook,statement_imports,table,error_message,11,text,YES,Error details if the import failed
+cashbook,statement_imports,table,created_at,12,timestamp with time zone,NO,Row creation timestamp. Timestamp with timezone
+cashbook,statement_lines,table,id,1,uuid,NO,Primary key (UUID)
+cashbook,statement_lines,table,bank_account_id,2,uuid,NO,Parent bank account → cashbook.bank_accounts.id
+cashbook,statement_lines,table,import_id,3,uuid,YES,Batch import that created this line (nullable if manually entered)
+cashbook,statement_lines,table,transaction_date,4,date,NO,Date the transaction was processed by the bank
+cashbook,statement_lines,table,value_date,5,date,YES,Effective value date for interest calculation
+cashbook,statement_lines,table,description,6,character varying(500),NO,Bank statement narrative / description (max 500 chars)
+cashbook,statement_lines,table,reference,7,character varying(100),YES,Bank reference or cheque number
+cashbook,statement_lines,table,debit,8,"numeric(19,2)",YES,"Debit amount (money out). Precision 19,2"
+cashbook,statement_lines,table,credit,9,"numeric(19,2)",YES,"Credit amount (money in). Precision 19,2"
+cashbook,statement_lines,table,balance,10,"numeric(19,2)",YES,"Running balance after this transaction. Precision 19,2"
+cashbook,statement_lines,table,match_status,11,character varying(30),NO,"Reconciliation match state (Unmatched, Matched, Partial, etc.). Default: Unmatched"
+cashbook,statement_lines,table,matched_to_id,12,uuid,YES,UUID of the matched document/transaction (polymorphic)
+cashbook,statement_lines,table,matched_to_type,13,character varying(50),YES,"Type of the matched entity (e.g. Invoice, Payment, Journal)"
+cashbook,statement_lines,table,matched_at,14,timestamp with time zone,YES,When the match was confirmed. Timestamp with timezone
+cashbook,statement_lines,table,created_at,15,timestamp with time zone,NO,Row creation timestamp. Timestamp with timezone
+cashbook,transaction_rules,table,id,1,uuid,NO,Primary key (UUID)
+cashbook,transaction_rules,table,rule_name,2,character varying(255),NO,Human-readable name for the auto-matching rule
+cashbook,transaction_rules,table,match_field,3,character varying(50),NO,"Statement line field to match against (description, reference)"
+cashbook,transaction_rules,table,match_type,4,character varying(30),NO,"Matching strategy (contains, exact, starts_with). Default: contains"
+cashbook,transaction_rules,table,match_value,5,character varying(255),NO,The text pattern to search for in the match field
+cashbook,transaction_rules,table,target_account_id,6,uuid,YES,GL account to post matched entries to → finance.gl_accounts.id
+cashbook,transaction_rules,table,target_type,7,character varying(50),YES,"GL account classification hint (Expense, Income, Asset, Liability)"
+cashbook,transaction_rules,table,tax_code_id,8,uuid,YES,Tax code applied to auto-posted entries → finance.tax_codes.id
+cashbook,transaction_rules,table,priority,9,integer,NO,Rule evaluation priority; lower number = higher priority. Default: 100
+cashbook,transaction_rules,table,is_active,10,boolean,NO,Whether the rule is active and eligible for matching
+cashbook,transaction_rules,table,dim_function_id,11,uuid,YES,Default Function dimension for auto-posted GL entries
+cashbook,transaction_rules,table,dim_project_id,12,uuid,YES,Default Project dimension for auto-posted GL entries
+cashbook,transaction_rules,table,dim_market_id,13,uuid,YES,Default Market dimension for auto-posted GL entries
+cashbook,transaction_rules,table,created_by,14,uuid,YES,User who created the rule → core.users.id
+cashbook,transaction_rules,table,created_at,15,timestamp with time zone,NO,Row creation timestamp. Timestamp with timezone
+cashbook,transaction_rules,table,updated_at,16,timestamp with time zone,NO,Last update timestamp. Timestamp with timezone
+core,audit_log,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,audit_log,table,table_schema,2,character varying(100),YES,"PostgreSQL schema name of the audited table (e.g., inventory, finance)"
+core,audit_log,table,table_name,3,character varying(100),YES,"Name of the audited table (e.g., products, journals)"
+core,audit_log,table,record_id,4,text,YES,Primary key value of the audited record
+core,audit_log,table,action,5,character varying(50),NO,"Type of change recorded (INSERT, UPDATE, DELETE)"
+core,audit_log,table,old_values,6,jsonb,YES,JSONB snapshot of the row values before the change (NULL for INSERT)
+core,audit_log,table,new_values,7,jsonb,YES,JSONB snapshot of the row values after the change (NULL for DELETE)
+core,audit_log,table,changed_fields,8,text[],YES,Array of column names that were modified in this change
+core,audit_log,table,user_id,9,uuid,YES,UUID of the user who performed the change (NULL for system actions)
+core,audit_log,table,timestamp,10,timestamp with time zone,NO,Timestamp with timezone when the change occurred
+core,branches,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,branches,table,code,2,character varying(30),NO,"Unique short code identifying the branch/entity (e.g., JHB, CPT)"
+core,branches,table,name,3,character varying(255),NO,Full name of the branch or organisational unit
+core,branches,table,branch_type,4,character varying(30),NO,"Type of organisational unit (branch, entity, warehouse, etc.)"
+core,branches,table,parent_id,5,uuid,YES,UUID of the parent branch for hierarchical org structures
+core,branches,table,address,6,text,YES,Physical address of the branch
+core,branches,table,contact_name,7,character varying(255),YES,Name of the primary contact person at the branch
+core,branches,table,contact_phone,8,character varying(50),YES,Phone number of the primary contact person
+core,branches,table,contact_email,9,character varying(255),YES,Email address of the primary contact person
+core,branches,table,currency,10,character varying(3),YES,ISO 4217 currency code for the branch (default: ZAR)
+core,branches,table,group_currency,11,character varying(3),YES,ISO 4217 group/consolidation currency code (if different from branch currency)
+core,branches,table,logo_asset_id,12,uuid,YES,UUID reference to the uploaded logo asset for this branch
+core,branches,table,is_active,13,boolean,NO,Whether this branch is currently active
+core,branches,table,created_at,14,timestamp with time zone,NO,Timestamp with timezone when the branch was created
+core,branches,table,updated_at,15,timestamp with time zone,NO,Timestamp with timezone when the branch was last modified
+core,carton_barcode_config,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,carton_barcode_config,table,entity_id,2,uuid,NO,Entity this barcode config belongs to (one config per entity)
+core,carton_barcode_config,table,scheme,3,character varying(20),NO,"Barcode numbering scheme (per_entity, per_warehouse)"
+core,carton_barcode_config,table,prefix,4,character varying(20),NO,String prefix for generated carton barcodes (default: CTN)
+core,carton_barcode_config,table,padding,5,smallint,NO,"Zero-padding width for the numeric portion (1-12, default: 6)"
+core,carton_barcode_config,table,created_at,6,timestamp with time zone,NO,Timestamp with timezone when the config was created
+core,carton_barcode_config,table,updated_at,7,timestamp with time zone,NO,Timestamp with timezone when the config was last modified
+core,countries,table,code,1,character(2),NO,"Primary key — ISO 3166-1 alpha-2 country code (e.g., ZA, US, GB)"
+core,countries,table,name,2,character varying(100),NO,Full country name in English
+core,countries,table,alpha3,3,character(3),YES,"ISO 3166-1 alpha-3 country code (e.g., ZAF, USA, GBR)"
+core,countries,table,numeric_code,4,character(3),YES,"ISO 3166-1 numeric country code (e.g., 710, 840, 826)"
+core,custom_field_definitions,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,custom_field_definitions,table,entity_type,2,character varying(50),NO,"Target entity type this custom field applies to (e.g., customer, product, vendor)"
+core,custom_field_definitions,table,field_name,3,character varying(100),NO,Machine-readable field name used in code and API
+core,custom_field_definitions,table,field_type,4,character varying(30),NO,"Data type of the custom field (text, number, date, select, boolean, etc.)"
+core,custom_field_definitions,table,field_label,5,character varying(200),NO,Human-readable label displayed in the UI
+core,custom_field_definitions,table,description,6,text,YES,Optional description or help text for the field
+core,custom_field_definitions,table,is_required,7,boolean,NO,Whether the field must be filled in when editing the parent entity
+core,custom_field_definitions,table,select_options,8,text,YES,JSON array of allowed values when field_type is select
+core,custom_field_definitions,table,display_order,9,integer,NO,Sort order for displaying custom fields in the UI (lower = first)
+core,custom_field_definitions,table,is_active,10,boolean,NO,Whether this custom field definition is currently active
+core,custom_field_definitions,table,created_at,11,timestamp with time zone,NO,Timestamp with timezone when the definition was created
+core,custom_field_definitions,table,updated_at,12,timestamp with time zone,NO,Timestamp with timezone when the definition was last modified
+core,custom_field_values,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,custom_field_values,table,definition_id,2,uuid,NO,Custom field definition this value belongs to → core.custom_field_definitions.id
+core,custom_field_values,table,entity_type,3,character varying(50),NO,"Entity type matching the parent definition (e.g., customer, product)"
+core,custom_field_values,table,entity_id,4,uuid,NO,UUID of the specific entity instance this value is stored for
+core,custom_field_values,table,field_value,5,text,YES,The stored value as text (cast to appropriate type based on definition)
+core,custom_field_values,table,created_at,6,timestamp with time zone,NO,Timestamp with timezone when the value was first set
+core,custom_field_values,table,updated_at,7,timestamp with time zone,NO,Timestamp with timezone when the value was last modified
+core,document_search_archive,matview,id,1,uuid,YES,
+core,document_search_archive,matview,document_type,2,text,YES,
+core,document_search_archive,matview,document_number,3,character varying,YES,
+core,document_search_archive,matview,counterparty_name,4,character varying(255),YES,
+core,document_search_archive,matview,counterparty_id,5,uuid,YES,
+core,document_search_archive,matview,status,6,character varying,YES,
+core,document_search_archive,matview,document_date,7,date,YES,
+core,document_search_archive,matview,amount,8,"numeric(19,2)",YES,
+core,document_search_archive,matview,currency,9,character varying,YES,
+core,document_search_archive,matview,href,10,text,YES,
+core,document_search_archive,matview,entity_id,11,uuid,YES,
+core,document_search_archive,matview,branch_id,12,uuid,YES,
+core,document_search_archive,matview,search_vector,13,tsvector,YES,
+core,document_search_archive,matview,created_at,14,timestamp with time zone,YES,
+core,document_search_archive,matview,updated_at,15,timestamp with time zone,YES,
+core,document_search_index,matview,id,1,uuid,YES,
+core,document_search_index,matview,document_type,2,text,YES,
+core,document_search_index,matview,document_number,3,character varying,YES,
+core,document_search_index,matview,counterparty_name,4,character varying(255),YES,
+core,document_search_index,matview,counterparty_id,5,uuid,YES,
+core,document_search_index,matview,status,6,text,YES,
+core,document_search_index,matview,document_date,7,date,YES,
+core,document_search_index,matview,amount,8,"numeric(19,2)",YES,
+core,document_search_index,matview,currency,9,character varying,YES,
+core,document_search_index,matview,href,10,text,YES,
+core,document_search_index,matview,entity_id,11,uuid,YES,
+core,document_search_index,matview,branch_id,12,uuid,YES,
+core,document_search_index,matview,search_vector,13,tsvector,YES,
+core,document_search_index,matview,created_at,14,timestamp with time zone,YES,
+core,document_search_index,matview,updated_at,15,timestamp with time zone,YES,
+core,document_sequences,table,id,1,uuid,NO,
+core,document_sequences,table,document_type,2,character varying(100),NO,
+core,document_sequences,table,prefix,3,character varying(20),NO,
+core,document_sequences,table,suffix,4,character varying(20),YES,
+core,document_sequences,table,separator,5,character varying(5),YES,
+core,document_sequences,table,current_number,6,integer,NO,
+core,document_sequences,table,start_number,7,integer,NO,
+core,document_sequences,table,padding,8,integer,NO,
+core,document_sequences,table,entity_id,9,uuid,YES,
+core,document_sequences,table,is_active,10,boolean,NO,
+core,document_sequences,table,created_at,11,timestamp with time zone,NO,
+core,document_sequences,table,updated_at,12,timestamp with time zone,NO,
+core,document_sequences,table,sequence_type,13,character varying(20),NO,
+core,document_sequences,table,fiscal_year,14,integer,YES,
+core,hazard_classes,table,code,1,character varying(10),NO,"Primary key — UN GHS hazard class code (e.g., 2.1, 3, 6.1)"
+core,hazard_classes,table,name,2,character varying(100),NO,"Official name of the hazard class (e.g., Flammable Gases, Toxic Substances)"
+core,hazard_classes,table,description,3,text,YES,Detailed description of the hazard class and its scope
+core,hazard_classes,table,packing_group_applicable,4,boolean,NO,"Whether UN packing groups (I, II, III) apply to this hazard class"
+core,hs_codes,table,code,1,character varying(13),NO,Primary key — WCO Harmonized System code (up to 13 digits for country-specific tariff lines)
+core,hs_codes,table,description,2,character varying(500),NO,Official HS code description of the goods classification
+core,hs_codes,table,section,3,character varying(10),YES,"HS section number (Roman numeral grouping, e.g., I through XXI)"
+core,hs_codes,table,chapter,4,character varying(5),YES,HS chapter number (first 2 digits of the code)
+core,integration_api_call_log,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,integration_api_call_log,table,entity_id,2,uuid,NO,Entity/branch the API call was made against
+core,integration_api_call_log,table,api_key_id,3,uuid,YES,UUID of the integration API key used (NULL if not identified)
+core,integration_api_call_log,table,fingerprint,4,character varying(8),YES,Short fingerprint of the API key used for quick identification
+core,integration_api_call_log,table,request_id,5,character varying(64),NO,Unique request correlation ID for tracing across services
+core,integration_api_call_log,table,method,6,character varying(10),NO,"HTTP method (GET, POST, PUT, PATCH, DELETE)"
+core,integration_api_call_log,table,path,7,text,NO,"Request path (e.g., /api/v1/inventory/products)"
+core,integration_api_call_log,table,http_status,8,integer,NO,HTTP response status code returned to the caller
+core,integration_api_call_log,table,duration_ms,9,integer,NO,Total request processing time in milliseconds
+core,integration_api_call_log,table,error_code,10,character varying(100),YES,Application error code if the request failed (NULL on success)
+core,integration_api_call_log,table,created_at,11,timestamp with time zone,NO,Timestamp with timezone when the API call was logged
+core,integration_api_keys,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,integration_api_keys,table,entity_id,2,uuid,NO,Entity/branch this API key is scoped to → core.branches.id
+core,integration_api_keys,table,fingerprint,3,character varying(8),NO,Unique 8-character fingerprint for key identification (shown in logs/UI)
+core,integration_api_keys,table,token_hash,4,text,NO,Argon2id hash of the bearer token (plaintext is never stored)
+core,integration_api_keys,table,display_name,5,character varying(255),NO,"Human-readable label for the API key (e.g., ""JRNYFLW Production"")"
+core,integration_api_keys,table,created_by,6,uuid,NO,User who generated this API key → core.users.id
+core,integration_api_keys,table,created_at,7,timestamp with time zone,NO,Timestamp with timezone when the key was created
+core,integration_api_keys,table,last_used_at,8,timestamp with time zone,YES,Timestamp with timezone of the most recent successful API call using this key
+core,integration_api_keys,table,revoked_at,9,timestamp with time zone,YES,Timestamp with timezone when the key was revoked (NULL if still active)
+core,integration_api_keys,table,scopes,10,text[],NO,"Text array of permission scopes granted to this key (e.g., {inventory.read,orders.write})"
+core,integration_api_keys,table,rate_limit,11,integer,YES,Maximum API requests per minute allowed for this key (default: 60)
+core,integration_api_keys,table,pending_token_hash,12,text,YES,Argon2id hash of a new token during zero-downtime key rotation (NULL when not rotating)
+core,integration_api_keys,table,pending_token_fingerprint,13,character varying(8),YES,Fingerprint of the pending rotation token (NULL when not rotating)
+core,integration_api_keys,table,rotation_expires_at,14,timestamp with time zone,YES,Timestamp with timezone when the rotation grace period ends and old key is invalidated
+core,integration_api_keys,table,last_rotated_at,15,timestamp with time zone,YES,Timestamp with timezone when the key was last rotated
+core,license_state,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,license_state,table,license_key,2,character varying(255),NO,Unique license key issued to the customer
+core,license_state,table,license_type,3,character varying(50),NO,"License edition type (standard, professional, enterprise, etc.)"
+core,license_state,table,entity_name,4,character varying(255),NO,Registered entity/company name on the license
+core,license_state,table,max_users,5,text,NO,Maximum number of concurrent users allowed by the license (stored as text)
+core,license_state,table,active_users,6,text,NO,Current count of active users consuming the license (stored as text)
+core,license_state,table,valid_from,7,text,NO,"License validity start date (stored as text, ISO 8601)"
+core,license_state,table,valid_until,8,text,NO,"License validity end date (stored as text, ISO 8601)"
+core,license_state,table,modules,9,text[],YES,"Text array of licensed module names (e.g., {finance,inventory,sales})"
+core,license_state,table,status,10,character varying(30),NO,"Current license status (active, expired, suspended, revoked)"
+core,license_state,table,hardware_fingerprint,11,character varying(255),YES,Machine hardware fingerprint for license binding
+core,license_state,table,tier,12,character varying(50),YES,"License tier level (standard, professional, enterprise)"
+core,license_state,table,next_renewal_due,13,text,YES,"Date when the next license renewal is due (stored as text, ISO 8601)"
+core,license_state,table,last_checked_at,14,timestamp with time zone,YES,Timestamp with timezone of the last license validation check
+core,license_state,table,created_at,15,timestamp with time zone,NO,Timestamp with timezone when the license record was created
+core,license_state,table,updated_at,16,timestamp with time zone,NO,Timestamp with timezone when the license record was last modified
+core,notifications,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,notifications,table,user_id,2,uuid,NO,UUID of the user this notification is addressed to
+core,notifications,table,type,3,character varying(50),NO,"Notification type (e.g., approval_required, document_ready, stock_alert)"
+core,notifications,table,title,4,character varying(255),NO,Short headline text displayed in the notification bell
+core,notifications,table,message,5,text,NO,Full notification body text
+core,notifications,table,context,6,jsonb,YES,JSONB payload with additional structured context for the notification
+core,notifications,table,is_read,7,boolean,NO,Whether the user has read/dismissed the notification
+core,notifications,table,link,8,character varying(500),YES,Optional URL or route the notification links to when clicked
+core,notifications,table,created_at,9,timestamp with time zone,NO,Timestamp with timezone when the notification was created
+core,org_units,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,org_units,table,code,2,character varying(30),NO,Unique short code identifying the organisational unit
+core,org_units,table,name,3,character varying(255),NO,Full name of the organisational unit
+core,org_units,table,unit_type,4,character varying(30),NO,"Type of organisational unit (branch, entity, warehouse, etc.)"
+core,org_units,table,parent_id,5,uuid,YES,UUID of the parent org unit for hierarchical structures
+core,org_units,table,address,6,text,YES,Physical address of the organisational unit
+core,org_units,table,contact_name,7,character varying(255),YES,Name of the primary contact person
+core,org_units,table,contact_phone,8,character varying(50),YES,Phone number of the primary contact person
+core,org_units,table,contact_email,9,character varying(255),YES,Email address of the primary contact person
+core,org_units,table,logo_asset_id,10,uuid,YES,UUID reference to the uploaded logo asset for this org unit
+core,org_units,table,is_active,11,boolean,NO,Whether this org unit is currently active
+core,org_units,table,created_at,12,timestamp with time zone,NO,Timestamp with timezone when the org unit was created
+core,org_units,table,updated_at,13,timestamp with time zone,NO,Timestamp with timezone when the org unit was last modified
+core,password_reset_tokens,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,password_reset_tokens,table,user_id,2,uuid,NO,User requesting the password reset → core.users.id
+core,password_reset_tokens,table,token,3,character varying(255),NO,Unique opaque token sent to the user for password reset verification
+core,password_reset_tokens,table,expires_at,4,timestamp with time zone,NO,Timestamp with timezone after which the token is no longer valid
+core,password_reset_tokens,table,used_at,5,timestamp with time zone,YES,Timestamp with timezone when the token was consumed (NULL if unused)
+core,password_reset_tokens,table,created_at,6,timestamp with time zone,NO,Timestamp with timezone when the token was generated
+core,period_seals,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,period_seals,table,period_id,2,uuid,NO,UUID of the financial period being sealed
+core,period_seals,table,seal_type,3,character varying(30),NO,"Type of seal applied (hard, soft)"
+core,period_seals,table,first_authoriser_id,4,uuid,NO,UUID of the first user who authorised the period seal
+core,period_seals,table,first_authorised_at,5,timestamp with time zone,NO,Timestamp with timezone when the first authorisation was given
+core,period_seals,table,second_authoriser_id,6,uuid,YES,UUID of the second user who authorised the period seal (four-eyes principle)
+core,period_seals,table,second_authorised_at,7,timestamp with time zone,YES,Timestamp with timezone when the second authorisation was given
+core,period_seals,table,seal_hash,8,character varying(128),YES,Cryptographic hash sealing the period data for tamper detection
+core,period_seals,table,notes,9,text,YES,Optional notes recorded at the time of sealing
+core,period_seals,table,created_at,10,timestamp with time zone,NO,Timestamp with timezone when the seal record was created
+core,permissions,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,permissions,table,code,2,character varying(200),NO,"Unique machine-readable permission code (e.g., inventory.products.create)"
+core,permissions,table,name,3,character varying(200),NO,Human-readable permission name
+core,permissions,table,module,4,character varying(100),NO,"Application module this permission belongs to (e.g., inventory, finance, sales)"
+core,permissions,table,description,5,text,YES,Optional description of what this permission grants
+core,permissions,table,created_at,6,timestamp with time zone,NO,Timestamp with timezone when the permission was created
+core,role_permissions,table,role_id,1,uuid,NO,Role receiving the permission (composite PK) → core.roles.id
+core,role_permissions,table,permission_id,2,uuid,NO,Permission being granted or denied (composite PK) → core.permissions.id
+core,role_permissions,table,effect,3,character varying(10),NO,"Whether this entry grants or denies the permission (allow, deny)"
+core,role_permissions,table,assigned_at,4,timestamp with time zone,NO,Timestamp with timezone when the permission was assigned to the role
+core,roles,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,roles,table,name,2,character varying(100),NO,"Unique human-readable role name (e.g., Admin, Warehouse Clerk)"
+core,roles,table,description,3,text,YES,Optional description of the role purpose and scope
+core,roles,table,is_system,4,boolean,NO,Whether this is a system-defined role that cannot be deleted
+core,roles,table,created_at,5,timestamp with time zone,NO,Timestamp with timezone when the role was created
+core,roles,table,updated_at,6,timestamp with time zone,NO,Timestamp with timezone when the role was last modified
+core,sequences,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,sequences,table,sequence_key,2,character varying(100),NO,"Unique key identifying the sequence purpose (e.g., SO, PO, INV)"
+core,sequences,table,prefix,3,character varying(20),NO,"String prefix prepended to the generated number (e.g., SO-, PO-)"
+core,sequences,table,current_value,4,integer,NO,Last issued numeric value in the sequence
+core,sequences,table,padding,5,integer,NO,"Zero-padding width for the numeric portion (default: 5, e.g., 00001)"
+core,sequences,table,description,6,character varying(255),YES,Human-readable description of what this sequence is used for
+core,sequences,table,entity_id,7,uuid,YES,Optional entity UUID to scope the sequence per entity
+core,sequences,table,created_at,8,timestamp with time zone,NO,Timestamp with timezone when the sequence was created
+core,sequences,table,updated_at,9,timestamp with time zone,NO,Timestamp with timezone when the sequence was last modified
+core,system_config,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,system_config,table,config,2,jsonb,NO,JSONB object containing all system-level configuration key-value pairs
+core,system_config,table,created_at,3,timestamp with time zone,NO,Timestamp with timezone when the config record was created
+core,system_config,table,updated_at,4,timestamp with time zone,NO,Timestamp with timezone when the config was last modified
+core,tjc_records,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,tjc_records,table,record_type,2,character varying(50),NO,"Type of the chained record (e.g., sales_order, purchase_order, journal)"
+core,tjc_records,table,record_id,3,uuid,NO,UUID of the source record being chained
+core,tjc_records,table,record_number,4,character varying(50),NO,Human-readable document number of the chained record
+core,tjc_records,table,parent_record_id,5,uuid,YES,UUID of the parent record in the transaction journey (NULL for chain roots)
+core,tjc_records,table,parent_record_type,6,character varying(50),YES,Record type of the parent in the chain (NULL for chain roots)
+core,tjc_records,table,chain_hash,7,character varying(128),NO,BLAKE3 hash combining previous_hash + payload_hash for chain integrity (128 hex chars)
+core,tjc_records,table,previous_hash,8,character varying(128),YES,BLAKE3 hash of the preceding record in the chain (NULL for the first record)
+core,tjc_records,table,payload_hash,9,character varying(128),NO,BLAKE3 hash of the record payload at time of chaining (128 hex chars)
+core,tjc_records,table,created_by,10,uuid,YES,UUID of the user who created this chain entry
+core,tjc_records,table,created_at,11,timestamp with time zone,NO,Timestamp with timezone when the chain entry was created
+core,user_preferences,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,user_preferences,table,user_id,2,uuid,NO,User these preferences belong to (one-to-one) → core.users.id
+core,user_preferences,table,date_format,3,character varying(20),NO,Preferred date display format (default: YYYY-MM-DD)
+core,user_preferences,table,number_thousands_separator,4,character varying(5),NO,Character used as thousands separator in numbers (default: comma)
+core,user_preferences,table,number_decimal_separator,5,character varying(5),NO,Character used as decimal separator in numbers (default: period)
+core,user_preferences,table,timezone,6,character varying(50),YES,IANA timezone identifier (default: Africa/Johannesburg)
+core,user_preferences,table,dashboard_layout,7,jsonb,YES,JSONB storing the user custom dashboard widget layout
+core,user_preferences,table,completed_tours,8,jsonb,YES,JSONB array of onboarding tour IDs the user has completed
+core,user_preferences,table,created_at,9,timestamp with time zone,NO,Timestamp with timezone when the preferences record was created
+core,user_preferences,table,updated_at,10,timestamp with time zone,NO,Timestamp with timezone when the preferences were last modified
+core,user_roles,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,user_roles,table,user_id,2,uuid,NO,User assigned to the role → core.users.id
+core,user_roles,table,role_id,3,uuid,NO,Role being assigned → core.roles.id
+core,user_roles,table,scope_type,4,character varying(30),YES,"Optional scope restriction type (entity, branch, warehouse, or NULL for global)"
+core,user_roles,table,scope_id,5,uuid,YES,UUID of the scoped org unit when scope_type is set
+core,user_roles,table,assigned_at,6,timestamp with time zone,NO,Timestamp with timezone when the role was assigned to the user
+core,users,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,users,table,email,2,character varying(255),NO,Unique login email address for the user
+core,users,table,password_hash,3,text,NO,Hashed password (never stored in plaintext)
+core,users,table,first_name,4,character varying(100),NO,User first name
+core,users,table,last_name,5,character varying(100),NO,User last name
+core,users,table,display_name,6,character varying(200),YES,Optional display name shown in the UI (overrides first + last)
+core,users,table,mobile,7,character varying(50),YES,User mobile phone number
+core,users,table,is_active,8,boolean,NO,Whether the user account is active and can log in
+core,users,table,failed_login_attempts,9,integer,NO,Count of consecutive failed login attempts since last successful login
+core,users,table,locked_until,10,timestamp with time zone,YES,Timestamp with timezone until which the account is locked due to failed attempts
+core,users,table,lockout_threshold,11,integer,NO,Number of failed attempts before the account is locked (default: 5)
+core,users,table,default_entity_id,12,uuid,YES,Default entity (company/branch) loaded on login
+core,users,table,default_branch_id,13,uuid,YES,Default branch loaded on login
+core,users,table,last_login_at,14,timestamp with time zone,YES,Timestamp with timezone of the most recent successful login
+core,users,table,password_changed_at,15,timestamp with time zone,YES,Timestamp with timezone when the password was last changed
+core,users,table,created_at,16,timestamp with time zone,NO,Timestamp with timezone when the user record was created
+core,users,table,updated_at,17,timestamp with time zone,NO,Timestamp with timezone when the user record was last modified
+core,webhook_deliveries,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,webhook_deliveries,table,event_id,2,uuid,NO,Webhook event this delivery attempt belongs to → core.webhook_events.id
+core,webhook_deliveries,table,attempt_number,3,integer,NO,Sequential attempt number for this event (1-based)
+core,webhook_deliveries,table,status_code,4,integer,YES,HTTP status code returned by the remote endpoint (NULL if connection failed)
+core,webhook_deliveries,table,response_body,5,text,YES,Response body returned by the remote endpoint (truncated for large responses)
+core,webhook_deliveries,table,duration_ms,6,integer,YES,Round-trip request duration in milliseconds
+core,webhook_deliveries,table,error_message,7,text,YES,"Error message if the delivery failed (timeout, DNS, connection refused, etc.)"
+core,webhook_deliveries,table,created_at,8,timestamp with time zone,NO,Timestamp with timezone when the delivery attempt was made
+core,webhook_events,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,webhook_events,table,subscription_id,2,uuid,NO,Webhook subscription this event is queued for → core.webhook_subscriptions.id
+core,webhook_events,table,event_type,3,character varying(100),NO,"Type of event (e.g., order.created, invoice.posted)"
+core,webhook_events,table,payload,4,jsonb,NO,JSONB event payload to be delivered
+core,webhook_events,table,status,5,character varying(20),NO,"Delivery status (pending, delivered, failed, dead_letter)"
+core,webhook_events,table,attempts,6,integer,NO,Number of delivery attempts made so far
+core,webhook_events,table,max_attempts,7,integer,NO,Maximum delivery attempts before moving to dead letter (default: 5)
+core,webhook_events,table,last_attempt_at,8,timestamp with time zone,YES,Timestamp with timezone of the most recent delivery attempt
+core,webhook_events,table,next_retry_at,9,timestamp with time zone,YES,Timestamp with timezone when the next retry should be attempted
+core,webhook_events,table,created_at,10,timestamp with time zone,NO,Timestamp with timezone when the event was queued
+core,webhook_subscriptions,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+core,webhook_subscriptions,table,entity_id,2,uuid,NO,Entity/branch owning this subscription → core.branches.id
+core,webhook_subscriptions,table,url,3,text,NO,HTTPS endpoint URL where webhook payloads are delivered
+core,webhook_subscriptions,table,signing_secret,4,text,NO,HMAC-SHA256 secret used to sign outgoing payloads for verification
+core,webhook_subscriptions,table,events,5,text[],NO,"Text array of event types this subscription listens for (e.g., {order.created,invoice.posted})"
+core,webhook_subscriptions,table,is_active,6,boolean,NO,Whether this subscription is actively receiving events
+core,webhook_subscriptions,table,description,7,character varying(255),YES,Optional human-readable description of the subscription purpose
+core,webhook_subscriptions,table,created_by,8,uuid,NO,User who created this subscription → core.users.id
+core,webhook_subscriptions,table,created_at,9,timestamp with time zone,NO,Timestamp with timezone when the subscription was created
+core,webhook_subscriptions,table,updated_at,10,timestamp with time zone,NO,Timestamp with timezone when the subscription was last modified
+core,webhook_subscriptions,table,deleted_at,11,timestamp with time zone,YES,Timestamp with timezone when the subscription was soft-deleted (NULL if active)
+crm,buying_groups,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+crm,buying_groups,table,code,2,character varying(20),NO,Unique short code for the buying group
+crm,buying_groups,table,name,3,character varying(255),NO,Name of the buying group
+crm,buying_groups,table,description,4,text,YES,Optional description of the buying group
+crm,buying_groups,table,discount_percentage,5,"numeric(5,2)",YES,"Default group discount percentage, precision 5 scale 2 (e.g., 10.50)"
+crm,buying_groups,table,is_active,6,boolean,NO,Whether this buying group is currently active
+crm,buying_groups,table,created_at,7,timestamp with time zone,NO,Timestamp with timezone when the buying group was created
+crm,buying_groups,table,updated_at,8,timestamp with time zone,NO,Timestamp with timezone when the buying group was last modified
+crm,contact_document_routing,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+crm,contact_document_routing,table,contact_id,2,uuid,NO,Contact this routing rule belongs to → crm.trading_partner_contacts.id
+crm,contact_document_routing,table,document_type,3,character varying(50),NO,"Document type to route (e.g., invoice, purchase_order, statement)"
+crm,contact_document_routing,table,delivery_method,4,character varying(30),NO,"How the document is delivered (email, portal, print)"
+crm,contact_document_routing,table,email_address,5,character varying(255),YES,Override email address for delivery (defaults to contact email if NULL)
+crm,contact_document_routing,table,is_active,6,boolean,NO,Whether this routing rule is currently active
+crm,contact_document_routing,table,deleted_at,7,timestamp with time zone,YES,Timestamp with timezone when the routing rule was soft-deleted (NULL if active)
+crm,contact_document_routing,table,created_at,8,timestamp with time zone,NO,Timestamp with timezone when the routing rule was created
+crm,contact_document_routing,table,updated_at,9,timestamp with time zone,NO,Timestamp with timezone when the routing rule was last modified
+crm,customer_buying_groups,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+crm,customer_buying_groups,table,customer_id,2,uuid,NO,Customer linked to the buying group → crm.customers.id
+crm,customer_buying_groups,table,buying_group_id,3,uuid,NO,Buying group the customer is a member of → crm.buying_groups.id
+crm,customer_buying_groups,table,joined_at,4,timestamp with time zone,NO,Timestamp with timezone when the customer joined the buying group
+crm,customer_buying_groups,table,created_at,5,timestamp with time zone,NO,Timestamp with timezone when the junction record was created
+crm,customer_delivery_addresses,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+crm,customer_delivery_addresses,table,customer_id,2,uuid,NO,Customer this delivery address belongs to → crm.customers.id
+crm,customer_delivery_addresses,table,address_code,3,character varying(30),NO,"Short code identifying the delivery address (e.g., MAIN, WH01)"
+crm,customer_delivery_addresses,table,address_name,4,character varying(255),NO,"Descriptive name for the delivery address (e.g., Head Office, Warehouse 1)"
+crm,customer_delivery_addresses,table,address_line1,5,character varying(255),NO,First line of the street address
+crm,customer_delivery_addresses,table,address_line2,6,character varying(255),YES,Second line of the street address (optional)
+crm,customer_delivery_addresses,table,city,7,character varying(100),YES,City or town
+crm,customer_delivery_addresses,table,province,8,character varying(100),YES,Province or state
+crm,customer_delivery_addresses,table,postal_code,9,character varying(20),YES,Postal or ZIP code
+crm,customer_delivery_addresses,table,country,10,character varying(100),YES,Country name (default: South Africa)
+crm,customer_delivery_addresses,table,contact_name,11,character varying(255),YES,Name of the on-site delivery contact
+crm,customer_delivery_addresses,table,contact_phone,12,character varying(50),YES,Phone number of the on-site delivery contact
+crm,customer_delivery_addresses,table,is_default,13,boolean,NO,Whether this is the default delivery address for the customer
+crm,customer_delivery_addresses,table,is_active,14,boolean,NO,Whether this delivery address is currently active
+crm,customer_delivery_addresses,table,deleted_at,15,timestamp with time zone,YES,Timestamp with timezone when the address was soft-deleted (NULL if active)
+crm,customer_delivery_addresses,table,created_at,16,timestamp with time zone,NO,Timestamp with timezone when the address was created
+crm,customer_delivery_addresses,table,updated_at,17,timestamp with time zone,NO,Timestamp with timezone when the address was last modified
+crm,customer_groups,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+crm,customer_groups,table,code,2,character varying(30),NO,Unique short code for the customer group
+crm,customer_groups,table,name,3,character varying(255),NO,Name of the customer group
+crm,customer_groups,table,description,4,text,YES,Optional description of the customer group purpose
+crm,customer_groups,table,is_active,5,boolean,NO,Whether this customer group is currently active
+crm,customer_groups,table,created_at,6,timestamp with time zone,NO,Timestamp with timezone when the group was created
+crm,customer_groups,table,updated_at,7,timestamp with time zone,NO,Timestamp with timezone when the group was last modified
+crm,customers,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+crm,customers,table,code,2,character varying(20),NO,"Unique customer account code (e.g., CUST001)"
+crm,customers,table,name,3,character varying(255),NO,Registered legal name of the customer
+crm,customers,table,trading_name,4,character varying(255),YES,Trading-as name if different from the legal name
+crm,customers,table,email,5,character varying(255),YES,Primary email address for the customer account
+crm,customers,table,phone,6,character varying(50),YES,Primary phone number for the customer account
+crm,customers,table,vat_number,7,character varying(50),YES,South African VAT registration number
+crm,customers,table,registration_number,8,character varying(50),YES,Company registration number (CIPC)
+crm,customers,table,billing_address,9,text,YES,Default billing/invoicing address (free text)
+crm,customers,table,delivery_address,10,text,YES,Default delivery address (free text; see customer_delivery_addresses for multiple)
+crm,customers,table,credit_limit,11,"numeric(19,2)",YES,"Maximum outstanding credit allowed, precision 19 scale 2 (default: 0.00)"
+crm,customers,table,credit_control_behaviour,12,character varying(30),YES,"How to enforce the credit limit (hard_stop, warn, none)"
+crm,customers,table,payment_terms_days,13,character varying(10),YES,Deprecated — use payment_term_id instead; legacy payment terms in days
+crm,customers,table,payment_term_id,14,uuid,YES,Payment terms applied to this customer → finance.payment_terms.id
+crm,customers,table,customer_type,15,character varying(50),YES,"Classification of the customer (e.g., retailer, wholesaler, distributor)"
+crm,customers,table,contact_name,16,character varying(255),YES,Name of the primary contact person at the customer
+crm,customers,table,contact_email,17,character varying(255),YES,Email of the primary contact person at the customer
+crm,customers,table,contact_phone,18,character varying(50),YES,Phone of the primary contact person at the customer
+crm,customers,table,currency,19,character varying(3),YES,ISO 4217 transaction currency for the customer (default: ZAR)
+crm,customers,table,price_list_id,20,uuid,YES,UUID of the price list assigned to this customer
+crm,customers,table,invoicing_frequency,21,character varying(30),YES,"How often invoices are generated (per_dispatch, weekly, monthly)"
+crm,customers,table,is_active,22,boolean,NO,Whether the customer account is active
+crm,customers,table,notes,23,text,YES,Free-text internal notes about the customer
+crm,customers,table,customer_group_id,24,uuid,YES,Customer group for reporting/pricing → crm.customer_groups.id
+crm,customers,table,entity_id,25,uuid,YES,Entity/branch the customer belongs to → core.branches.id
+crm,customers,table,deleted_at,26,timestamp with time zone,YES,Timestamp with timezone when the customer was soft-deleted (NULL if active)
+crm,customers,table,created_at,27,timestamp with time zone,NO,Timestamp with timezone when the customer record was created
+crm,customers,table,updated_at,28,timestamp with time zone,NO,Timestamp with timezone when the customer record was last modified
+crm,trading_partner_contacts,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+crm,trading_partner_contacts,table,partner_type,2,character varying(20),NO,"Type of trading partner (customer, vendor)"
+crm,trading_partner_contacts,table,partner_id,3,uuid,NO,UUID of the customer or vendor this contact belongs to
+crm,trading_partner_contacts,table,first_name,4,character varying(100),NO,Contact first name
+crm,trading_partner_contacts,table,last_name,5,character varying(100),NO,Contact last name
+crm,trading_partner_contacts,table,email,6,character varying(255),YES,Contact email address
+crm,trading_partner_contacts,table,phone,7,character varying(50),YES,Contact landline phone number
+crm,trading_partner_contacts,table,mobile,8,character varying(50),YES,Contact mobile phone number
+crm,trading_partner_contacts,table,job_title,9,character varying(100),YES,"Contact job title or role (e.g., Procurement Manager)"
+crm,trading_partner_contacts,table,department,10,character varying(100),YES,"Department the contact works in (e.g., Accounts, Purchasing)"
+crm,trading_partner_contacts,table,is_primary,11,boolean,NO,Whether this is the primary contact for the trading partner
+crm,trading_partner_contacts,table,is_active,12,boolean,NO,Whether this contact is currently active
+crm,trading_partner_contacts,table,notes,13,text,YES,Free-text notes about the contact
+crm,trading_partner_contacts,table,deleted_at,14,timestamp with time zone,YES,Timestamp with timezone when the contact was soft-deleted (NULL if active)
+crm,trading_partner_contacts,table,created_at,15,timestamp with time zone,NO,Timestamp with timezone when the contact was created
+crm,trading_partner_contacts,table,updated_at,16,timestamp with time zone,NO,Timestamp with timezone when the contact was last modified
+crm,vendor_banking_change_requests,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+crm,vendor_banking_change_requests,table,vendor_id,2,uuid,NO,Vendor whose banking details are being changed → crm.vendors.id
+crm,vendor_banking_change_requests,table,banking_detail_id,3,uuid,YES,Existing banking detail being modified (NULL for new additions) → crm.vendor_banking_details.id
+crm,vendor_banking_change_requests,table,change_type,4,character varying(20),NO,"Type of change requested (create, update, delete)"
+crm,vendor_banking_change_requests,table,old_values,5,text,YES,JSON snapshot of the banking detail values before the change
+crm,vendor_banking_change_requests,table,new_values,6,text,NO,JSON snapshot of the proposed new banking detail values
+crm,vendor_banking_change_requests,table,status,7,character varying(20),NO,"Approval workflow status (Pending, Approved, Rejected)"
+crm,vendor_banking_change_requests,table,requested_by,8,uuid,NO,User who initiated the change request → core.users.id
+crm,vendor_banking_change_requests,table,requested_at,9,timestamp with time zone,NO,Timestamp with timezone when the change was requested
+crm,vendor_banking_change_requests,table,approved_by,10,uuid,YES,User who approved the change (four-eyes principle) → core.users.id
+crm,vendor_banking_change_requests,table,approved_at,11,timestamp with time zone,YES,Timestamp with timezone when the change was approved
+crm,vendor_banking_change_requests,table,rejected_by,12,uuid,YES,User who rejected the change request → core.users.id
+crm,vendor_banking_change_requests,table,rejected_at,13,timestamp with time zone,YES,Timestamp with timezone when the change was rejected
+crm,vendor_banking_change_requests,table,rejection_reason,14,text,YES,Reason provided by the rejector for declining the change
+crm,vendor_banking_change_requests,table,created_at,15,timestamp with time zone,NO,Timestamp with timezone when the change request record was created
+crm,vendor_banking_change_requests,table,updated_at,16,timestamp with time zone,NO,Timestamp with timezone when the change request was last modified
+crm,vendor_banking_details,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+crm,vendor_banking_details,table,vendor_id,2,uuid,NO,Vendor this banking detail belongs to → crm.vendors.id
+crm,vendor_banking_details,table,bank_name,3,character varying(100),NO,"Name of the bank (e.g., Standard Bank, FNB, ABSA)"
+crm,vendor_banking_details,table,account_number,4,character varying(50),NO,Bank account number
+crm,vendor_banking_details,table,branch_code,5,character varying(20),NO,Bank branch or universal code
+crm,vendor_banking_details,table,account_type,6,character varying(30),YES,"Bank account type (Current, Savings, Cheque, etc.)"
+crm,vendor_banking_details,table,swift_code,7,character varying(20),YES,SWIFT/BIC code for international payments
+crm,vendor_banking_details,table,is_primary,8,boolean,NO,Whether this is the default banking detail for payments
+crm,vendor_banking_details,table,is_active,9,boolean,NO,Whether this banking detail is currently active
+crm,vendor_banking_details,table,created_at,10,timestamp with time zone,NO,Timestamp with timezone when the banking detail was created
+crm,vendor_banking_details,table,updated_at,11,timestamp with time zone,NO,Timestamp with timezone when the banking detail was last modified
+crm,vendor_groups,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+crm,vendor_groups,table,code,2,character varying(30),NO,Unique short code for the vendor group
+crm,vendor_groups,table,name,3,character varying(255),NO,Name of the vendor group
+crm,vendor_groups,table,description,4,text,YES,Optional description of the vendor group purpose
+crm,vendor_groups,table,is_active,5,boolean,NO,Whether this vendor group is currently active
+crm,vendor_groups,table,created_at,6,timestamp with time zone,NO,Timestamp with timezone when the group was created
+crm,vendor_groups,table,updated_at,7,timestamp with time zone,NO,Timestamp with timezone when the group was last modified
+crm,vendors,table,id,1,uuid,NO,"Primary key (UUID, auto-generated)"
+crm,vendors,table,code,2,character varying(20),NO,"Unique vendor/supplier account code (e.g., VEND001)"
+crm,vendors,table,name,3,character varying(255),NO,Registered legal name of the vendor
+crm,vendors,table,trading_name,4,character varying(255),YES,Trading-as name if different from the legal name
+crm,vendors,table,email,5,character varying(255),YES,Primary email address for the vendor account
+crm,vendors,table,phone,6,character varying(50),YES,Primary phone number for the vendor account
+crm,vendors,table,vat_number,7,character varying(50),YES,South African VAT registration number
+crm,vendors,table,registration_number,8,character varying(50),YES,Company registration number (CIPC)
+crm,vendors,table,bank_name,9,character varying(100),YES,Primary bank name (legacy; prefer vendor_banking_details table)
+crm,vendors,table,bank_account_number,10,character varying(50),YES,Primary bank account number (legacy; prefer vendor_banking_details table)
+crm,vendors,table,bank_branch_code,11,character varying(20),YES,Primary bank branch/universal code (legacy; prefer vendor_banking_details table)
+crm,vendors,table,bank_account_type,12,character varying(30),YES,Primary bank account type (legacy; prefer vendor_banking_details table)
+crm,vendors,table,address,13,text,YES,Physical/postal address of the vendor
+crm,vendors,table,contact_name,14,character varying(255),YES,Name of the primary contact person at the vendor
+crm,vendors,table,contact_email,15,character varying(255),YES,Email of the primary contact person at the vendor
+crm,vendors,table,contact_phone,16,character varying(50),YES,Phone of the primary contact person at the vendor
+crm,vendors,table,payment_terms_days,17,character varying(10),YES,Deprecated — use payment_term_id instead; legacy payment terms in days
+crm,vendors,table,payment_term_id,18,uuid,YES,Payment terms applied to this vendor → finance.payment_terms.id
+crm,vendors,table,currency,19,character varying(3),YES,ISO 4217 transaction currency for the vendor (default: ZAR)
+crm,vendors,table,categories,20,text[],YES,Text array of product/service categories the vendor supplies
+crm,vendors,table,vendor_group_id,21,uuid,YES,Vendor group for reporting/classification → crm.vendor_groups.id
+crm,vendors,table,is_active,22,boolean,NO,Whether the vendor account is active
+crm,vendors,table,notes,23,text,YES,Free-text internal notes about the vendor
+crm,vendors,table,deleted_at,24,timestamp with time zone,YES,Timestamp with timezone when the vendor was soft-deleted (NULL if active)
+crm,vendors,table,created_at,25,timestamp with time zone,NO,Timestamp with timezone when the vendor record was created
+crm,vendors,table,updated_at,26,timestamp with time zone,NO,Timestamp with timezone when the vendor record was last modified
+finance,account_groups,table,id,1,uuid,NO,Primary key (UUID)
+finance,account_groups,table,entity_id,2,uuid,NO,Owning entity/branch → core.branches.id
+finance,account_groups,table,code,3,character varying(50),NO,Unique account group code within entity
+finance,account_groups,table,name,4,character varying(200),NO,Display name for the account group
+finance,account_groups,table,description,5,character varying(500),YES,Optional description of the account group
+finance,account_groups,table,account_type,6,character varying(50),NO,"Financial statement classification (Asset, Liability, Equity, Revenue, Expense)"
+finance,account_groups,table,sort_order,7,integer,NO,Display sort order within account type
+finance,account_groups,table,is_active,8,boolean,NO,Whether the account group is active
+finance,account_groups,table,created_at,9,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,account_groups,table,updated_at,10,timestamp with time zone,NO,Row last-update timestamp with timezone
+finance,accounting_periods,table,id,1,uuid,NO,Primary key (UUID)
+finance,accounting_periods,table,name,2,character varying(100),NO,Period display name (e.g. January 2026)
+finance,accounting_periods,table,code,3,character varying(20),NO,Unique period code (e.g. 2026-01)
+finance,accounting_periods,table,period_number,4,character varying(5),YES,"Period number within fiscal year (1-12, or 13 for audit period)"
+finance,accounting_periods,table,sequence_number,5,smallint,YES,Sequential position within fiscal year (1-13)
+finance,accounting_periods,table,is_audit_period,6,character varying(5),YES,Whether this is a Period 13 audit/adjustment period (true/false as string)
+finance,accounting_periods,table,start_date,7,date,NO,First day of the accounting period
+finance,accounting_periods,table,end_date,8,date,NO,Last day of the accounting period
+finance,accounting_periods,table,status,9,character varying(20),NO,"Period lifecycle status (Not yet Open, Open, Soft-Closed, Pending-Seal, Sealed)"
+finance,accounting_periods,table,fiscal_year,10,character varying(10),NO,Fiscal year label string (e.g. 2026)
+finance,accounting_periods,table,fiscal_year_id,11,uuid,YES,Parent fiscal year → finance.fiscal_years.id
+finance,accounting_periods,table,soft_closed_by,12,uuid,YES,User who soft-closed the period
+finance,accounting_periods,table,soft_closed_at,13,timestamp with time zone,YES,Timestamp with timezone when the period was soft-closed
+finance,accounting_periods,table,hard_closed_by,14,uuid,YES,User who hard-closed the period
+finance,accounting_periods,table,hard_closed_at,15,timestamp with time zone,YES,Timestamp with timezone when the period was hard-closed
+finance,accounting_periods,table,seal_first_authoriser,16,uuid,YES,First authoriser for dual-authorisation seal
+finance,accounting_periods,table,seal_first_authorised_at,17,timestamp with time zone,YES,Timestamp with timezone of first seal authorisation
+finance,accounting_periods,table,seal_second_authoriser,18,uuid,YES,Second authoriser for dual-authorisation seal
+finance,accounting_periods,table,seal_second_authorised_at,19,timestamp with time zone,YES,Timestamp with timezone of second seal authorisation
+finance,accounting_periods,table,created_at,20,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,accounting_periods,table,updated_at,21,timestamp with time zone,NO,Row last-update timestamp with timezone
+finance,ap_accounting_setup,table,id,1,uuid,NO,Primary key (UUID)
+finance,ap_accounting_setup,table,entity_id,2,uuid,NO,Entity this AP setup applies to (one row per entity) → core.branches.id
+finance,ap_accounting_setup,table,payables_control,3,uuid,NO,AP control account (Trade Creditors) → finance.gl_accounts.id
+finance,ap_accounting_setup,table,purchase_accrual,4,uuid,NO,Purchase accrual (GRN clearing) account → finance.gl_accounts.id
+finance,ap_accounting_setup,table,vat_input_account,5,uuid,NO,Input VAT account for purchase tax → finance.gl_accounts.id
+finance,ap_accounting_setup,table,discount_received_account,6,uuid,NO,Discount received income account → finance.gl_accounts.id
+finance,ap_accounting_setup,table,purchase_price_variance,7,uuid,NO,Purchase price variance (PPV) account → finance.gl_accounts.id
+finance,ap_accounting_setup,table,freight_accrual,8,uuid,NO,Freight accrual account → finance.gl_accounts.id
+finance,ap_accounting_setup,table,freight_variance,9,uuid,NO,Freight variance account → finance.gl_accounts.id
+finance,ap_accounting_setup,table,extra_cost_1_account,10,uuid,NO,Extra cost 1 accrual account → finance.gl_accounts.id
+finance,ap_accounting_setup,table,extra_cost_2_account,11,uuid,NO,Extra cost 2 accrual account → finance.gl_accounts.id
+finance,ap_accounting_setup,table,extra_cost_3_account,12,uuid,NO,Extra cost 3 accrual account → finance.gl_accounts.id
+finance,ap_accounting_setup,table,extra_cost_4_account,13,uuid,NO,Extra cost 4 accrual account → finance.gl_accounts.id
+finance,ap_accounting_setup,table,extra_cost_5_account,14,uuid,NO,Extra cost 5 accrual account → finance.gl_accounts.id
+finance,ap_accounting_setup,table,extra_cost_variance_1,15,uuid,NO,Extra cost 1 variance account → finance.gl_accounts.id
+finance,ap_accounting_setup,table,extra_cost_variance_2,16,uuid,NO,Extra cost 2 variance account → finance.gl_accounts.id
+finance,ap_accounting_setup,table,extra_cost_variance_3,17,uuid,NO,Extra cost 3 variance account → finance.gl_accounts.id
+finance,ap_accounting_setup,table,extra_cost_variance_4,18,uuid,NO,Extra cost 4 variance account → finance.gl_accounts.id
+finance,ap_accounting_setup,table,extra_cost_variance_5,19,uuid,NO,Extra cost 5 variance account → finance.gl_accounts.id
+finance,ap_accounting_setup,table,returned_goods_payable,20,uuid,NO,Returned goods payable account → finance.gl_accounts.id
+finance,ap_accounting_setup,table,returned_goods_variance,21,uuid,NO,Returned goods variance account → finance.gl_accounts.id
+finance,ap_accounting_setup,table,foreign_exchange_gain_loss,22,uuid,NO,Realised FX gain/loss account for AP → finance.gl_accounts.id
+finance,ap_accounting_setup,table,rounding_account,23,uuid,NO,Rounding differences account → finance.gl_accounts.id
+finance,ap_accounting_setup,table,withholding_tax_payable,24,uuid,NO,Withholding tax payable account → finance.gl_accounts.id
+finance,ap_accounting_setup,table,extra_cost_label_1,25,character varying(100),YES,Custom label for extra cost 1 (default: Extra Cost 1)
+finance,ap_accounting_setup,table,extra_cost_label_2,26,character varying(100),YES,Custom label for extra cost 2 (default: Extra Cost 2)
+finance,ap_accounting_setup,table,extra_cost_label_3,27,character varying(100),YES,Custom label for extra cost 3 (default: Extra Cost 3)
+finance,ap_accounting_setup,table,extra_cost_label_4,28,character varying(100),YES,Custom label for extra cost 4 (default: Extra Cost 4)
+finance,ap_accounting_setup,table,extra_cost_label_5,29,character varying(100),YES,Custom label for extra cost 5 (default: Extra Cost 5)
+finance,ap_accounting_setup,table,created_by,30,uuid,YES,User who created the setup → core.users.id
+finance,ap_accounting_setup,table,updated_by,31,uuid,YES,User who last updated the setup → core.users.id
+finance,ap_accounting_setup,table,created_at,32,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,ap_accounting_setup,table,updated_at,33,timestamp with time zone,NO,Row last-update timestamp with timezone
+finance,ar_accounting_setup,table,id,1,uuid,NO,Primary key (UUID)
+finance,ar_accounting_setup,table,entity_id,2,uuid,NO,Entity this AR setup applies to (one row per entity) → core.branches.id
+finance,ar_accounting_setup,table,receivables_control,3,uuid,NO,AR control account (Trade Debtors) → finance.gl_accounts.id
+finance,ar_accounting_setup,table,revenue_account,4,uuid,NO,Default revenue account for sales → finance.gl_accounts.id
+finance,ar_accounting_setup,table,vat_output_account,5,uuid,NO,Output VAT account for sales tax → finance.gl_accounts.id
+finance,ar_accounting_setup,table,discount_allowed_account,6,uuid,NO,Discount allowed expense account → finance.gl_accounts.id
+finance,ar_accounting_setup,table,bad_debt_expense,7,uuid,NO,Bad debt write-off expense account → finance.gl_accounts.id
+finance,ar_accounting_setup,table,doubtful_debt_provision,8,uuid,NO,Provision for doubtful debts account → finance.gl_accounts.id
+finance,ar_accounting_setup,table,interest_charged_revenue,9,uuid,NO,Interest charged on overdue accounts revenue → finance.gl_accounts.id
+finance,ar_accounting_setup,table,deposit_liability,10,uuid,NO,Customer deposit liability account → finance.gl_accounts.id
+finance,ar_accounting_setup,table,unearned_revenue,11,uuid,NO,Unearned/deferred revenue account → finance.gl_accounts.id
+finance,ar_accounting_setup,table,sales_return_account,12,uuid,NO,Sales returns account → finance.gl_accounts.id
+finance,ar_accounting_setup,table,freight_revenue_account,13,uuid,NO,Freight/delivery revenue account → finance.gl_accounts.id
+finance,ar_accounting_setup,table,foreign_exchange_gain_loss,14,uuid,NO,Realised FX gain/loss account for AR → finance.gl_accounts.id
+finance,ar_accounting_setup,table,rounding_account,15,uuid,NO,Rounding differences account → finance.gl_accounts.id
+finance,ar_accounting_setup,table,write_off_account,16,uuid,NO,Small balance write-off account → finance.gl_accounts.id
+finance,ar_accounting_setup,table,customer_on_account,17,uuid,YES,Customer on-account (unapplied receipts) account → finance.gl_accounts.id
+finance,ar_accounting_setup,table,created_by,18,uuid,YES,User who created the setup → core.users.id
+finance,ar_accounting_setup,table,updated_by,19,uuid,YES,User who last updated the setup → core.users.id
+finance,ar_accounting_setup,table,created_at,20,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,ar_accounting_setup,table,updated_at,21,timestamp with time zone,NO,Row last-update timestamp with timezone
+finance,assets_accounting_setup,table,id,1,uuid,NO,Primary key (UUID)
+finance,assets_accounting_setup,table,entity_id,2,uuid,NO,Entity this asset accounting setup applies to (one row per entity) → core.branches.id
+finance,assets_accounting_setup,table,under_insurance_factor,3,"numeric(7,4)",NO,"Under-insurance threshold factor: asset flagged when sum_insured < NBV * factor, Decimal(7,4). Default 1.0000"
+finance,assets_accounting_setup,table,stale_cip_threshold_days,4,integer,NO,Number of days before a CIP (Capital in Progress) item is flagged as stale (default 180)
+finance,assets_accounting_setup,table,default_asset_gl_account_id,5,uuid,YES,Entity-level default: asset cost GL account (fallback when class does not override)
+finance,assets_accounting_setup,table,default_depreciation_expense_account_id,6,uuid,YES,Entity-level default: depreciation expense GL account
+finance,assets_accounting_setup,table,default_accumulated_depreciation_account_id,7,uuid,YES,Entity-level default: accumulated depreciation GL account
+finance,assets_accounting_setup,table,default_impairment_expense_account_id,8,uuid,YES,Entity-level default: IAS 36 impairment expense GL account
+finance,assets_accounting_setup,table,default_impairment_reversal_account_id,9,uuid,YES,Entity-level default: IAS 36 impairment reversal GL account
+finance,assets_accounting_setup,table,default_revaluation_reserve_account_id,10,uuid,YES,Entity-level default: IAS 16 revaluation reserve (equity) GL account
+finance,assets_accounting_setup,table,default_revaluation_loss_account_id,11,uuid,YES,Entity-level default: revaluation loss (P&L) GL account
+finance,assets_accounting_setup,table,default_revaluation_income_account_id,12,uuid,YES,Entity-level default: revaluation income (P&L) GL account
+finance,assets_accounting_setup,table,default_cip_gl_account_id,13,uuid,YES,Entity-level default: Capital in Progress (CIP) GL account
+finance,assets_accounting_setup,table,default_capex_accrual_gl_account_id,14,uuid,YES,Entity-level default: capex accrual GL account
+finance,assets_accounting_setup,table,default_capex_variance_gl_account_id,15,uuid,YES,Entity-level default: capex variance GL account (used when expense_to_variance policy is active)
+finance,assets_accounting_setup,table,capex_variance_policy,16,character varying(30),YES,"Capex variance posting policy (capitalise_to_cip, expense_to_variance)"
+finance,assets_accounting_setup,table,default_intercompany_receivable_account_id,17,uuid,YES,Entity-level default: intercompany receivable GL account for inter-entity asset transfers
+finance,assets_accounting_setup,table,default_intercompany_payable_account_id,18,uuid,YES,Entity-level default: intercompany payable GL account for inter-entity asset transfers
+finance,assets_accounting_setup,table,default_sale_of_assets_account_id,19,uuid,YES,Entity-level default: sale of assets clearing GL account
+finance,assets_accounting_setup,table,default_gain_on_disposal_account_id,20,uuid,YES,Entity-level default: gain on disposal of assets (P&L) GL account
+finance,assets_accounting_setup,table,default_loss_on_disposal_account_id,21,uuid,YES,Entity-level default: loss on disposal of assets (P&L) GL account
+finance,assets_accounting_setup,table,default_trade_in_clearing_account_id,22,uuid,YES,Entity-level default: trade-in clearing GL account
+finance,assets_accounting_setup,table,default_donation_expense_account_id,23,uuid,YES,Entity-level default: donation expense GL account (asset donated out)
+finance,assets_accounting_setup,table,default_insurance_claim_receivable_account_id,24,uuid,YES,Entity-level default: insurance claim receivable GL account
+finance,assets_accounting_setup,table,default_insurance_claim_income_account_id,25,uuid,YES,Entity-level default: insurance claim income GL account
+finance,assets_accounting_setup,table,default_donation_income_account_id,26,uuid,YES,Entity-level default: donation income GL account (asset received via donation)
+finance,assets_accounting_setup,table,default_prior_period_adjustment_account_id,27,uuid,YES,Entity-level default: prior period adjustment GL account (discovered assets)
+finance,assets_accounting_setup,table,default_opening_retained_earnings_account_id,28,uuid,YES,Entity-level default: opening retained earnings GL account (manual asset capture)
+finance,assets_accounting_setup,table,created_by,29,uuid,YES,User who created the setup → core.users.id
+finance,assets_accounting_setup,table,updated_by,30,uuid,YES,User who last updated the setup → core.users.id
+finance,assets_accounting_setup,table,created_at,31,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,assets_accounting_setup,table,updated_at,32,timestamp with time zone,NO,Row last-update timestamp with timezone
+finance,bank_accounts,table,id,1,uuid,NO,Primary key (UUID)
+finance,bank_accounts,table,bank_name,2,character varying(255),NO,"Name of the bank (e.g. FNB, Standard Bank, ABSA)"
+finance,bank_accounts,table,branch_code,3,character varying(20),NO,Bank branch/sort code
+finance,bank_accounts,table,account_number,4,character varying(50),NO,Unique bank account number
+finance,bank_accounts,table,account_name,5,character varying(255),YES,Account holder name or description
+finance,bank_accounts,table,gl_account_id,6,uuid,YES,Linked GL account for bank reconciliation
+finance,bank_accounts,table,currency,7,character varying(3),NO,"Account currency (ISO 4217, default ZAR)"
+finance,bank_accounts,table,opening_balance,8,"numeric(19,2)",YES,"Opening balance when the account was set up, Decimal(19,2)"
+finance,bank_accounts,table,current_balance,9,"numeric(19,2)",YES,"Current balance per JRNY records, Decimal(19,2)"
+finance,bank_accounts,table,is_active,10,character varying(5),YES,Whether the bank account is active (true/false as string)
+finance,bank_accounts,table,created_at,11,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,bank_accounts,table,updated_at,12,timestamp with time zone,NO,Row last-update timestamp with timezone
+finance,bank_statement_lines,table,id,1,uuid,NO,Primary key (UUID)
+finance,bank_statement_lines,table,statement_id,2,uuid,NO,Parent bank statement → finance.bank_statements.id
+finance,bank_statement_lines,table,line_number,3,character varying(10),NO,Sequence number within the statement
+finance,bank_statement_lines,table,transaction_date,4,date,NO,Date of the bank transaction
+finance,bank_statement_lines,table,description,5,character varying(500),NO,Bank transaction description
+finance,bank_statement_lines,table,reference,6,character varying(100),YES,Bank transaction reference
+finance,bank_statement_lines,table,debit,7,"numeric(19,2)",YES,"Debit (outflow) amount, Decimal(19,2)"
+finance,bank_statement_lines,table,credit,8,"numeric(19,2)",YES,"Credit (inflow) amount, Decimal(19,2)"
+finance,bank_statement_lines,table,balance,9,"numeric(19,2)",YES,"Running balance after this transaction, Decimal(19,2)"
+finance,bank_statement_lines,table,match_status,10,character varying(30),NO,"Reconciliation match status (e.g. Unmatched, Matched, Partial)"
+finance,bank_statement_lines,table,matched_to_id,11,uuid,YES,UUID of the matched payment/receipt
+finance,bank_statement_lines,table,matched_at,12,timestamp with time zone,YES,Timestamp with timezone when the line was matched
+finance,bank_statement_lines,table,created_at,13,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,bank_statements,table,id,1,uuid,NO,Primary key (UUID)
+finance,bank_statements,table,bank_account_id,2,uuid,NO,Bank account this statement belongs to
+finance,bank_statements,table,statement_date,3,date,NO,Date of the bank statement
+finance,bank_statements,table,file_name,4,character varying(255),NO,Original imported file name
+finance,bank_statements,table,opening_balance,5,"numeric(19,2)",YES,"Opening balance on the statement, Decimal(19,2)"
+finance,bank_statements,table,closing_balance,6,"numeric(19,2)",YES,"Closing balance on the statement, Decimal(19,2)"
+finance,bank_statements,table,line_count,7,character varying(10),YES,Number of transaction lines on the statement
+finance,bank_statements,table,status,8,character varying(30),NO,"Statement status (e.g. Imported, Reconciled, Locked)"
+finance,bank_statements,table,imported_by,9,uuid,YES,User who imported the statement
+finance,bank_statements,table,locked_at,10,timestamp with time zone,YES,Timestamp with timezone when the statement was locked
+finance,bank_statements,table,locked_by,11,uuid,YES,User who locked the statement
+finance,bank_statements,table,created_at,12,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,bank_statements,table,updated_at,13,timestamp with time zone,NO,Row last-update timestamp with timezone
+finance,budget_allocations,table,id,1,uuid,NO,Primary key (UUID)
+finance,budget_allocations,table,entity_id,2,uuid,NO,Owning entity → core.branches.id
+finance,budget_allocations,table,department_id,3,uuid,YES,Department (optional) for department-level budgets → core.org_units.id
+finance,budget_allocations,table,gl_account_id,4,uuid,NO,GL account this budget is allocated to → finance.gl_accounts.id
+finance,budget_allocations,table,fiscal_year_id,5,uuid,NO,Fiscal year for this allocation → finance.fiscal_years.id
+finance,budget_allocations,table,period_id,6,uuid,YES,Accounting period for period-level budgets (NULL = annual) → finance.accounting_periods.id
+finance,budget_allocations,table,budget_amount,7,"numeric(19,2)",NO,"Approved budget amount for this allocation, Decimal(19,2)"
+finance,budget_allocations,table,budget_currency,8,character varying(3),NO,"Budget currency (ISO 4217, default ZAR)"
+finance,budget_allocations,table,committed_spend,9,"numeric(19,2)",NO,"Running total of committed (ordered but not yet posted) spend, Decimal(19,2)"
+finance,budget_allocations,table,actual_spend,10,"numeric(19,2)",NO,"Running total of actual (posted) spend, Decimal(19,2)"
+finance,budget_allocations,table,description,11,text,YES,Budget allocation description/notes
+finance,budget_allocations,table,is_active,12,boolean,NO,Whether the allocation is active
+finance,budget_allocations,table,created_by,13,uuid,YES,User who created the allocation → core.users.id
+finance,budget_allocations,table,created_at,14,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,budget_allocations,table,updated_at,15,timestamp with time zone,NO,Row last-update timestamp with timezone
+finance,budget_variance_overrides,table,id,1,uuid,NO,Primary key (UUID)
+finance,budget_variance_overrides,table,budget_allocation_id,2,uuid,YES,Budget allocation being exceeded → finance.budget_allocations.id
+finance,budget_variance_overrides,table,source_document_type,3,character varying(50),NO,"Type of document that triggered the budget breach (PurchaseOrder, CapitalExpenditure, Expense)"
+finance,budget_variance_overrides,table,source_document_id,4,uuid,NO,UUID of the document that triggered the budget breach
+finance,budget_variance_overrides,table,source_document_number,5,character varying(100),YES,Human-readable number of the triggering document
+finance,budget_variance_overrides,table,entity_id,6,uuid,YES,Entity context → core.branches.id
+finance,budget_variance_overrides,table,department_id,7,uuid,YES,Department context → core.org_units.id
+finance,budget_variance_overrides,table,transaction_amount,8,"numeric(19,2)",NO,"Amount of the triggering transaction, Decimal(19,2)"
+finance,budget_variance_overrides,table,current_spend,9,"numeric(19,2)",NO,"Committed + actual spend at time of budget check, Decimal(19,2)"
+finance,budget_variance_overrides,table,budget_amount,10,"numeric(19,2)",NO,"Budget allocation amount at time of check, Decimal(19,2)"
+finance,budget_variance_overrides,table,variance_amount,11,"numeric(19,2)",NO,"Calculated variance: currentSpend + transactionAmount - budgetAmount, Decimal(19,2)"
+finance,budget_variance_overrides,table,variance_percentage,12,"numeric(7,2)",NO,"Calculated variance percentage: ((currentSpend + transactionAmount) / budgetAmount - 1) * 100, Decimal(7,2)"
+finance,budget_variance_overrides,table,reason,13,text,NO,Justification from the submitter for exceeding the budget
+finance,budget_variance_overrides,table,status,14,character varying(30),NO,"Override request status (e.g. Pending, Approved, Rejected)"
+finance,budget_variance_overrides,table,submitted_by,15,uuid,YES,User who submitted the override request → core.users.id
+finance,budget_variance_overrides,table,submitted_at,16,timestamp with time zone,YES,Timestamp with timezone when the override was submitted
+finance,budget_variance_overrides,table,approved_by,17,uuid,YES,User who approved the override → core.users.id
+finance,budget_variance_overrides,table,approved_at,18,timestamp with time zone,YES,Timestamp with timezone when the override was approved
+finance,budget_variance_overrides,table,rejected_by,19,uuid,YES,User who rejected the override → core.users.id
+finance,budget_variance_overrides,table,rejection_reason,20,text,YES,Reason for rejecting the override request
+finance,budget_variance_overrides,table,budget_hold_released,21,boolean,NO,Whether the budget hold has been released to allow the source document to proceed
+finance,budget_variance_overrides,table,created_at,22,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,budget_variance_overrides,table,updated_at,23,timestamp with time zone,NO,Row last-update timestamp with timezone
+finance,budget_variance_overrides,table,deleted_at,24,timestamp with time zone,YES,Soft-delete timestamp with timezone (NULL = active)
+finance,cashbook_accounting_setup,table,id,1,uuid,NO,Primary key (UUID)
+finance,cashbook_accounting_setup,table,entity_id,2,uuid,NO,Entity this cashbook setup applies to (one row per entity) → core.branches.id
+finance,cashbook_accounting_setup,table,bank_charges_expense,3,uuid,NO,Bank charges expense GL account → finance.gl_accounts.id
+finance,cashbook_accounting_setup,table,interest_earned_revenue,4,uuid,NO,Interest earned revenue GL account → finance.gl_accounts.id
+finance,cashbook_accounting_setup,table,interest_paid_expense,5,uuid,NO,Interest paid expense GL account → finance.gl_accounts.id
+finance,cashbook_accounting_setup,table,foreign_exchange_gain_loss,6,uuid,NO,Realised FX gain/loss account for cashbook → finance.gl_accounts.id
+finance,cashbook_accounting_setup,table,cash_in_transit,7,uuid,NO,Cash in transit GL account → finance.gl_accounts.id
+finance,cashbook_accounting_setup,table,rounding_account,8,uuid,NO,Rounding differences GL account → finance.gl_accounts.id
+finance,cashbook_accounting_setup,table,suspense_account,9,uuid,NO,Suspense/clearing GL account → finance.gl_accounts.id
+finance,cashbook_accounting_setup,table,petty_class_expense,10,uuid,NO,Petty cash expense GL account → finance.gl_accounts.id
+finance,cashbook_accounting_setup,table,created_by,11,uuid,YES,User who created the setup → core.users.id
+finance,cashbook_accounting_setup,table,updated_by,12,uuid,YES,User who last updated the setup → core.users.id
+finance,cashbook_accounting_setup,table,created_at,13,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,cashbook_accounting_setup,table,updated_at,14,timestamp with time zone,NO,Row last-update timestamp with timezone
+finance,credit_note_lines,table,id,1,uuid,NO,Primary key (UUID)
+finance,credit_note_lines,table,credit_note_id,2,uuid,NO,Parent credit note → finance.credit_notes.id
+finance,credit_note_lines,table,line_number,3,character varying(10),NO,Sequence number within the credit note
+finance,credit_note_lines,table,description,4,character varying(500),NO,Line item description
+finance,credit_note_lines,table,quantity,5,"numeric(19,4)",NO,"Quantity credited, Decimal(19,4)"
+finance,credit_note_lines,table,unit_price,6,"numeric(19,2)",NO,"Unit price excl. VAT, Decimal(19,2)"
+finance,credit_note_lines,table,vat_rate,7,"numeric(5,2)",NO,"VAT rate applied as percentage (e.g. 15.00), Decimal(5,2)"
+finance,credit_note_lines,table,line_total,8,"numeric(19,2)",NO,"Line total excl. VAT, Decimal(19,2)"
+finance,credit_note_lines,table,vat_amount,9,"numeric(19,2)",NO,"VAT amount for this line, Decimal(19,2)"
+finance,credit_note_lines,table,line_total_incl_vat,10,"numeric(19,2)",NO,"Line total incl. VAT, Decimal(19,2)"
+finance,credit_note_lines,table,unit_price_tc,11,"numeric(19,2)",YES,"Unit price in TC (Transaction Currency), Decimal(19,2)"
+finance,credit_note_lines,table,unit_price_oc,12,"numeric(19,2)",YES,"Unit price in OC (Operating/Functional Currency), Decimal(19,2)"
+finance,credit_note_lines,table,unit_price_gc,13,"numeric(19,2)",YES,"Unit price in GC (Group/Reporting Currency), Decimal(19,2)"
+finance,credit_note_lines,table,line_total_tc,14,"numeric(19,2)",YES,"Line total in TC (Transaction Currency), Decimal(19,2)"
+finance,credit_note_lines,table,line_total_oc,15,"numeric(19,2)",YES,"Line total in OC (Operating/Functional Currency), Decimal(19,2)"
+finance,credit_note_lines,table,line_total_gc,16,"numeric(19,2)",YES,"Line total in GC (Group/Reporting Currency), Decimal(19,2)"
+finance,credit_note_lines,table,vat_amount_tc,17,"numeric(19,2)",YES,"VAT amount in TC (Transaction Currency), Decimal(19,2)"
+finance,credit_note_lines,table,vat_amount_oc,18,"numeric(19,2)",YES,"VAT amount in OC (Operating/Functional Currency), Decimal(19,2)"
+finance,credit_note_lines,table,vat_amount_gc,19,"numeric(19,2)",YES,"VAT amount in GC (Group/Reporting Currency), Decimal(19,2)"
+finance,credit_note_lines,table,tax_code_id,20,uuid,YES,Tax code used for rate lookback
+finance,credit_note_lines,table,tax_code,21,character varying(20),YES,"Tax code string (e.g. STD, ZER, EXE)"
+finance,credit_note_lines,table,rate_source,22,character varying(500),YES,Audit trail: where the VAT rate came from
+finance,credit_note_lines,table,original_invoice_date,23,date,YES,Original invoice date used for VAT rate lookback
+finance,credit_note_lines,table,created_at,24,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,credit_notes,table,id,1,uuid,NO,Primary key (UUID)
+finance,credit_notes,table,credit_note_number,2,character varying(30),NO,Unique human-readable credit note number
+finance,credit_notes,table,customer_id,3,uuid,NO,Customer the credit note is issued to → crm.customers.id
+finance,credit_notes,table,customer_name,4,character varying(255),NO,Denormalised customer name at time of credit note creation
+finance,credit_notes,table,invoice_id,5,uuid,YES,Original invoice being credited (if applicable)
+finance,credit_notes,table,invoice_number,6,character varying(30),YES,Denormalised original invoice number
+finance,credit_notes,table,credit_note_date,7,date,NO,Date of the credit note
+finance,credit_notes,table,subtotal,8,"numeric(19,2)",NO,"Credit note subtotal excl. VAT, Decimal(19,2)"
+finance,credit_notes,table,vat_total,9,"numeric(19,2)",NO,"Total VAT amount, Decimal(19,2)"
+finance,credit_notes,table,amount,10,"numeric(19,2)",NO,"Credit note total amount incl. VAT, Decimal(19,2)"
+finance,credit_notes,table,reason,11,character varying(255),YES,Reason for the credit note
+finance,credit_notes,table,status,12,character varying(30),NO,"Credit note status (e.g. Pending Approval, Approved, Rejected, Posted)"
+finance,credit_notes,table,currency,13,character varying(3),NO,"Credit note currency (ISO 4217, default ZAR)"
+finance,credit_notes,table,rate_tc_to_oc,14,"numeric(18,8)",YES,"Exchange rate from TC to OC, Decimal(18,8)"
+finance,credit_notes,table,rate_tc_to_gc,15,"numeric(18,8)",YES,"Exchange rate from TC to GC, Decimal(18,8)"
+finance,credit_notes,table,subtotal_tc,16,"numeric(19,2)",YES,"Subtotal in TC (Transaction Currency), Decimal(19,2)"
+finance,credit_notes,table,subtotal_oc,17,"numeric(19,2)",YES,"Subtotal in OC (Operating/Functional Currency), Decimal(19,2)"
+finance,credit_notes,table,subtotal_gc,18,"numeric(19,2)",YES,"Subtotal in GC (Group/Reporting Currency), Decimal(19,2)"
+finance,credit_notes,table,vat_total_tc,19,"numeric(19,2)",YES,"VAT total in TC (Transaction Currency), Decimal(19,2)"
+finance,credit_notes,table,vat_total_oc,20,"numeric(19,2)",YES,"VAT total in OC (Operating/Functional Currency), Decimal(19,2)"
+finance,credit_notes,table,vat_total_gc,21,"numeric(19,2)",YES,"VAT total in GC (Group/Reporting Currency), Decimal(19,2)"
+finance,credit_notes,table,total_tc,22,"numeric(19,2)",YES,"Credit note total in TC (Transaction Currency), Decimal(19,2)"
+finance,credit_notes,table,total_oc,23,"numeric(19,2)",YES,"Credit note total in OC (Operating/Functional Currency), Decimal(19,2)"
+finance,credit_notes,table,total_gc,24,"numeric(19,2)",YES,"Credit note total in GC (Group/Reporting Currency), Decimal(19,2)"
+finance,credit_notes,table,notes,25,text,YES,Free-text notes
+finance,credit_notes,table,created_by,26,uuid,YES,User who created the credit note
+finance,credit_notes,table,created_by_name,27,character varying(255),YES,Denormalised name of the user who created the credit note
+finance,credit_notes,table,approved_by,28,uuid,YES,User who approved the credit note
+finance,credit_notes,table,approved_by_name,29,character varying(255),YES,Denormalised name of the approver
+finance,credit_notes,table,approved_at,30,timestamp with time zone,YES,Timestamp with timezone when the credit note was approved
+finance,credit_notes,table,rejected_by,31,uuid,YES,User who rejected the credit note
+finance,credit_notes,table,rejected_by_name,32,character varying(255),YES,Denormalised name of the rejector
+finance,credit_notes,table,rejected_at,33,timestamp with time zone,YES,Timestamp with timezone when the credit note was rejected
+finance,credit_notes,table,rejection_reason,34,text,YES,Reason for rejection
+finance,credit_notes,table,journal_batch_id,35,uuid,YES,GL journal batch created when credit note was posted
+finance,credit_notes,table,branch_id,36,uuid,YES,Branch for org-unit scoping and branch-level GL dimension → core.branches.id
+finance,credit_notes,table,payment_term_id,37,uuid,YES,Payment term (Category C: IMMEDIATE term auto-assigned) → finance.payment_terms.id
+finance,credit_notes,table,due_date,38,date,YES,Due date (always equals credit_note_date for IMMEDIATE terms)
+finance,credit_notes,table,settlement_date,39,date,YES,Settlement discount date (always NULL for credit notes)
+finance,credit_notes,table,settlement_discount_percent,40,"numeric(5,2)",YES,"Settlement discount percentage (always NULL for credit notes), Decimal(5,2)"
+finance,credit_notes,table,created_at,41,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,credit_notes,table,updated_at,42,timestamp with time zone,NO,Row last-update timestamp with timezone
+finance,currencies,table,id,1,uuid,NO,Primary key (UUID)
+finance,currencies,table,code,2,character varying(3),NO,"ISO 4217 currency code (e.g. ZAR, USD, EUR)"
+finance,currencies,table,name,3,character varying(100),NO,Full currency name (e.g. South African Rand)
+finance,currencies,table,symbol,4,character varying(5),YES,"Display symbol (e.g. R, $, EUR)"
+finance,currencies,table,decimal_places,5,integer,YES,Number of decimal places for this currency (default 2)
+finance,currencies,table,is_base,6,boolean,YES,Whether this is the base/functional currency for the organisation
+finance,currencies,table,is_active,7,boolean,YES,Whether the currency is available for selection
+finance,currencies,table,created_at,8,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,currencies,table,updated_at,9,timestamp with time zone,NO,Row last-update timestamp with timezone
+finance,custom_dimension_members,table,id,1,uuid,NO,Primary key (UUID)
+finance,custom_dimension_members,table,dimension_type_id,2,uuid,NO,Parent custom dimension type → finance.dimension_types.id
+finance,custom_dimension_members,table,entity_id,3,uuid,YES,Owning entity → core.org_units.id
+finance,custom_dimension_members,table,code,4,character varying(50),NO,Unique member code within dimension type and entity
+finance,custom_dimension_members,table,name,5,character varying(200),NO,Display name of the custom dimension member
+finance,custom_dimension_members,table,hierarchy_level,6,character varying(50),YES,Level in the custom dimension hierarchy
+finance,custom_dimension_members,table,parent_id,7,uuid,YES,Parent member for hierarchy → finance.custom_dimension_members.id
+finance,custom_dimension_members,table,is_active,8,boolean,NO,Whether the member is active
+finance,custom_dimension_members,table,created_at,9,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,customer_debit_note_lines,table,id,1,uuid,NO,Primary key (UUID)
+finance,customer_debit_note_lines,table,debit_note_id,2,uuid,NO,Parent debit note → finance.customer_debit_notes.id
+finance,customer_debit_note_lines,table,line_number,3,character varying(10),NO,Sequence number within the debit note
+finance,customer_debit_note_lines,table,description,4,character varying(500),NO,Line item description
+finance,customer_debit_note_lines,table,quantity,5,"numeric(19,4)",NO,"Quantity, Decimal(19,4)"
+finance,customer_debit_note_lines,table,unit_price,6,"numeric(19,2)",NO,"Unit price excl. VAT, Decimal(19,2)"
+finance,customer_debit_note_lines,table,vat_rate,7,"numeric(5,2)",NO,"VAT rate applied as percentage (e.g. 15.00), Decimal(5,2)"
+finance,customer_debit_note_lines,table,line_total,8,"numeric(19,2)",NO,"Line total excl. VAT, Decimal(19,2)"
+finance,customer_debit_note_lines,table,vat_amount,9,"numeric(19,2)",NO,"VAT amount for this line, Decimal(19,2)"
+finance,customer_debit_note_lines,table,line_total_incl_vat,10,"numeric(19,2)",NO,"Line total incl. VAT, Decimal(19,2)"
+finance,customer_debit_note_lines,table,tax_code_id,11,uuid,YES,Tax code used for VAT calculation
+finance,customer_debit_note_lines,table,tax_code,12,character varying(20),YES,Tax code string (e.g. STD)
+finance,customer_debit_note_lines,table,product_id,13,uuid,YES,Linked product (optional)
+finance,customer_debit_note_lines,table,created_at,14,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,customer_debit_notes,table,id,1,uuid,NO,Primary key (UUID)
+finance,customer_debit_notes,table,debit_note_number,2,character varying(30),NO,Unique human-readable debit note number
+finance,customer_debit_notes,table,customer_id,3,uuid,NO,Customer the debit note is raised against → crm.customers.id
+finance,customer_debit_notes,table,customer_name,4,character varying(255),NO,Denormalised customer name at time of debit note creation
+finance,customer_debit_notes,table,invoice_id,5,uuid,YES,Related invoice (if applicable) → finance.invoices.id
+finance,customer_debit_notes,table,invoice_number,6,character varying(30),YES,Denormalised related invoice number
+finance,customer_debit_notes,table,debit_note_date,7,date,NO,Date of the debit note
+finance,customer_debit_notes,table,due_date,8,date,YES,Payment due date
+finance,customer_debit_notes,table,subtotal,9,"numeric(19,2)",NO,"Debit note subtotal excl. VAT, Decimal(19,2)"
+finance,customer_debit_notes,table,vat_total,10,"numeric(19,2)",NO,"Total VAT amount, Decimal(19,2)"
+finance,customer_debit_notes,table,total,11,"numeric(19,2)",NO,"Debit note total incl. VAT, Decimal(19,2)"
+finance,customer_debit_notes,table,amount_paid,12,"numeric(19,2)",NO,"Total amount paid against this debit note, Decimal(19,2)"
+finance,customer_debit_notes,table,balance,13,"numeric(19,2)",NO,"Outstanding balance, Decimal(19,2)"
+finance,customer_debit_notes,table,status,14,character varying(30),NO,"Debit note status (e.g. Draft, Posted, Paid)"
+finance,customer_debit_notes,table,currency,15,character varying(3),NO,"Debit note currency (ISO 4217, default ZAR)"
+finance,customer_debit_notes,table,rate_tc_to_oc,16,"numeric(18,8)",YES,"Exchange rate from TC to OC, Decimal(18,8)"
+finance,customer_debit_notes,table,rate_tc_to_gc,17,"numeric(18,8)",YES,"Exchange rate from TC to GC, Decimal(18,8)"
+finance,customer_debit_notes,table,total_tc,18,"numeric(19,2)",YES,"Total in TC (Transaction Currency), Decimal(19,2)"
+finance,customer_debit_notes,table,total_oc,19,"numeric(19,2)",YES,"Total in OC (Operating/Functional Currency), Decimal(19,2)"
+finance,customer_debit_notes,table,reason,20,character varying(255),YES,Reason for the debit adjustment
+finance,customer_debit_notes,table,notes,21,text,YES,Free-text notes
+finance,customer_debit_notes,table,payment_term_id,22,uuid,YES,Payment terms applied (Category B document) → finance.payment_terms.id
+finance,customer_debit_notes,table,settlement_date,23,date,YES,Date by which settlement discount applies
+finance,customer_debit_notes,table,settlement_discount_percent,24,"numeric(5,2)",YES,"Settlement discount percentage, Decimal(5,2)"
+finance,customer_debit_notes,table,entity_id,25,uuid,YES,Owning entity for entity-level reporting
+finance,customer_debit_notes,table,tjc_chain_hash,26,character varying(128),YES,BLAKE3 hash for Transaction Journey Chain integrity
+finance,customer_debit_notes,table,journal_batch_id,27,uuid,YES,GL journal batch created when debit note was posted
+finance,customer_debit_notes,table,created_by,28,uuid,YES,User who created the debit note
+finance,customer_debit_notes,table,created_by_name,29,character varying(255),YES,Denormalised name of the creator
+finance,customer_debit_notes,table,created_at,30,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,customer_debit_notes,table,updated_at,31,timestamp with time zone,NO,Row last-update timestamp with timezone
+finance,customer_gl_accounts,table,id,1,uuid,NO,Primary key (UUID)
+finance,customer_gl_accounts,table,customer_id,2,uuid,NO,Customer this override applies to (most specific tier) → crm.customers.id
+finance,customer_gl_accounts,table,receivables_control,3,uuid,YES,Override AR control account (NULL = use group/entity default) → finance.gl_accounts.id
+finance,customer_gl_accounts,table,revenue_account,4,uuid,YES,Override revenue account (NULL = use group/entity default) → finance.gl_accounts.id
+finance,customer_gl_accounts,table,vat_output_account,5,uuid,YES,Override output VAT account (NULL = use group/entity default) → finance.gl_accounts.id
+finance,customer_gl_accounts,table,discount_allowed_account,6,uuid,YES,Override discount allowed account (NULL = use group/entity default) → finance.gl_accounts.id
+finance,customer_gl_accounts,table,bad_debt_expense,7,uuid,YES,Override bad debt expense account (NULL = use group/entity default) → finance.gl_accounts.id
+finance,customer_gl_accounts,table,doubtful_debt_provision,8,uuid,YES,Override doubtful debt provision account (NULL = use group/entity default) → finance.gl_accounts.id
+finance,customer_gl_accounts,table,interest_charged_revenue,9,uuid,YES,Override interest charged revenue account (NULL = use group/entity default) → finance.gl_accounts.id
+finance,customer_gl_accounts,table,deposit_liability,10,uuid,YES,Override deposit liability account (NULL = use group/entity default) → finance.gl_accounts.id
+finance,customer_gl_accounts,table,unearned_revenue,11,uuid,YES,Override unearned revenue account (NULL = use group/entity default) → finance.gl_accounts.id
+finance,customer_gl_accounts,table,sales_return_account,12,uuid,YES,Override sales return account (NULL = use group/entity default) → finance.gl_accounts.id
+finance,customer_gl_accounts,table,freight_revenue_account,13,uuid,YES,Override freight revenue account (NULL = use group/entity default) → finance.gl_accounts.id
+finance,customer_gl_accounts,table,foreign_exchange_gain_loss,14,uuid,YES,Override FX gain/loss account (NULL = use group/entity default) → finance.gl_accounts.id
+finance,customer_gl_accounts,table,rounding_account,15,uuid,YES,Override rounding account (NULL = use group/entity default) → finance.gl_accounts.id
+finance,customer_gl_accounts,table,write_off_account,16,uuid,YES,Override write-off account (NULL = use group/entity default) → finance.gl_accounts.id
+finance,customer_gl_accounts,table,customer_on_account,17,uuid,YES,Override customer on-account (NULL = use group/entity default) → finance.gl_accounts.id
+finance,customer_gl_accounts,table,created_by,18,uuid,YES,User who created the override → core.users.id
+finance,customer_gl_accounts,table,updated_by,19,uuid,YES,User who last updated the override → core.users.id
+finance,customer_gl_accounts,table,created_at,20,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,customer_gl_accounts,table,updated_at,21,timestamp with time zone,NO,Row last-update timestamp with timezone
+finance,customer_group_gl_accounts,table,id,1,uuid,NO,Primary key (UUID)
+finance,customer_group_gl_accounts,table,customer_group_id,2,uuid,NO,Customer group this override applies to → crm.customer_groups.id
+finance,customer_group_gl_accounts,table,receivables_control,3,uuid,YES,Override AR control account (NULL = use entity default) → finance.gl_accounts.id
+finance,customer_group_gl_accounts,table,revenue_account,4,uuid,YES,Override revenue account (NULL = use entity default) → finance.gl_accounts.id
+finance,customer_group_gl_accounts,table,vat_output_account,5,uuid,YES,Override output VAT account (NULL = use entity default) → finance.gl_accounts.id
+finance,customer_group_gl_accounts,table,discount_allowed_account,6,uuid,YES,Override discount allowed account (NULL = use entity default) → finance.gl_accounts.id
+finance,customer_group_gl_accounts,table,bad_debt_expense,7,uuid,YES,Override bad debt expense account (NULL = use entity default) → finance.gl_accounts.id
+finance,customer_group_gl_accounts,table,doubtful_debt_provision,8,uuid,YES,Override doubtful debt provision account (NULL = use entity default) → finance.gl_accounts.id
+finance,customer_group_gl_accounts,table,interest_charged_revenue,9,uuid,YES,Override interest charged revenue account (NULL = use entity default) → finance.gl_accounts.id
+finance,customer_group_gl_accounts,table,deposit_liability,10,uuid,YES,Override deposit liability account (NULL = use entity default) → finance.gl_accounts.id
+finance,customer_group_gl_accounts,table,unearned_revenue,11,uuid,YES,Override unearned revenue account (NULL = use entity default) → finance.gl_accounts.id
+finance,customer_group_gl_accounts,table,sales_return_account,12,uuid,YES,Override sales return account (NULL = use entity default) → finance.gl_accounts.id
+finance,customer_group_gl_accounts,table,freight_revenue_account,13,uuid,YES,Override freight revenue account (NULL = use entity default) → finance.gl_accounts.id
+finance,customer_group_gl_accounts,table,foreign_exchange_gain_loss,14,uuid,YES,Override FX gain/loss account (NULL = use entity default) → finance.gl_accounts.id
+finance,customer_group_gl_accounts,table,rounding_account,15,uuid,YES,Override rounding account (NULL = use entity default) → finance.gl_accounts.id
+finance,customer_group_gl_accounts,table,write_off_account,16,uuid,YES,Override write-off account (NULL = use entity default) → finance.gl_accounts.id
+finance,customer_group_gl_accounts,table,customer_on_account,17,uuid,YES,Override customer on-account (NULL = use entity default) → finance.gl_accounts.id
+finance,customer_group_gl_accounts,table,created_by,18,uuid,YES,User who created the override → core.users.id
+finance,customer_group_gl_accounts,table,updated_by,19,uuid,YES,User who last updated the override → core.users.id
+finance,customer_group_gl_accounts,table,created_at,20,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,customer_group_gl_accounts,table,updated_at,21,timestamp with time zone,NO,Row last-update timestamp with timezone
+finance,customer_payments,table,id,1,uuid,NO,Primary key (UUID)
+finance,customer_payments,table,payment_number,2,character varying(30),NO,Unique human-readable payment/receipt number
+finance,customer_payments,table,customer_id,3,uuid,NO,Customer who made the payment → crm.customers.id
+finance,customer_payments,table,customer_name,4,character varying(255),NO,Denormalised customer name at time of receipt
+finance,customer_payments,table,invoice_id,5,uuid,YES,Primary invoice being paid (if single-invoice receipt)
+finance,customer_payments,table,bank_account_id,6,uuid,YES,Bank account receiving the payment for GL resolution → finance.bank_accounts.id
+finance,customer_payments,table,entity_id,7,uuid,YES,Owning entity for entity-level GL resolution
+finance,customer_payments,table,branch_id,8,uuid,YES,Branch for org-unit scoping and branch-level GL dimension → core.branches.id
+finance,customer_payments,table,journal_batch_id,9,uuid,YES,GL journal batch created by GLPostingService
+finance,customer_payments,table,payment_date,10,date,NO,Date of the payment
+finance,customer_payments,table,amount,11,"numeric(19,2)",NO,"Payment amount in document currency, Decimal(19,2)"
+finance,customer_payments,table,payment_method,12,character varying(50),NO,"Method of payment (e.g. EFT, Cash, Cheque, Card)"
+finance,customer_payments,table,reference,13,character varying(100),YES,External payment reference
+finance,customer_payments,table,currency,14,character varying(3),NO,"Payment currency (ISO 4217, default ZAR)"
+finance,customer_payments,table,rate_tc_to_oc,15,"numeric(18,8)",YES,"Exchange rate from TC to OC at payment date, Decimal(18,8)"
+finance,customer_payments,table,amount_tc,16,"numeric(19,2)",YES,"Payment amount in TC (Transaction Currency), Decimal(19,2)"
+finance,customer_payments,table,amount_oc,17,"numeric(19,2)",YES,"Payment amount in OC (Operating/Functional Currency), Decimal(19,2)"
+finance,customer_payments,table,rate_tc_to_gc,18,"numeric(18,8)",YES,"Exchange rate from TC to GC at payment date, Decimal(18,8)"
+finance,customer_payments,table,amount_gc,19,"numeric(19,2)",YES,"Payment amount in GC (Group/Reporting Currency), Decimal(19,2)"
+finance,customer_payments,table,notes,20,text,YES,Free-text notes
+finance,customer_payments,table,tjc_chain_hash,21,character varying(128),YES,BLAKE3 hash for Transaction Journey Chain integrity
+finance,customer_payments,table,status,22,character varying(30),NO,"Payment status (e.g. draft, posted, voided)"
+finance,customer_payments,table,voided_at,23,timestamp with time zone,YES,Timestamp with timezone when the payment was voided
+finance,customer_payments,table,voided_by,24,uuid,YES,User who voided the payment
+finance,customer_payments,table,void_reason,25,character varying(500),YES,Reason for voiding the payment
+finance,customer_payments,table,reversal_journal_batch_id,26,uuid,YES,GL journal batch for the void reversal
+finance,customer_payments,table,created_at,27,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,customer_payments,table,updated_at,28,timestamp with time zone,NO,Row last-update timestamp with timezone
+finance,dimension_asset_members,table,id,1,uuid,NO,Primary key (UUID)
+finance,dimension_asset_members,table,entity_id,2,uuid,YES,Owning entity → core.org_units.id
+finance,dimension_asset_members,table,code,3,character varying(50),NO,Unique asset dimension code within entity
+finance,dimension_asset_members,table,name,4,character varying(200),NO,"Asset dimension display name (e.g. Vehicles, IT Equipment)"
+finance,dimension_asset_members,table,hierarchy_level,5,character varying(50),YES,"Level in the asset hierarchy (asset_class, category, individual)"
+finance,dimension_asset_members,table,parent_id,6,uuid,YES,Parent member for hierarchy → finance.dimension_asset_members.id
+finance,dimension_asset_members,table,is_active,7,boolean,NO,Whether the member is active
+finance,dimension_asset_members,table,created_at,8,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,dimension_combination_rules,table,id,1,uuid,NO,Primary key (UUID)
+finance,dimension_combination_rules,table,name,2,character varying(100),NO,Rule name
+finance,dimension_combination_rules,table,description,3,character varying(255),YES,Rule description
+finance,dimension_combination_rules,table,source_dimension,4,character varying(50),NO,Dimension whose value triggers the rule (e.g. costCentre)
+finance,dimension_combination_rules,table,source_value,5,character varying(100),NO,Specific value that triggers the rule (e.g. Branch A)
+finance,dimension_combination_rules,table,target_dimension,6,character varying(50),NO,Dimension whose allowed values are restricted (e.g. department)
+finance,dimension_combination_rules,table,allowed_values,7,text[],NO,Array of allowed values for the target dimension when source matches
+finance,dimension_combination_rules,table,is_active,8,character varying(5),NO,Whether the rule is active (true/false as string)
+finance,dimension_combination_rules,table,created_at,9,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,dimension_combination_rules,table,updated_at,10,timestamp with time zone,NO,Row last-update timestamp with timezone
+finance,dimension_function_members,table,id,1,uuid,NO,Primary key (UUID)
+finance,dimension_function_members,table,entity_id,2,uuid,YES,Owning entity → core.org_units.id
+finance,dimension_function_members,table,code,3,character varying(50),NO,Unique member code within entity
+finance,dimension_function_members,table,name,4,character varying(200),NO,"Display name (e.g. Sales Division, IT Department)"
+finance,dimension_function_members,table,hierarchy_level,5,character varying(50),YES,"Level in the function hierarchy (division, department, cost_centre)"
+finance,dimension_function_members,table,parent_id,6,uuid,YES,Parent member for hierarchy → finance.dimension_function_members.id
+finance,dimension_function_members,table,is_active,7,boolean,NO,Whether the member is active
+finance,dimension_function_members,table,created_at,8,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,dimension_market_members,table,id,1,uuid,NO,Primary key (UUID)
+finance,dimension_market_members,table,entity_id,2,uuid,YES,Owning entity
+finance,dimension_market_members,table,code,3,character varying(50),NO,Unique market code within entity
+finance,dimension_market_members,table,name,4,character varying(200),NO,"Market display name (e.g. SADC Region, South Africa)"
+finance,dimension_market_members,table,hierarchy_level,5,character varying(50),YES,"Level in the market hierarchy (market_region, country, territory)"
+finance,dimension_market_members,table,parent_id,6,uuid,YES,Parent member for hierarchy → finance.dimension_market_members.id
+finance,dimension_market_members,table,is_active,7,boolean,NO,Whether the member is active
+finance,dimension_market_members,table,created_at,8,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,dimension_members,table,id,1,uuid,NO,Primary key (UUID)
+finance,dimension_members,table,dimension_id,2,uuid,NO,Parent dimension rule → finance.dimension_rules.id
+finance,dimension_members,table,code,3,character varying(30),NO,Unique member code within the dimension
+finance,dimension_members,table,name,4,character varying(255),NO,Display name of the dimension member
+finance,dimension_members,table,parent_id,5,uuid,YES,Parent member for hierarchy (self-referencing)
+finance,dimension_members,table,is_active,6,character varying(5),NO,Whether the member is active (true/false as string)
+finance,dimension_members,table,created_at,7,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,dimension_members,table,updated_at,8,timestamp with time zone,NO,Row last-update timestamp with timezone
+finance,dimension_project_members,table,id,1,uuid,NO,Primary key (UUID)
+finance,dimension_project_members,table,entity_id,2,uuid,YES,Owning entity → core.org_units.id
+finance,dimension_project_members,table,code,3,character varying(50),NO,Unique project code within entity
+finance,dimension_project_members,table,name,4,character varying(200),NO,Project/phase display name
+finance,dimension_project_members,table,hierarchy_level,5,character varying(50),YES,"Level in the project hierarchy (programme, project, phase, task)"
+finance,dimension_project_members,table,parent_id,6,uuid,YES,Parent member for hierarchy → finance.dimension_project_members.id
+finance,dimension_project_members,table,is_active,7,boolean,NO,Whether the member is active
+finance,dimension_project_members,table,start_date,8,date,YES,Project/phase start date
+finance,dimension_project_members,table,end_date,9,date,YES,Project/phase end date
+finance,dimension_project_members,table,created_at,10,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,dimension_rules,table,id,1,uuid,NO,Primary key (UUID)
+finance,dimension_rules,table,dimension_name,2,character varying(50),NO,"Name of the dimension (e.g. Cost Centre, Department, Project)"
+finance,dimension_rules,table,description,3,character varying(255),YES,Description of the dimension rule
+finance,dimension_rules,table,is_mandatory,4,character varying(5),NO,Whether this dimension is mandatory on journal lines (true/false as string)
+finance,dimension_rules,table,applies_to,5,text[],YES,Array of account types this dimension applies to
+finance,dimension_rules,table,blocked_for,6,text[],YES,Array of account types where this dimension is blocked
+finance,dimension_rules,table,is_active,7,character varying(5),NO,Whether the rule is active (true/false as string)
+finance,dimension_rules,table,created_at,8,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,dimension_rules,table,updated_at,9,timestamp with time zone,NO,Row last-update timestamp with timezone
+finance,dimension_rules_v2,table,id,1,uuid,NO,Primary key (UUID)
+finance,dimension_rules_v2,table,entity_id,2,uuid,YES,Owning entity (NULL = system-wide)
+finance,dimension_rules_v2,table,account_group,3,character varying(50),NO,Account group code this rule applies to
+finance,dimension_rules_v2,table,dimension_type,4,character varying(50),NO,Dimension type code (references dimension_types.code)
+finance,dimension_rules_v2,table,status,5,character varying(10),NO,"Rule status for this account group + dimension type (required, optional, blocked)"
+finance,dimension_rules_v2,table,member_filter,6,jsonb,YES,Optional JSON member filter to restrict allowed values
+finance,dimension_rules_v2,table,default_value,7,uuid,YES,Optional default member UUID
+finance,dimension_rules_v2,table,hierarchy_lock,8,character varying(50),YES,Optional hierarchy level lock (posting only at this level)
+finance,dimension_rules_v2,table,is_active,9,boolean,NO,Whether the rule is active
+finance,dimension_rules_v2,table,created_at,10,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,dimension_rules_v2,table,updated_at,11,timestamp with time zone,NO,Row last-update timestamp with timezone
+finance,dimension_source_mappings,table,id,1,uuid,NO,Primary key (UUID)
+finance,dimension_source_mappings,table,entity_id,2,uuid,YES,Owning entity (NULL = system default)
+finance,dimension_source_mappings,table,document_type,3,character varying(50),NO,"Document type this mapping applies to (e.g. invoice, supplier_payment)"
+finance,dimension_source_mappings,table,account_group,4,character varying(50),NO,Account group code this mapping applies to
+finance,dimension_source_mappings,table,dimension_type,5,character varying(50),NO,Dimension type code being mapped
+finance,dimension_source_mappings,table,source_fields,6,jsonb,NO,JSON ordered fallback chain of source fields to resolve the dimension value
+finance,dimension_source_mappings,table,allow_override,7,boolean,NO,Whether users can override the auto-resolved dimension value
+finance,dimension_source_mappings,table,is_active,8,boolean,NO,Whether the mapping is active
+finance,dimension_source_mappings,table,created_at,9,timestamp with time zone,NO,Row creation timestamp with timezone
+finance,dimension_source_mappings,table,updated_at,10,timestamp with time zone,NO,Row last-update timestamp with timezone
+finance,dimension_types,table,id,1,uuid,NO,Primary key (UUID)

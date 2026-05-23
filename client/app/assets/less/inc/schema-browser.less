@@ -151,9 +151,20 @@
           vertical-align: middle;
         }
 
+        // Incoming FK icon (column referenced by other tables)
+        .fk-incoming-icon {
+          transform: rotate(180deg);
+        }
+
         // Highlight FK columns with a subtle left border
         &.fk-column {
           border-left: 2px solid fade(@primary-color, 40%);
+          padding-left: 20px;
+        }
+
+        // Highlight referenced columns with a subtle left border (orange for 1:M)
+        &.fk-referenced-column {
+          border-left: 2px solid fade(#d97706, 40%);
           padding-left: 20px;
         }
 

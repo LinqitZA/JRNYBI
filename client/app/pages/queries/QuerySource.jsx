@@ -26,6 +26,7 @@ import QueryExecutionMetadata from "./components/QueryExecutionMetadata";
 import ViewSuggestionBanner from "@/components/queries/ViewSuggestionBanner";
 import SelectStarHintBanner from "@/components/queries/SelectStarHintBanner";
 import FKHintBanner from "@/components/queries/FKHintBanner";
+import FanOutWarningBanner from "@/components/queries/FanOutWarningBanner";
 
 import { getEditorComponents } from "@/components/queries/editor-components";
 import useQuery from "./hooks/useQuery";
@@ -331,6 +332,11 @@ function QuerySource(props) {
                     <FKHintBanner
                       fkMatches={fkMatches}
                       onResolve={handleResolveFKColumns}
+                    />
+
+                    <FanOutWarningBanner
+                      queryText={query.query}
+                      schema={schema}
                     />
 
                     <QueryEditor.Controls

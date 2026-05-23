@@ -211,8 +211,11 @@ function buildCardinalityMap(schema) {
     });
   });
 
-  // Build incoming cardinality entries for referenced tables
-  // Key: "referencedTable.__incoming__sourceTable.sourceCol"
+  // Build incoming cardinality entries for referenced columns
+  // Key: "referencedTable.referencedCol" → array of incoming refs
+  // This allows showing 1:M badges on PK/referenced columns
+  const incomingMap = {};
+
   Object.values(pairMap).forEach((g) => {
     const isJunction = junctionTables.has(g.sourceTable);
 
@@ -230,30 +233,21 @@ function buildCardinalityMap(schema) {
         incomingCardinality = "1:M";
       }
 
-      const incomingKey = g.targetTable + ".__incoming__" + g.sourceTable + "." + p.sourceCol;
-      cardMap[incomingKey] = {
+      const targetColKey = g.targetTable + "." + p.targetCol;
+      if (!incomingMap[targetColKey]) {
+        incomingMap[targetColKey] = [];
+      }
+      incomingMap[targetColKey].push({
         cardinality: incomingCardinality,
         junctionTable: isJunction ? g.sourceTable : null,
         fanOutWarning: incomingCardinality === "1:M" || incomingCardinality === "M:M",
         sourceTable: g.sourceTable,
         sourceCol: p.sourceCol,
-      };
+      });
     });
   });
 
-  return cardMap;
-}
-
-/**
- * Get incoming FK relationships for a table (other tables that reference it).
- * Returns array of { sourceTable, sourceCol, cardinality, junctionTable, fanOutWarning }
- */
-function getIncomingFKsForTable(cardinalityMap, tableName) {
-  if (!cardinalityMap) return [];
-  const prefix = tableName + ".__incoming__";
-  return Object.entries(cardinalityMap)
-    .filter(([key]) => key.startsWith(prefix))
-    .map(([, val]) => val);
+  return { outgoing: cardMap, incoming: incomingMap };
 }
 
 /**
@@ -372,11 +366,30 @@ function SchemaItem({ item, expanded, onToggle, onSelect, onNavigateToTable, inc
               const fk = get(column, "fk");
               const fkTarget = fk ? fk.schema + "." + fk.table : null;
 
-              // Get cardinality info for this FK column
+              // Get outgoing cardinality info for this FK column
+              const outgoing = cardinalityMap ? cardinalityMap.outgoing || {} : {};
+              const incoming = cardinalityMap ? cardinalityMap.incoming || {} : {};
               const cardKey = fk ? item.name + "." + columnName : null;
-              const cardInfo = cardKey && cardinalityMap ? cardinalityMap[cardKey] : null;
+              const cardInfo = cardKey ? outgoing[cardKey] : null;
               const cardinality = cardInfo ? cardInfo.cardinality : null;
               const cardConfig = cardinality ? CARDINALITY_CONFIG[cardinality] : null;
+
+              // Get incoming FK references for this column (other tables referencing this column)
+              const incomingColKey = item.name + "." + columnName;
+              const incomingRefs = incoming[incomingColKey] || [];
+              // Pick the "worst" incoming cardinality to show as badge
+              const hasIncoming = !fk && incomingRefs.length > 0;
+              let incomingCardinality = null;
+              let incomingConfig = null;
+              if (hasIncoming) {
+                // Prioritize: M:M > 1:M > 1:1
+                const hasMM = incomingRefs.some((r) => r.cardinality === "M:M");
+                const has1M = incomingRefs.some((r) => r.cardinality === "1:M");
+                if (hasMM) incomingCardinality = "M:M";
+                else if (has1M) incomingCardinality = "1:M";
+                else incomingCardinality = "1:1";
+                incomingConfig = CARDINALITY_CONFIG[incomingCardinality];
+              }
 
               // Build enhanced FK tooltip with cardinality description
               let fkTooltip = null;
@@ -392,8 +405,24 @@ function SchemaItem({ item, expanded, onToggle, onSelect, onNavigateToTable, inc
                 }
               }
 
-              // Fan-out warning for M:M
-              const fanOutNote = cardInfo && cardInfo.fanOutWarning
+              // Build incoming FK tooltip
+              let incomingTooltip = null;
+              if (hasIncoming) {
+                const refLines = incomingRefs.map((r) => {
+                  if (r.cardinality === "1:M") {
+                    return "Referenced by " + r.sourceTable + "." + r.sourceCol + " (One → Many: one " + columnName + " has many " + r.sourceTable.split(".").pop() + ")";
+                  } else if (r.cardinality === "M:M") {
+                    return "Many-to-Many via " + (r.junctionTable || r.sourceTable);
+                  } else {
+                    return "Referenced by " + r.sourceTable + "." + r.sourceCol + " (1:1)";
+                  }
+                });
+                incomingTooltip = refLines.join("\n");
+              }
+
+              // Fan-out warning for outgoing M:M or incoming 1:M/M:M
+              const fanOutNote = (cardInfo && cardInfo.fanOutWarning) ||
+                (hasIncoming && (incomingCardinality === "1:M" || incomingCardinality === "M:M"))
                 ? "\n\n⚠ Joining to this table will multiply rows. Consider GROUP BY or a subquery."
                 : null;
 
@@ -401,11 +430,16 @@ function SchemaItem({ item, expanded, onToggle, onSelect, onNavigateToTable, inc
               const multiFkNote = fk && multiFkNotes && multiFkNotes[fkTarget]
                 ? "\n\n⚠ " + multiFkNotes[fkTarget].length + " columns in this table reference " + fkTarget + " (" + multiFkNotes[fkTarget].join(", ") + ") — use separate aliases for each JOIN"
                 : null;
+
+              // Determine if this column has any FK relevance (outgoing or incoming)
+              const hasFkIndicator = !!fk || hasIncoming;
+
               return (
                 <Tooltip
                   title={
                     "Insert column name into query text" +
                     (fkTooltip ? "\n\n" + fkTooltip : "") +
+                    (incomingTooltip ? "\n\n" + incomingTooltip : "") +
                     (fanOutNote || "") +
                     (multiFkNote || "") +
                     (columnDescription ? "\n\n" + columnDescription : "")
@@ -417,7 +451,7 @@ function SchemaItem({ item, expanded, onToggle, onSelect, onNavigateToTable, inc
                 >
                   <PlainButton
                     key={columnName}
-                    className={cx("table-open-item", { "fk-column": !!fk })}
+                    className={cx("table-open-item", { "fk-column": !!fk, "fk-referenced-column": hasIncoming })}
                     onClick={(e) => handleSelect(e, columnName)}
                   >
                     <div>
@@ -440,6 +474,14 @@ function SchemaItem({ item, expanded, onToggle, onSelect, onNavigateToTable, inc
                           />
                         </Tooltip>
                       )}
+                      {hasIncoming && (
+                        <i
+                          className="fa fa-code-fork fk-icon fk-incoming-icon"
+                          aria-hidden="true"
+                          style={incomingConfig ? { color: incomingConfig.color } : undefined}
+                          title={incomingRefs.length + " table(s) reference this column"}
+                        />
+                      )}
                       {fk && cardConfig && (
                         <span
                           className="cardinality-badge"
@@ -447,6 +489,15 @@ function SchemaItem({ item, expanded, onToggle, onSelect, onNavigateToTable, inc
                           title={cardConfig.title}
                         >
                           {cardConfig.label}
+                        </span>
+                      )}
+                      {hasIncoming && incomingConfig && (
+                        <span
+                          className="cardinality-badge"
+                          style={{ backgroundColor: incomingConfig.color + "1a", color: incomingConfig.color, borderColor: incomingConfig.color + "40" }}
+                          title={incomingConfig.title + " (incoming)"}
+                        >
+                          {incomingConfig.label}
                         </span>
                       )}
                       {columnName} {columnType && <span className="column-type">{columnType}</span>}

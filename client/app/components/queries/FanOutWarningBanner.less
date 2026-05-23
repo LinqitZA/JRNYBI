@@ -1,0 +1,154 @@
+@import "../../assets/less/inc/variables";
+
+.fan-out-warning-banner {
+  margin: 4px 0;
+  border: 1px solid fade(#d97706, 30%);
+  border-radius: @redash-radius;
+  background-color: fade(#d97706, 6%);
+  font-size: 12px;
+  line-height: 1.5;
+
+  .fan-out-warning-header {
+    display: flex;
+    align-items: center;
+    padding: 6px 10px;
+    gap: 6px;
+  }
+
+  .fan-out-icon {
+    color: #d97706;
+    font-size: 13px;
+    flex-shrink: 0;
+  }
+
+  .fan-out-text {
+    flex: 1;
+    color: @text-color;
+
+    code {
+      padding: 1px 4px;
+      border-radius: 3px;
+      background-color: fade(#d97706, 10%);
+      color: #92400e;
+      font-size: 11px;
+    }
+  }
+
+  .fan-out-toggle {
+    background: none;
+    border: 1px solid fade(#d97706, 30%);
+    border-radius: 3px;
+    color: #d97706;
+    font-size: 11px;
+    cursor: pointer;
+    padding: 2px 8px;
+    white-space: nowrap;
+    flex-shrink: 0;
+
+    &:hover {
+      background-color: fade(#d97706, 10%);
+    }
+
+    .fa {
+      font-size: 9px;
+    }
+  }
+
+  .fan-out-dismiss {
+    background: none;
+    border: none;
+    color: fade(@text-color, 40%);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+    flex-shrink: 0;
+
+    &:hover {
+      color: @text-color;
+    }
+  }
+
+  .fan-out-suggestions {
+    padding: 6px 10px 10px 28px;
+    border-top: 1px solid fade(#d97706, 15%);
+  }
+
+  .fan-out-joins-list {
+    margin-bottom: 8px;
+
+    .fan-out-join-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 3px;
+      font-size: 11px;
+
+      code {
+        padding: 1px 4px;
+        border-radius: 3px;
+        background-color: fade(@text-color, 6%);
+        font-size: 11px;
+      }
+
+      .fan-out-arrow {
+        color: #d97706;
+        font-weight: bold;
+      }
+
+      .fan-out-cardinality {
+        display: inline-flex;
+        align-items: center;
+        height: 14px;
+        padding: 0 4px;
+        border-radius: 3px;
+        font-size: 9px;
+        font-weight: 700;
+        border: 1px solid;
+      }
+
+      .fan-out-cardinality-1M {
+        background-color: fade(#d97706, 10%);
+        color: #d97706;
+        border-color: fade(#d97706, 30%);
+      }
+
+      .fan-out-cardinality-MM {
+        background-color: fade(#7c3aed, 10%);
+        color: #7c3aed;
+        border-color: fade(#7c3aed, 30%);
+      }
+
+      .fan-out-junction {
+        color: fade(@text-color, 60%);
+        font-style: italic;
+      }
+    }
+  }
+
+  .fan-out-suggestion-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+
+    li {
+      padding: 3px 0;
+      color: fade(@text-color, 80%);
+      font-size: 11px;
+
+      .fa {
+        width: 14px;
+        text-align: center;
+        color: fade(@text-color, 40%);
+        margin-right: 4px;
+      }
+
+      code {
+        padding: 1px 4px;
+        border-radius: 3px;
+        background-color: fade(@text-color, 6%);
+        font-size: 11px;
+      }
+    }
+  }
+}
