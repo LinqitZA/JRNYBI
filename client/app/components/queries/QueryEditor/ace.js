@@ -233,6 +233,20 @@ export function updateSchemaCompleter(editorKey, schema = null) {
 function buildFKGraph(schema) {
   if (!schema) return {};
 
+  // Build column constraint lookup: "tableName.colName" -> { isPK, isUnique }
+  const constraintMap = {};
+  schema.forEach(table => {
+    (table.columns || []).forEach(col => {
+      const colName = get(col, "name");
+      if (!colName) return;
+      const key = `${table.name}.${colName}`;
+      constraintMap[key] = {
+        isPK: !!get(col, "is_primary_key"),
+        isUnique: !!get(col, "is_unique"),
+      };
+    });
+  });
+
   // First pass: collect all FK relationships grouped by source→target table pair
   // This naturally handles composite FKs (multiple columns in the same constraint)
   const pairMap = {}; // key: "sourceTable||targetTable"
@@ -255,7 +269,57 @@ function buildFKGraph(schema) {
     });
   });
 
-  // Second pass: build bidirectional adjacency list
+  // Detect junction tables: tables with 2+ FK columns pointing to different tables,
+  // where those FK columns are part of the table's PK or a composite UNIQUE constraint
+  const junctionTables = new Set();
+  const tableFK = {}; // tableName -> [{ targetTable, sourceCol }]
+  Object.values(pairMap).forEach(g => {
+    if (!tableFK[g.sourceTable]) tableFK[g.sourceTable] = [];
+    g.pairs.forEach(p => {
+      tableFK[g.sourceTable].push({ targetTable: g.targetTable, sourceCol: p.sourceCol });
+    });
+  });
+
+  Object.entries(tableFK).forEach(([tableName, fkEntries]) => {
+    // Need at least 2 FK columns pointing to different tables
+    const distinctTargets = new Set(fkEntries.map(e => e.targetTable));
+    if (distinctTargets.size < 2) return;
+
+    // Check if all FK columns have PK or UNIQUE constraints
+    const allConstrained = fkEntries.every(e => {
+      const key = `${tableName}.${e.sourceCol}`;
+      const c = constraintMap[key];
+      return c && (c.isPK || c.isUnique);
+    });
+
+    if (allConstrained) {
+      junctionTables.add(tableName);
+    }
+  });
+
+  // Helper to infer cardinality for an FK relationship
+  function inferOutgoingCardinality(sourceTable, pairs) {
+    // Check if the FK column(s) on the source side have UNIQUE/PK constraints
+    const allUnique = pairs.every(p => {
+      const key = `${sourceTable}.${p.sourceCol}`;
+      const c = constraintMap[key];
+      return c && (c.isPK || c.isUnique);
+    });
+    return allUnique ? "1:1" : "M:1";
+  }
+
+  function inferIncomingCardinality(sourceTable, pairs) {
+    // Incoming = traversing from referenced table to FK table
+    // If FK column is unique → 1:1, otherwise → 1:M
+    const allUnique = pairs.every(p => {
+      const key = `${sourceTable}.${p.sourceCol}`;
+      const c = constraintMap[key];
+      return c && (c.isPK || c.isUnique);
+    });
+    return allUnique ? "1:1" : "1:M";
+  }
+
+  // Second pass: build bidirectional adjacency list with cardinality
   const graph = {};
 
   Object.values(pairMap).forEach(g => {
@@ -269,6 +333,11 @@ function buildFKGraph(schema) {
     const sourceEntry = schema.find(t => t.name === g.sourceTable);
     const sourceDisplayCol = sourceEntry ? resolveDisplayColumn(sourceEntry) : null;
 
+    // Determine cardinality
+    const isJunction = junctionTables.has(g.sourceTable);
+    const outgoingCardinality = isJunction ? "M:M" : inferOutgoingCardinality(g.sourceTable, g.pairs);
+    const incomingCardinality = isJunction ? "M:M" : inferIncomingCardinality(g.sourceTable, g.pairs);
+
     // Outgoing edge: sourceTable has FK pointing to targetTable
     if (!graph[g.sourceTable]) graph[g.sourceTable] = [];
     graph[g.sourceTable].push({
@@ -278,6 +347,9 @@ function buildFKGraph(schema) {
       joinPairs: g.pairs.map(p => ({ thisCol: p.sourceCol, otherCol: p.targetCol })),
       metaLabel,
       displayColumn: targetDisplayCol,
+      cardinality: outgoingCardinality,
+      junctionTable: isJunction ? g.sourceTable : null,
+      fanOutWarning: outgoingCardinality === "1:M" || outgoingCardinality === "M:M",
     });
 
     // Incoming edge: targetTable is referenced by sourceTable
@@ -289,6 +361,9 @@ function buildFKGraph(schema) {
       joinPairs: g.pairs.map(p => ({ thisCol: p.targetCol, otherCol: p.sourceCol })),
       metaLabel,
       displayColumn: sourceDisplayCol,
+      cardinality: incomingCardinality,
+      junctionTable: isJunction ? g.sourceTable : null,
+      fanOutWarning: incomingCardinality === "1:M" || incomingCardinality === "M:M",
     });
   });
 

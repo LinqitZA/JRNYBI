@@ -387,6 +387,45 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- Add user_preferences table for 1:1 FK cardinality testing
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='core' AND table_name='user_preferences') THEN
+    EXECUTE '
+      CREATE TABLE core.user_preferences (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        user_id UUID NOT NULL,
+        theme TEXT DEFAULT ''light'',
+        language TEXT DEFAULT ''en'',
+        notifications_enabled BOOLEAN DEFAULT true,
+        CONSTRAINT uq_user_preferences_user UNIQUE (user_id)
+      )';
+  END IF;
+END $$;
+
+-- Add buying_groups and customer_buying_groups for M:M junction table testing
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='crm' AND table_name='buying_groups') THEN
+    EXECUTE '
+      CREATE TABLE crm.buying_groups (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        group_name TEXT NOT NULL,
+        discount_rate NUMERIC(5,2) DEFAULT 0
+      )';
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='crm' AND table_name='customer_buying_groups') THEN
+    EXECUTE '
+      CREATE TABLE crm.customer_buying_groups (
+        customer_id UUID NOT NULL,
+        buying_group_id UUID NOT NULL,
+        joined_at TIMESTAMP DEFAULT now(),
+        PRIMARY KEY (customer_id, buying_group_id)
+      )';
+  END IF;
+END $$;
+
 -- Add foreign key constraints for schema relationship testing
 -- Note: Using DO blocks so constraints are idempotent (skip if already exists)
 DO $$ BEGIN
@@ -486,6 +525,38 @@ DO $$ BEGIN
   ) THEN
     ALTER TABLE crm.activities
       ADD CONSTRAINT fk_activities_opportunity FOREIGN KEY (opportunity_id) REFERENCES crm.opportunities(id);
+  END IF;
+END $$;
+
+-- FK for user_preferences (1:1 relationship)
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_user_preferences_contact' AND table_schema = 'core'
+  ) THEN
+    ALTER TABLE core.user_preferences
+      ADD CONSTRAINT fk_user_preferences_contact FOREIGN KEY (user_id) REFERENCES core.contacts(id);
+  END IF;
+END $$;
+
+-- FKs for customer_buying_groups (M:M junction table)
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_cbg_customer' AND table_schema = 'crm'
+  ) THEN
+    ALTER TABLE crm.customer_buying_groups
+      ADD CONSTRAINT fk_cbg_customer FOREIGN KEY (customer_id) REFERENCES core.contacts(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_cbg_buying_group' AND table_schema = 'crm'
+  ) THEN
+    ALTER TABLE crm.customer_buying_groups
+      ADD CONSTRAINT fk_cbg_buying_group FOREIGN KEY (buying_group_id) REFERENCES crm.buying_groups(id);
   END IF;
 END $$;
 
@@ -685,3 +756,9 @@ COMMENT ON COLUMN crm.opportunities.contact_id IS 'fk:core.contacts.id Related c
 COMMENT ON TABLE crm.activities IS 'CRM activity log (calls, emails, meetings)';
 COMMENT ON COLUMN crm.activities.contact_id IS 'fk:core.contacts.id Related contact';
 COMMENT ON COLUMN crm.activities.opportunity_id IS 'fk:crm.opportunities.id Related opportunity';
+
+COMMENT ON TABLE core.user_preferences IS 'Per-user preferences (1:1 with contacts)';
+COMMENT ON COLUMN core.user_preferences.user_id IS 'One-to-one FK to contacts';
+
+COMMENT ON TABLE crm.buying_groups IS 'Customer buying groups for discount tiers';
+COMMENT ON TABLE crm.customer_buying_groups IS 'Junction table linking customers to buying groups (M:M)';
