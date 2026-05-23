@@ -325,12 +325,15 @@ const QueryEditor = React.forwardRef(function(
             });
             if (!updated) continue; // This FK was already resolved or no longer present
 
-            // Use updated position
-            ed.moveCursorTo(updated.row, updated.startCol + 1);
+            // Use updated position — use columnStartCol to land on the column name
+            // (not the qualifier prefix for qualified references like sales_orders.entity_id)
+            const cursorCol = updated.columnStartCol != null ? updated.columnStartCol : updated.startCol;
+            ed.moveCursorTo(updated.row, cursorCol + 1);
           } else {
             // First iteration: use original position
             const col = uniqueFKCols[i];
-            ed.moveCursorTo(col.row, col.startCol + 1);
+            const cursorCol = col.columnStartCol != null ? col.columnStartCol : col.startCol;
+            ed.moveCursorTo(col.row, cursorCol + 1);
           }
 
           const fkInfo = detectFKAtCursor(ed, rawSchema, fkGraph);

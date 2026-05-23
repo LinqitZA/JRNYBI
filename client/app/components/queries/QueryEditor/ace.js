@@ -456,17 +456,94 @@ function buildJoinSuggestions(ctx, rawSchema, fkGraph, includeOnClause) {
     const existingAliases = ctx.tables.map(t => t.alias || t.name);
     const existingQualifier = existingRef.alias || existingRef.name;
 
+    // Group edges by relatedTable to detect multiple FK columns to same target
+    const edgesByTarget = {};
     edges.forEach(edge => {
-      if (suggestedTables.has(edge.relatedTable)) return;
+      if (!edgesByTarget[edge.relatedTable]) edgesByTarget[edge.relatedTable] = [];
+      edgesByTarget[edge.relatedTable].push(edge);
+    });
+
+    Object.entries(edgesByTarget).forEach(([targetTable, targetEdges]) => {
+      if (suggestedTables.has(targetTable)) return;
 
       // Don't suggest tables already in the query
       const alreadyInQuery = ctx.tables.some(t => {
         const fn = findSchemaTableName(t, rawSchema);
-        return fn === edge.relatedTable;
+        return fn === targetTable;
       });
       if (alreadyInQuery) return;
 
-      suggestedTables.add(edge.relatedTable);
+      // Multiple FK columns to same target: suggest separate aliased JOINs
+      if (targetEdges.length > 1 && includeOnClause) {
+        suggestedTables.add(targetTable);
+        const fkColNames = targetEdges.map(e =>
+          e.joinPairs.map(p => p.thisCol).join("+")
+        );
+
+        targetEdges.forEach((edge, idx) => {
+          // Generate descriptive alias from the FK column name (e.g., "created_by" -> "creator")
+          const fkColBase = edge.joinPairs[0].thisCol.replace(/_id$/, "");
+          const aliasCandidate = fkColBase || shortTableName(targetTable);
+          const newAlias = generateAlias(aliasCandidate, [...existingAliases, ...suggestions.map(s => s._alias).filter(Boolean)]);
+
+          const onParts = edge.joinPairs.map(
+            p => `${existingQualifier}.${p.thisCol} = ${newAlias}.${p.otherCol}`
+          );
+          const onClause = onParts.join(" AND ");
+
+          const cardLabel = edge.cardinality ? ` [${edge.cardinality}]` : "";
+          suggestions.push({
+            name: targetTable,
+            value: `${targetTable} ${newAlias} ON ${onClause}`,
+            score: 260, // slightly higher than single-FK suggestions
+            meta: `FK${cardLabel}: ${edge.joinPairs.map(p => p.thisCol).join(",")}`,
+            docHTML: `<div class="jrnybi-col-doc"><strong>Multiple FK columns to ${shortTableName(targetTable)}</strong><br/>` +
+              `This table has ${targetEdges.length} FK columns (${fkColNames.join(", ")}) pointing to ${shortTableName(targetTable)}.<br/>` +
+              `Use separate aliases for each: <code>${newAlias}</code> for <code>${edge.joinPairs[0].thisCol}</code></div>`,
+            _alias: newAlias,
+          });
+        });
+        return;
+      }
+
+      suggestedTables.add(targetTable);
+      const edge = targetEdges[0];
+
+      // M:M through junction table: suggest 2-hop join pattern
+      if (edge.junctionTable && includeOnClause) {
+        const junctionName = edge.junctionTable;
+        const junctionAlias = generateAlias(junctionName, existingAliases);
+        const targetAlias = generateAlias(targetTable, [...existingAliases, junctionAlias]);
+
+        // Build 2-hop: JOIN junction ON existing.col = junction.col JOIN target ON junction.col2 = target.col
+        const hop1Parts = edge.joinPairs.map(
+          p => `${existingQualifier}.${p.thisCol} = ${junctionAlias}.${p.otherCol}`
+        );
+        const hop1 = `${junctionName} ${junctionAlias} ON ${hop1Parts.join(" AND ")}`;
+
+        // Find the junction's edge to the target
+        const junctionEdges = fkGraph[junctionName] || [];
+        const hop2Edge = junctionEdges.find(e => e.relatedTable === targetTable);
+
+        if (hop2Edge) {
+          const hop2Parts = hop2Edge.joinPairs.map(
+            p => `${junctionAlias}.${p.thisCol} = ${targetAlias}.${p.otherCol}`
+          );
+          const hop2 = `${targetTable} ${targetAlias} ON ${hop2Parts.join(" AND ")}`;
+
+          suggestions.push({
+            name: targetTable,
+            value: `${hop1}\nJOIN ${hop2}`,
+            score: 240,
+            meta: `M:M via ${shortTableName(junctionName)}`,
+            docHTML: `<div class="jrnybi-col-doc"><strong>M:M Relationship via Junction Table</strong><br/>` +
+              `<code>${shortTableName(existingFullName)}</code> ↔ <code>${shortTableName(targetTable)}</code> ` +
+              `through <code>${shortTableName(junctionName)}</code><br/>` +
+              `Uses 2-hop join: ${shortTableName(existingFullName)} → ${shortTableName(junctionName)} → ${shortTableName(targetTable)}</div>`,
+          });
+          return;
+        }
+      }
 
       if (includeOnClause) {
         // Generate alias and full JOIN clause with ON condition
@@ -478,19 +555,28 @@ function buildJoinSuggestions(ctx, rawSchema, fkGraph, includeOnClause) {
         );
         const onClause = onParts.join(" AND ");
 
+        const cardLabel = edge.cardinality ? ` [${edge.cardinality}]` : "";
+        const fanOutNote = edge.fanOutWarning
+          ? `<br/><span style="color:#b45309">⚠ Fan-out: This join may multiply rows (${edge.cardinality})</span>`
+          : "";
+
         suggestions.push({
           name: edge.relatedTable,
           value: `${edge.relatedTable} ${newAlias} ON ${onClause}`,
           score: 250, // higher than regular tables (100/200)
-          meta: `FK: ${edge.metaLabel}`,
+          meta: `FK${cardLabel}: ${edge.metaLabel}`,
+          docHTML: edge.fanOutWarning
+            ? `<div class="jrnybi-col-doc"><strong>JOIN ${shortTableName(edge.relatedTable)}</strong>${fanOutNote}</div>`
+            : undefined,
         });
       } else {
         // FROM clause: just prioritize the table, no ON clause
+        const cardLabel = edge.cardinality ? ` [${edge.cardinality}]` : "";
         suggestions.push({
           name: edge.relatedTable,
           value: edge.relatedTable,
           score: 250,
-          meta: `FK: ${edge.metaLabel}`,
+          meta: `FK${cardLabel}: ${edge.metaLabel}`,
         });
       }
     });

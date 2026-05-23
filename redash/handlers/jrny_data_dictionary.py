@@ -127,6 +127,8 @@ def _build_nested_response(rows, fk_map=None):
 
     # Regex to strip fk:schema.table.column annotations from comment text
     fk_comment_re = re.compile(r"\s*fk:\w+\.\w+\.\w+\s*")
+    # Regex to strip ' | display_column' tag from comment text
+    display_col_re = re.compile(r"\s*\|\s*display_column\b\s*")
 
     schemas = OrderedDict()
 
@@ -152,10 +154,11 @@ def _build_nested_response(rows, fk_map=None):
         col_name = row["column_name"]
         fk_info = fk_map.get((full_table_name, col_name))
 
-        # Clean the fk: annotation from the display comment
+        # Clean the fk: and display_column annotations from the display comment
         comment = row.get("column_comment")
         if comment:
-            comment = fk_comment_re.sub("", comment).strip() or None
+            comment = fk_comment_re.sub("", comment)
+            comment = display_col_re.sub("", comment).strip() or None
 
         # Add column
         schemas[schema_name][table_name]["columns"].append(

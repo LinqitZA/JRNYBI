@@ -387,6 +387,21 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- Add sales_order_audit table with 2 FKs to same target for multi-FK testing
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='sales' AND table_name='sales_order_audit') THEN
+    EXECUTE '
+      CREATE TABLE sales.sales_order_audit (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        order_id UUID,
+        sales_rep_id UUID,
+        created_by UUID,
+        action TEXT,
+        created_at TIMESTAMP DEFAULT now()
+      )';
+  END IF;
+END $$;
+
 -- Add user_preferences table for 1:1 FK cardinality testing
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='core' AND table_name='user_preferences') THEN
@@ -525,6 +540,27 @@ DO $$ BEGIN
   ) THEN
     ALTER TABLE crm.activities
       ADD CONSTRAINT fk_activities_opportunity FOREIGN KEY (opportunity_id) REFERENCES crm.opportunities(id);
+  END IF;
+END $$;
+
+-- FK for sales_order_audit (multiple FKs to same target: core.contacts)
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_soa_sales_rep' AND table_schema = 'sales'
+  ) THEN
+    ALTER TABLE sales.sales_order_audit
+      ADD CONSTRAINT fk_soa_sales_rep FOREIGN KEY (sales_rep_id) REFERENCES core.contacts(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_soa_created_by' AND table_schema = 'sales'
+  ) THEN
+    ALTER TABLE sales.sales_order_audit
+      ADD CONSTRAINT fk_soa_created_by FOREIGN KEY (created_by) REFERENCES core.contacts(id);
   END IF;
 END $$;
 
@@ -756,6 +792,10 @@ COMMENT ON COLUMN crm.opportunities.contact_id IS 'fk:core.contacts.id Related c
 COMMENT ON TABLE crm.activities IS 'CRM activity log (calls, emails, meetings)';
 COMMENT ON COLUMN crm.activities.contact_id IS 'fk:core.contacts.id Related contact';
 COMMENT ON COLUMN crm.activities.opportunity_id IS 'fk:crm.opportunities.id Related opportunity';
+
+COMMENT ON TABLE sales.sales_order_audit IS 'Sales order audit trail with multiple user FKs';
+COMMENT ON COLUMN sales.sales_order_audit.sales_rep_id IS 'Sales representative who managed the order';
+COMMENT ON COLUMN sales.sales_order_audit.created_by IS 'User who created the audit entry';
 
 COMMENT ON TABLE core.user_preferences IS 'Per-user preferences (1:1 with contacts)';
 COMMENT ON COLUMN core.user_preferences.user_id IS 'One-to-one FK to contacts';

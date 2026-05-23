@@ -10,6 +10,120 @@
 import { get } from "lodash";
 import { parseSQLContext } from "./sqlContext";
 
+// ---- Static FK display column map (JRNY schema) --------------------------------
+
+/**
+ * Static map of JRNY schema tables to their best display column(s).
+ * Checked FIRST in resolveDisplayColumn() — heuristics are the fallback
+ * for tables not in this map (e.g., user-created or custom tables).
+ *
+ * Multi-column entries (e.g., ["code", "name"]) add each column as a
+ * separate SELECT field when resolved.
+ */
+const FK_DISPLAY_MAP = {
+  // === core ===
+  "core.branches":        { columns: ["code", "name"] },
+  "core.countries":       { columns: ["code", "name"] },
+  "core.org_units":       { columns: ["code", "name"] },
+  "core.permissions":     { columns: ["code", "name"] },
+  "core.roles":           { columns: ["name"] },
+  "core.users":           { columns: ["display_name"] },
+  "core.webhook_events":  { columns: ["event_type"] },
+  "core.webhook_subscriptions": { columns: ["description"] },
+
+  // === crm ===
+  "crm.buying_groups":    { columns: ["code", "name"] },
+  "crm.customer_groups":  { columns: ["code", "name"] },
+  "crm.customers":        { columns: ["code", "name"] },
+  "crm.trading_partner_contacts": { columns: ["first_name", "last_name"] },
+  "crm.vendor_banking_details": { columns: ["bank_name", "account_number"] },
+  "crm.vendor_groups":    { columns: ["code", "name"] },
+  "crm.vendors":          { columns: ["code", "name"] },
+
+  // === cashbook ===
+  "cashbook.bank_accounts": { columns: ["account_name"] },
+
+  // === finance ===
+  "finance.accounting_periods": { columns: ["code", "name"] },
+  "finance.bank_accounts":     { columns: ["account_name"] },
+  "finance.budget_allocations": { columns: ["description"] },
+  "finance.credit_notes":      { columns: ["credit_note_number"] },
+  "finance.custom_dimension_members": { columns: ["code", "name"] },
+  "finance.customer_debit_notes": { columns: ["debit_note_number"] },
+  "finance.dimension_asset_members": { columns: ["code", "name"] },
+  "finance.dimension_function_members": { columns: ["code", "name"] },
+  "finance.dimension_market_members": { columns: ["code", "name"] },
+  "finance.dimension_project_members": { columns: ["code", "name"] },
+  "finance.dimension_rules":   { columns: ["dimension_name"] },
+  "finance.dimension_types":   { columns: ["code", "name"] },
+  "finance.fiscal_years":      { columns: ["name"] },
+  "finance.gl_accounts":       { columns: ["code", "name"] },
+  "finance.invoices":          { columns: ["invoice_number"] },
+  "finance.journal_batches":   { columns: ["batch_number"] },
+  "finance.journal_templates": { columns: ["name"] },
+  "finance.payment_terms":     { columns: ["code", "name"] },
+  "finance.provisions":        { columns: ["description"] },
+  "finance.tax_codes":         { columns: ["code", "name"] },
+
+  // === inventory ===
+  "inventory.bins":            { columns: ["code", "name"] },
+  "inventory.bom_headers":     { columns: ["bom_number"] },
+  "inventory.cartons":         { columns: ["barcode"] },
+  "inventory.devices":         { columns: ["device_name"] },
+  "inventory.grn_headers":     { columns: ["grn_number"] },
+  "inventory.locations":       { columns: ["code", "name"] },
+  "inventory.location_types":  { columns: ["code", "name"] },
+  "inventory.lot_batches":     { columns: ["lot_number"] },
+  "inventory.pack_stations":   { columns: ["name"] },
+  "inventory.product_groups":  { columns: ["code", "name"] },
+  "inventory.products":        { columns: ["code", "name"] },
+  "inventory.serial_numbers":  { columns: ["serial_number"] },
+  "inventory.shipping_stations": { columns: ["name"] },
+  "inventory.stock_adjustments": { columns: ["adjustment_number"] },
+  "inventory.stock_counts":    { columns: ["count_number"] },
+  "inventory.stock_transfers": { columns: ["transfer_number"] },
+  "inventory.uom_groups":      { columns: ["name"] },
+  "inventory.warehouses":      { columns: ["code", "name"] },
+
+  // === procurement ===
+  "procurement.purchase_orders": { columns: ["po_number"] },
+  "procurement.supplier_credit_notes": { columns: ["credit_note_number"] },
+  "procurement.supplier_debit_notes": { columns: ["debit_note_number"] },
+  "procurement.supplier_invoices": { columns: ["invoice_number"] },
+
+  // === sales ===
+  "sales.contracts":        { columns: ["contract_number"] },
+  "sales.dispatch_notes":   { columns: ["dispatch_number"] },
+  "sales.pick_instructions": { columns: ["pick_number"] },
+  "sales.promotions":       { columns: ["name"] },
+  "sales.quotations":       { columns: ["quotation_number"] },
+  "sales.rma_headers":      { columns: ["rma_number"] },
+  "sales.sales_orders":     { columns: ["order_number"] },
+  "sales.wave_picks":       { columns: ["wave_number"] },
+
+  // === config ===
+  "config.barcode_types":    { columns: ["name"] },
+  "config.product_types":    { columns: ["name"] },
+  "config.uom_descriptions": { columns: ["description"] },
+
+  // === assets ===
+  "assets.asset_classes":    { columns: ["code", "name"] },
+  "assets.assets":           { columns: ["asset_number", "description"] },
+
+  // === line-item / child tables (FK targets in jrny_fks.csv) ===
+  "finance.bank_statements":  { columns: ["statement_number"] },
+  "finance.forex_revaluations": { columns: ["description"] },
+  "finance.journal_lines":    { columns: ["description"] },
+  "inventory.cost_layers":    { columns: ["layer_number"] },
+  "inventory.grn_lines":      { columns: ["line_number"] },
+  "inventory.qr_mapper_templates": { columns: ["name"] },
+  "procurement.purchase_order_items": { columns: ["line_number"] },
+  "procurement.supplier_invoice_lines": { columns: ["line_number"] },
+  "procurement.supplier_product_pricing": { columns: ["description"] },
+  "sales.contract_lines":     { columns: ["line_number"] },
+  "sales.sales_order_lines":  { columns: ["line_number"] },
+};
+
 // ---- Display column heuristics -----------------------------------------------
 
 /** Priority-ordered list of common display column names. */
@@ -29,34 +143,57 @@ const SKIP_TYPES = ["uuid", "timestamp", "timestamptz", "date", "boolean", "byte
  * Determine the best "display column" for a table using heuristics.
  *
  * Priority:
- *   1. Columns with COMMENT containing 'display_column'
+ *   0. Static FK_DISPLAY_MAP lookup (JRNY schema — covers ~80 tables)
+ *   1. Columns with is_display_column flag (from COMMENT '... | display_column' tag)
  *   2. Common display column names (name, title, description, label, etc.)
  *   3. First non-ID text/varchar column
  *   4. First non-ID, non-UUID, non-timestamp column (regardless of type)
  *   5. Last resort: first column that isn't 'id'
  *
- * @param {Object} table - A schema table entry with columns array
- * @returns {string|null} The display column name, or null if none found
+ * @param {Object} table - A schema table entry with name and columns array
+ * @returns {string|string[]|null} The display column name(s), or null if none found.
+ *   Returns a single string for one column, an array for multiple columns.
  */
 export function resolveDisplayColumn(table) {
   if (!table || !table.columns) return null;
 
   const columns = table.columns;
+  const tableName = get(table, "name", "");
 
-  // 1. Check for COMMENT 'display_column' annotation
-  const annotated = columns.find(c => {
-    const desc = get(c, "description", "");
-    return desc && desc.toLowerCase().includes("display_column");
-  });
-  if (annotated) return get(annotated, "name");
+  // 0. Check static FK_DISPLAY_MAP first (authoritative for known JRNY tables)
+  const mapped = FK_DISPLAY_MAP[tableName];
+  if (mapped && mapped.columns) {
+    // Verify the mapped columns actually exist in the table's schema
+    const validCols = mapped.columns.filter(mc =>
+      columns.some(c => get(c, "name", "").toLowerCase() === mc.toLowerCase())
+    );
+    if (validCols.length === 1) return validCols[0];
+    if (validCols.length > 1) return validCols;
+    // If none of the mapped columns exist, fall through to heuristics
+  }
+
+  // 1. Check for is_display_column flag (set by backend from '| display_column' comment tag)
+  const tagged = columns.filter(c => get(c, "is_display_column", false));
+  if (tagged.length === 1) return get(tagged[0], "name");
+  if (tagged.length > 1) return tagged.map(c => get(c, "name"));
 
   // 2. Check common display column name patterns
+  // First pass: exact matches only (e.g., "name" column beats "branch_contact_name")
   for (const pattern of DISPLAY_COLUMN_NAMES) {
-    const match = columns.find(c => {
+    const exactMatch = columns.find(c => {
       const colName = get(c, "name", "").toLowerCase();
-      return colName === pattern || colName.endsWith(`_${pattern}`);
+      return colName === pattern;
     });
-    if (match) return get(match, "name");
+    if (exactMatch) return get(exactMatch, "name");
+  }
+
+  // Second pass: suffix matches only (e.g., "customer_name" when no exact "name" exists)
+  for (const pattern of DISPLAY_COLUMN_NAMES) {
+    const suffixMatch = columns.find(c => {
+      const colName = get(c, "name", "").toLowerCase();
+      return colName.endsWith(`_${pattern}`);
+    });
+    if (suffixMatch) return get(suffixMatch, "name");
   }
 
   // 3. Fall back to first text/varchar column that's not an ID
@@ -351,14 +488,24 @@ export function findFKColumnsInSelect(editor, rawSchema, fkGraph) {
             ? fk.edge.relatedTable.split(".").pop()
             : fk.edge.relatedTable;
 
-          const label = fk.edge.displayColumn
-            ? `Resolve → Show ${shortRelated}.${fk.edge.displayColumn}`
-            : `Resolve → JOIN ${shortRelated}`;
+          const dc = fk.edge.displayColumn;
+          let label;
+          if (dc) {
+            const dcList = Array.isArray(dc) ? dc : [dc];
+            label = `Resolve → Show ${dcList.map(c => `${shortRelated}.${c}`).join(", ")}`;
+          } else {
+            label = `Resolve → JOIN ${shortRelated}`;
+          }
+
+          // columnStartCol: where the actual column name begins (after qualifier + dot)
+          const dotIdx = pattern.indexOf(".");
+          const columnStartCol = dotIdx >= 0 ? col + dotIdx + 1 : col;
 
           markers.push({
             row,
             startCol: col,
             endCol,
+            columnStartCol,
             label,
             fkInfo: fk,
           });
@@ -742,13 +889,20 @@ export function applyFKResolution(editor, fkInfo, onChange) {
 
   let newQueryText = queryText;
 
-  // 1. Add display column after the FK column in SELECT (only if displayColumn is available)
+  // 1. Add display column(s) after the FK column in SELECT (only if displayColumn is available)
   if (edge.displayColumn) {
-    const displayRef = `${newAlias}.${edge.displayColumn}`;
+    // Normalize to array for uniform handling (supports multi-column display)
+    const displayCols = Array.isArray(edge.displayColumn)
+      ? edge.displayColumn
+      : [edge.displayColumn];
 
-    // Build the column name for the display (e.g., customer_name)
     const fkColShort = fkInfo.columnName.replace(/_id$/, "");
-    const displayAlias = `${fkColShort}_${edge.displayColumn}`;
+
+    // Build display references and aliases for each display column
+    const displayEntries = displayCols.map(dc => ({
+      ref: `${newAlias}.${dc}`,
+      alias: `${fkColShort}_${dc}`,
+    }));
 
     // Find the FK column reference near the cursor
     const searchStart = Math.max(0, queryText.indexOf(fullWord));
@@ -776,24 +930,36 @@ export function applyFKResolution(editor, fkInfo, onChange) {
 
         if (commaMatch) {
           // Trailing comma style (e.g., "  customer_id,\n  status")
-          // Insert the display column on a new line AFTER the existing comma
-          const commaEnd = afterFK + commaMatch[0].length; // position right after the comma
+          // Insert display column(s) on new lines AFTER the existing comma
+          const commaEnd = afterFK + commaMatch[0].length;
+          const insertText = displayEntries
+            .map(e => `\n${indent}${e.ref} AS ${e.alias},`)
+            .join("");
           newQueryText =
             newQueryText.substring(0, commaEnd) +
-            `\n${indent}${displayRef} AS ${displayAlias},` +
+            insertText +
             newQueryText.substring(commaEnd);
         } else {
-          // No trailing comma (e.g., last column before FROM): add comma + new line
+          // No trailing comma (last column before FROM): add comma + new lines
+          const insertText = displayEntries
+            .map((e, i) => {
+              const isLast = i === displayEntries.length - 1;
+              return isLast
+                ? `\n${indent}${e.ref} AS ${e.alias}`
+                : `\n${indent}${e.ref} AS ${e.alias},`;
+            })
+            .join("");
           newQueryText =
             newQueryText.substring(0, afterFK) +
-            `,\n${indent}${displayRef} AS ${displayAlias}` +
+            `,${insertText}` +
             newQueryText.substring(afterFK);
         }
       } else {
         // Single-line SELECT: insert with comma + space (no newline)
+        const insertText = displayEntries.map(e => `${e.ref} AS ${e.alias}`).join(", ");
         newQueryText =
           newQueryText.substring(0, afterFK) +
-          `, ${displayRef} AS ${displayAlias}` +
+          `, ${insertText}` +
           newQueryText.substring(afterFK);
       }
     }
