@@ -499,6 +499,74 @@ class JRNYPostgreSQL(PostgreSQL):
 
         return fk_map
 
+    def _get_unique_constraints(self):
+        """
+        Query pg_constraint for UNIQUE and PRIMARY KEY constraints across
+        JRNY schemas.  This data is used to:
+          - Mark columns as is_primary_key and/or is_unique in the schema payload
+          - Infer FK cardinality (1:1 vs 1:Many) by checking if the FK column
+            has a UNIQUE/PK constraint
+
+        Uses pg_constraint (not information_schema) to avoid table-ownership
+        restrictions — only requires has_table_privilege SELECT access.
+
+        Returns:
+            tuple: (pk_columns, unique_columns) where:
+                - pk_columns: set of (schema.table, column_name) tuples with PK constraints
+                - unique_columns: set of (schema.table, column_name) tuples with UNIQUE constraints
+        """
+        schema_list = ",".join("'{}'".format(s) for s in JRNY_SCHEMAS)
+
+        query = """
+        SELECT
+            n.nspname AS table_schema,
+            c.relname AS table_name,
+            a.attname AS column_name,
+            con.contype AS constraint_type
+        FROM pg_constraint con
+        JOIN pg_class c ON con.conrelid = c.oid
+        JOIN pg_namespace n ON c.relnamespace = n.oid
+        CROSS JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS cols(attnum, ord)
+        JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = cols.attnum
+        WHERE con.contype IN ('p', 'u')
+          AND n.nspname IN ({schemas})
+          AND has_table_privilege(c.oid, 'select')
+        ORDER BY n.nspname, c.relname, con.conname, cols.ord
+        """.format(schemas=schema_list)
+
+        try:
+            results, error = self.run_query(query, None)
+            if error is not None:
+                logger.warning("Failed to fetch unique constraints: %s", error)
+                return set(), set()
+        except Exception:
+            logger.warning("Exception fetching unique constraints", exc_info=True)
+            return set(), set()
+
+        pk_columns = set()
+        unique_columns = set()
+
+        if results and results.get("rows"):
+            for row in results["rows"]:
+                schema_name = row.get("table_schema", "")
+                table_name = row.get("table_name", "")
+                col_name = row.get("column_name", "")
+                constraint_type = row.get("constraint_type", "")
+
+                full_name = "{}.{}".format(schema_name, table_name)
+
+                if constraint_type == "p":
+                    pk_columns.add((full_name, col_name))
+                elif constraint_type == "u":
+                    unique_columns.add((full_name, col_name))
+
+        logger.debug(
+            "Found %d PK columns and %d UNIQUE columns",
+            len(pk_columns),
+            len(unique_columns),
+        )
+        return pk_columns, unique_columns
+
     def _get_view_column_origins(self, view_deps):
         """
         Infer which base table column each view column originates from by
@@ -873,6 +941,44 @@ class JRNYPostgreSQL(PostgreSQL):
                 len(comment_fks),
             )
 
+        # Fetch UNIQUE and PRIMARY KEY constraints
+        pk_columns, unique_columns = self._get_unique_constraints()
+
+        if pk_columns or unique_columns:
+            for table_name, table_info in schema_dict.items():
+                for column in table_info.get("columns", []):
+                    col_name = column.get("name") if isinstance(column, dict) else column
+                    key = (table_name, col_name)
+
+                    if key in pk_columns:
+                        if isinstance(column, dict):
+                            column["is_primary_key"] = True
+                        else:
+                            idx = table_info["columns"].index(column)
+                            table_info["columns"][idx] = {
+                                "name": column,
+                                "is_primary_key": True,
+                            }
+
+                    if key in unique_columns:
+                        if isinstance(column, dict):
+                            column["is_unique"] = True
+                        else:
+                            idx = table_info["columns"].index(column)
+                            if isinstance(table_info["columns"][idx], dict):
+                                table_info["columns"][idx]["is_unique"] = True
+                            else:
+                                table_info["columns"][idx] = {
+                                    "name": column,
+                                    "is_unique": True,
+                                }
+
+            logger.debug(
+                "Enriched schema with %d PK and %d UNIQUE constraints",
+                len(pk_columns),
+                len(unique_columns),
+            )
+
         # Add source_tables to view entries (view_deps already fetched above)
         if view_deps:
             for table_name, table_info in schema_dict.items():
@@ -886,7 +992,7 @@ class JRNYPostgreSQL(PostgreSQL):
                 if table_name in table_comments:
                     table_info["description"] = table_comments[table_name]
 
-                # Add column-level descriptions (strip fk: prefix from display)
+                # Add column-level descriptions (strip fk: and display_column tags from display)
                 for column in table_info.get("columns", []):
                     col_name = column.get("name") if isinstance(column, dict) else column
                     key = (table_name, col_name)
@@ -894,16 +1000,31 @@ class JRNYPostgreSQL(PostgreSQL):
                         desc = column_comments[key]
                         # Strip the fk:... annotation from the user-visible description
                         desc_clean = re.sub(r"\s*fk:\w+\.\w+\.\w+\s*", "", desc).strip()
-                        if desc_clean:
+
+                        # Parse and strip ' | display_column' tag
+                        is_display = bool(
+                            re.search(r"\|\s*display_column\b", desc_clean)
+                        )
+                        if is_display:
+                            desc_clean = re.sub(
+                                r"\s*\|\s*display_column\b\s*", "", desc_clean
+                            ).strip()
+
+                        if desc_clean or is_display:
                             if isinstance(column, dict):
-                                column["description"] = desc_clean
+                                if desc_clean:
+                                    column["description"] = desc_clean
+                                if is_display:
+                                    column["is_display_column"] = True
                             else:
                                 # Column is a plain string — upgrade to dict
                                 idx = table_info["columns"].index(column)
-                                table_info["columns"][idx] = {
-                                    "name": column,
-                                    "description": desc_clean,
-                                }
+                                new_col = {"name": column}
+                                if desc_clean:
+                                    new_col["description"] = desc_clean
+                                if is_display:
+                                    new_col["is_display_column"] = True
+                                table_info["columns"][idx] = new_col
 
         return list(schema_dict.values())
 

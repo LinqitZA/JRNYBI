@@ -355,6 +355,38 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- Add UNIQUE constraints for schema constraint testing
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'uq_branches_code' AND table_schema = 'core'
+  ) THEN
+    ALTER TABLE core.branches
+      ADD CONSTRAINT uq_branches_code UNIQUE (code);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'uq_organizations_code' AND table_schema = 'core'
+  ) THEN
+    ALTER TABLE core.organizations
+      ADD CONSTRAINT uq_organizations_code UNIQUE (code);
+  END IF;
+END $$;
+
+-- Add a composite unique constraint for testing
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'uq_stock_product_warehouse' AND table_schema = 'inventory'
+  ) THEN
+    ALTER TABLE inventory.stock_levels
+      ADD CONSTRAINT uq_stock_product_warehouse UNIQUE (product_id, warehouse_id);
+  END IF;
+END $$;
+
 -- Add foreign key constraints for schema relationship testing
 -- Note: Using DO blocks so constraints are idempotent (skip if already exists)
 DO $$ BEGIN
@@ -629,7 +661,10 @@ COMMENT ON VIEW reporting.v_product_catalogue IS 'Product catalogue view';
 
 COMMENT ON TABLE core.organizations IS 'Organization entities';
 COMMENT ON TABLE core.branches IS 'Organization branches';
+COMMENT ON COLUMN core.branches.code IS 'Unique short code | display_column';
+COMMENT ON COLUMN core.branches.name IS 'Full name of the branch | display_column';
 COMMENT ON TABLE core.contacts IS 'Contact information';
+COMMENT ON COLUMN core.contacts.first_name IS 'First name | display_column';
 
 COMMENT ON TABLE sales.quotes IS 'Sales quotes';
 COMMENT ON TABLE sales.sales_orders IS 'Sales orders';
