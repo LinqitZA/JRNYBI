@@ -1859,3 +1859,42 @@ Agent: Batch agent handling features #108, #109
 - Features passing: 109+ (111 total)
 - Features #108 and #109 complete
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+
+## Session 39: 2026-05-23
+Agent: Batch agent handling features #112, #106
+
+### Feature #112: Fix FK Resolution — parseSQLContext receives cursor offset instead of full query length (PASSING)
+- Fixed 3 bugs in FK resolution:
+  1. detectFKAtCursor() now passes queryText.length (not cursorOffset) to parseSQLContext
+     - When cursor is in SELECT clause (before FROM), parser never saw FROM clause → no tables → null
+     - Root cause: parseSQLContext only parses up to the position parameter
+  2. resolveAllFKColumns command rewritten: collects all FK cols upfront, deduplicates by
+     table+column, sorts bottom-to-top, resolves each once with position re-detection
+     - Old code re-detected on each pass → duplicated already-resolved columns
+     - Old code always picked fkCols[fkCols.length-1] → only resolved last FK column
+  3. findFKColumnsInSelect now deduplicates qualified/unqualified matches using posKey Set
+     - "o.customer_id" matched both patterns → inflated marker count in hint banner
+- Frontend rebuilt and deployed to Docker container
+- Committed as f3bffb56
+
+### Feature #106: Fix FK Resolution shortcut — move Ctrl+. from Ace to Mousetrap (PASSING)
+- Feature was already implemented in prior sessions (capture-phase Ctrl+Shift+J)
+- Added Ace release for Ctrl+. / Cmd+. (the original FK shortcut before #108 changed it)
+  - Prevents Ace from intercepting Ctrl+. if pressed
+- All verification steps satisfied:
+  - bindKey: null on resolveFKColumn ✅
+  - Ace release for Ctrl+. ✅
+  - Capture-phase listener for Ctrl+Shift+J (better than Mousetrap approach) ✅
+  - Cleanup via removeEventListener ✅
+  - FK markers (fk-resolvable-marker) functional ✅
+  - Tooltip shows Ctrl+Shift+J ✅
+- Committed as 03b30157
+
+## Files Modified
+- client/app/components/queries/QueryEditor/fkResolution.js - 3 bug fixes (cursor offset, dedup markers)
+- client/app/components/queries/QueryEditor/index.jsx - resolveAllFKColumns rewrite, Ctrl+. Ace release
+
+## Current Status
+- Features passing: 112 (112/112 = 100%)
+- All features complete
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
