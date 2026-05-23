@@ -1926,3 +1926,95 @@ Agent: Handling feature #115
 - Total features: 119
 - Feature #115 complete
 - Server at http://localhost:5001
+
+## Session: 2026-05-23
+Agent: Batch agent handling features #116, #117, #118
+
+### Feature #116: Change FK Resolution shortcut from Ctrl+Shift+J to Ctrl+Shift+L (PASSING)
+- Updated key detection in index.jsx: e.key === "J"/"j" → "L"/"l"
+- Updated Ace bindKey release: Ctrl-Shift-J → Ctrl-Shift-L
+- Updated FKHintBanner.jsx display text: ⌘⇧J → ⌘⇧L, Ctrl+Shift+J → Ctrl+Shift+L
+- Updated QueryEditorControls.jsx tooltip: Shift+J → Shift+L
+- Verified zero remaining Shift+J references in source code
+
+### Feature #117: Fix displayColumn resolution — handle tables without name/title columns (PASSING)
+- jrny_pg.py: Replaced NULL::text with format_type(a.atttypid, a.atttypmod) for materialized view data types
+- fkResolution.js resolveDisplayColumn(): Added two new fallback levels:
+  Level 4: First non-ID, non-UUID, non-timestamp column (regardless of type)
+  Level 5: Last resort — first column that isn't 'id'
+- Removed displayColumn gate from detectFKAtCursor() and findFKColumnsInSelect()
+- FKs with null displayColumn now offer JOIN resolution without display column insertion
+- Dynamic marker labels: "Resolve → Show table.col" or "Resolve → JOIN table"
+
+### Feature #118: Fix FK resolution formatting — newline and indentation for display columns (PASSING)
+- applyFKResolution: Detects multi-line vs single-line SELECT
+- Multi-line: captures indentation from FK column's line, inserts display column on new line
+- Handles trailing comma style (inserts after existing comma) and last column style (adds comma)
+- Single-line fallback: comma + space (no newline)
+
+## Files Modified
+- client/app/components/queries/QueryEditor/index.jsx - FK shortcut J→L
+- client/app/components/queries/FKHintBanner.jsx - Display text J→L
+- client/app/components/queries/QueryEditor/QueryEditorControls.jsx - Tooltip J→L
+- client/app/components/queries/QueryEditor/fkResolution.js - Display column fallbacks, null handling, formatting
+- redash/query_runner/jrny_pg.py - Materialized view data types
+
+## Current Status
+- Features passing: 115/119 (96.6%)
+- All 3 assigned features (#116, #117, #118) implemented and verified
+
+## Session 41: 2026-05-23
+Agent: Batch agent handling features #113, #114
+
+### Feature #113: Remove BeaconConsent usage data prompt from home page (PASSING)
+- Removed BeaconConsent import and render from Home.jsx
+- Emptied BeaconConsent.jsx (effectively deleted - cannot git rm from sandbox)
+- Removed BeaconConsentSettings import/render from GeneralSettings/index.jsx
+- Emptied BeaconConsentSettings.jsx
+- Removed USAGE_DATA_SHARING from HelpTrigger.jsx TYPES map
+- Removed 'beacon_consent': None from organization.py settings defaults
+- Removed showBeaconConsentMessage logic from authentication.py client_config()
+- Removed usage_data() function and beacon_consent posting from version_check.py
+- Removed Organization and db imports from version_check.py (no longer needed)
+- Verified: zero BeaconConsent/beacon_consent references in compiled JS (after cache clear + rebuild)
+- Verified: API /api/session response no longer includes showBeaconConsentMessage
+- Verified: /api/settings/organization response has no beacon_consent key
+- Committed as e0831524
+
+### Feature #114: Add Reports Dashboard with category tabs to home page (PASSING)
+- Created ReportsDashboard.jsx component with:
+  * Ant Design Tabs, one TabPane per category from /api/jrny/report-categories
+  * CategoryIcon component mapping icon strings to Ant Design icons (15 icon types)
+  * DashboardButton components linking to /dashboard/{slug}
+  * EmptyCategory with folder icon and "No reports in this category yet"
+  * Fetches categories and dashboards (tagged jrny-report) on mount
+  * Groups dashboards by category id tag client-side
+  * Loading spinner while fetching data
+  * "View All" link to dashboards page
+- Created ReportsDashboard.less with 22 CSS selectors:
+  * .reports-dashboard, .reports-tabs, .reports-tab-label
+  * .reports-grid (flex wrap), .report-button (hover: JRNY blue border)
+  * .reports-empty-state (centered icon + text)
+- Integrated into Home.jsx between HomeExtra and DashboardAndQueryFavoritesList
+- Uses .tile card pattern matching existing home page components
+- Verified: 5 categories returned from API (Sales, Finance, Inventory, Procurement, Cashbook)
+- Verified: compiled JS contains all component strings (22 CSS selectors, report-button-name, etc.)
+- Committed as c9ce5bbd
+
+## Files Modified
+- client/app/pages/home/Home.jsx - Removed BeaconConsent, added ReportsDashboard
+- client/app/components/BeaconConsent.jsx - Emptied (deleted content)
+- client/app/pages/settings/components/GeneralSettings/BeaconConsentSettings.jsx - Emptied
+- client/app/pages/settings/components/GeneralSettings/index.jsx - Removed BeaconConsentSettings
+- client/app/components/HelpTrigger.jsx - Removed USAGE_DATA_SHARING
+- redash/settings/organization.py - Removed beacon_consent default
+- redash/handlers/authentication.py - Removed showBeaconConsentMessage
+- redash/version_check.py - Removed usage_data() and beacon_consent posting
+- client/app/components/ReportsDashboard.jsx - NEW: Reports Dashboard component
+- client/app/components/ReportsDashboard.less - NEW: Reports Dashboard styles
+
+## Current Status
+- Features passing: 114 (114/119 = 95.8%)
+- Features #113 and #114 complete
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+- Frontend build hash: app.169f2e9bc59936358690
