@@ -19,7 +19,16 @@ import QuestionCircleOutlinedIcon from "@ant-design/icons/QuestionCircleOutlined
 import SettingOutlinedIcon from "@ant-design/icons/SettingOutlined";
 import BookOutlinedIcon from "@ant-design/icons/BookOutlined";
 import ArrowLeftOutlinedIcon from "@ant-design/icons/ArrowLeftOutlined";
+import UserOutlinedIcon from "@ant-design/icons/UserOutlined";
 import VersionInfo from "./VersionInfo";
+
+function getUserInitials(name) {
+  if (!name || typeof name !== "string") return null;
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 0 || !parts[0]) return null;
+  if (parts.length === 1) return parts[0][0].toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
 
 import "./DesktopNavbar.less";
 
@@ -180,7 +189,9 @@ export default function DesktopNavbar() {
             tabIndex={0}
             title={
               <span data-test="ProfileDropdown" className="desktop-navbar-profile-menu-title">
-                <img className="profile__image_thumb" src={currentUser.profile_image_url} alt={currentUser.name} />
+                <span className="profile-avatar" aria-label={currentUser.name}>
+                  {getUserInitials(currentUser.name) || <UserOutlinedIcon />}
+                </span>
               </span>
             }>
             <Menu.Item key="profile">

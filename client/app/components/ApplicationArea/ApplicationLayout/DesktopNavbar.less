@@ -158,12 +158,26 @@
       align-items: center;
       justify-content: center;
 
-      .profile__image_thumb {
-        margin: 0;
-        vertical-align: middle;
-        width: 28px;
-        height: 28px;
+      .profile-avatar {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
         border-radius: 50%;
+        background: @brandColor;
+        color: #fff;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        line-height: 1;
+        user-select: none;
+
+        .anticon {
+          font-size: 15px;
+          margin: 0;
+          color: #fff;
+        }
       }
     }
   }
