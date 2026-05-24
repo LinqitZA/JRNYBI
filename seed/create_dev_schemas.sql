@@ -331,6 +331,43 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='finance' AND table_name='gl_dimensions') THEN
+    EXECUTE '
+      CREATE TABLE finance.gl_dimensions (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        dimension_type TEXT NOT NULL,
+        name TEXT NOT NULL,
+        org_id UUID
+      )';
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='finance' AND table_name='dimension_members') THEN
+    EXECUTE '
+      CREATE TABLE finance.dimension_members (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        dimension_id UUID,
+        member_code TEXT,
+        member_name TEXT NOT NULL,
+        is_active BOOLEAN DEFAULT TRUE,
+        org_id UUID
+      )';
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='finance' AND table_name='gl_entry_dimensions') THEN
+    EXECUTE '
+      CREATE TABLE finance.gl_entry_dimensions (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        gl_entry_id UUID,
+        dimension_member_id UUID
+      )';
+  END IF;
+END $$;
+
 -- Inventory schema
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='inventory' AND table_name='stock_levels') THEN
@@ -886,6 +923,12 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='finance' AND table_name='invoices' AND column_name='branch_id') THEN
     ALTER TABLE finance.invoices ADD COLUMN branch_id UUID;
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='finance' AND table_name='invoices' AND column_name='status') THEN
+    ALTER TABLE finance.invoices ADD COLUMN status TEXT DEFAULT 'open';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='core' AND table_name='contacts' AND column_name='credit_limit') THEN
+    ALTER TABLE core.contacts ADD COLUMN credit_limit NUMERIC(12,2) DEFAULT 0;
+  END IF;
 END $$;
 
 DO $$ BEGIN
@@ -1091,6 +1134,36 @@ DO $$ BEGIN
   ) THEN
     ALTER TABLE finance.customer_payments
       ADD CONSTRAINT fk_cp_customer FOREIGN KEY (customer_id) REFERENCES core.contacts(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_dm_dimension' AND table_schema = 'finance'
+  ) THEN
+    ALTER TABLE finance.dimension_members
+      ADD CONSTRAINT fk_dm_dimension FOREIGN KEY (dimension_id) REFERENCES finance.gl_dimensions(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_ged_gl_entry' AND table_schema = 'finance'
+  ) THEN
+    ALTER TABLE finance.gl_entry_dimensions
+      ADD CONSTRAINT fk_ged_gl_entry FOREIGN KEY (gl_entry_id) REFERENCES finance.gl_entries(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_ged_dim_member' AND table_schema = 'finance'
+  ) THEN
+    ALTER TABLE finance.gl_entry_dimensions
+      ADD CONSTRAINT fk_ged_dim_member FOREIGN KEY (dimension_member_id) REFERENCES finance.dimension_members(id);
   END IF;
 END $$;
 
@@ -1491,6 +1564,14 @@ COMMENT ON TABLE finance.customer_payments IS 'Customer payments against invoice
 COMMENT ON COLUMN finance.customer_payments.invoice_id IS 'fk:finance.invoices.id Invoice being paid';
 COMMENT ON COLUMN finance.customer_payments.customer_id IS 'fk:core.contacts.id Customer making the payment';
 COMMENT ON COLUMN finance.customer_payments.payment_method IS 'Payment method: EFT, Cash, Cheque, Credit Card';
+COMMENT ON TABLE finance.gl_dimensions IS 'GL dimension types (Cost Centre, Department, Project, Territory)';
+COMMENT ON COLUMN finance.gl_dimensions.dimension_type IS 'Dimension category: cost_centre, department, project, territory | display_column';
+COMMENT ON TABLE finance.dimension_members IS 'Members within a GL dimension';
+COMMENT ON COLUMN finance.dimension_members.dimension_id IS 'fk:finance.gl_dimensions.id Parent dimension type';
+COMMENT ON COLUMN finance.dimension_members.member_name IS 'Dimension member name | display_column';
+COMMENT ON TABLE finance.gl_entry_dimensions IS 'Junction table linking GL entries to dimension members';
+COMMENT ON COLUMN finance.gl_entry_dimensions.gl_entry_id IS 'fk:finance.gl_entries.id GL entry';
+COMMENT ON COLUMN finance.gl_entry_dimensions.dimension_member_id IS 'fk:finance.dimension_members.id Dimension member';
 
 COMMENT ON TABLE inventory.stock_levels IS 'Current stock levels by warehouse';
 
@@ -1933,4 +2014,97 @@ BEGIN
     ('3100', 0, 65000.00, '2024-12-31', org, opex_insurance);
 
   RAISE NOTICE 'Finance seed data inserted: 28 accounts (P&L + BS), GL entries seeded';
+END $$;
+
+-- AR AGING SEED DATA: Invoices, Customer Payments, Credit Limits
+DO $$
+DECLARE
+  org UUID := '11111111-2222-3333-4444-555555555555';
+  c1 UUID;
+  c2 UUID;
+  c3 UUID;
+  c4 UUID;
+  c5 UUID;
+BEGIN
+  -- Skip if invoices already exist
+  IF EXISTS (SELECT 1 FROM finance.invoices LIMIT 1) THEN
+    RAISE NOTICE 'AR data already seeded, skipping';
+    RETURN;
+  END IF;
+
+  -- Get or create customer contacts with credit limits
+  SELECT id INTO c1 FROM core.contacts WHERE first_name = 'Alice' AND last_name = 'Johnson' LIMIT 1;
+  IF c1 IS NULL THEN
+    INSERT INTO core.contacts (first_name, last_name, email, org_id, credit_limit) VALUES ('Alice', 'Johnson', 'alice@example.com', org, 200000.00) RETURNING id INTO c1;
+  ELSE
+    UPDATE core.contacts SET credit_limit = 200000.00 WHERE id = c1;
+  END IF;
+
+  SELECT id INTO c2 FROM core.contacts WHERE first_name = 'Bob' AND last_name = 'Smith' LIMIT 1;
+  IF c2 IS NULL THEN
+    INSERT INTO core.contacts (first_name, last_name, email, org_id, credit_limit) VALUES ('Bob', 'Smith', 'bob@example.com', org, 150000.00) RETURNING id INTO c2;
+  ELSE
+    UPDATE core.contacts SET credit_limit = 150000.00 WHERE id = c2;
+  END IF;
+
+  SELECT id INTO c3 FROM core.contacts WHERE first_name = 'Carol' AND last_name = 'Davis' LIMIT 1;
+  IF c3 IS NULL THEN
+    INSERT INTO core.contacts (first_name, last_name, email, org_id, credit_limit) VALUES ('Carol', 'Davis', 'carol@example.com', org, 100000.00) RETURNING id INTO c3;
+  ELSE
+    UPDATE core.contacts SET credit_limit = 100000.00 WHERE id = c3;
+  END IF;
+
+  INSERT INTO core.contacts (first_name, last_name, email, org_id, credit_limit)
+  VALUES ('David', 'Wilson', 'david@example.com', org, 250000.00) RETURNING id INTO c4;
+  INSERT INTO core.contacts (first_name, last_name, email, org_id, credit_limit)
+  VALUES ('Emma', 'Taylor', 'emma@example.com', org, 80000.00) RETURNING id INTO c5;
+
+  -- Seed invoices with various aging buckets (relative to 2024-12-31 as reporting date)
+  -- Current (not yet due)
+  INSERT INTO finance.invoices (invoice_number, customer_id, total_amount, balance_due, invoice_date, due_date, org_id, branch_id, status) VALUES
+    ('INV-2024-001', c1, 45000.00, 45000.00, '2024-12-15', '2025-01-14', org, org, 'open'),
+    ('INV-2024-002', c2, 32000.00, 32000.00, '2024-12-20', '2025-01-19', org, org, 'open'),
+    ('INV-2024-003', c4, 58000.00, 58000.00, '2024-12-22', '2025-01-21', org, org, 'open'),
+    ('INV-2024-004', c3, 18000.00, 18000.00, '2024-12-28', '2025-01-27', org, org, 'open');
+
+  -- 1-30 Days overdue
+  INSERT INTO finance.invoices (invoice_number, customer_id, total_amount, balance_due, invoice_date, due_date, org_id, branch_id, status) VALUES
+    ('INV-2024-005', c1, 35000.00, 35000.00, '2024-11-10', '2024-12-10', org, org, 'overdue'),
+    ('INV-2024-006', c5, 22000.00, 15000.00, '2024-11-15', '2024-12-15', org, org, 'overdue'),
+    ('INV-2024-007', c4, 41000.00, 41000.00, '2024-11-20', '2024-12-20', org, org, 'overdue');
+
+  -- 31-60 Days overdue
+  INSERT INTO finance.invoices (invoice_number, customer_id, total_amount, balance_due, invoice_date, due_date, org_id, branch_id, status) VALUES
+    ('INV-2024-008', c2, 28000.00, 28000.00, '2024-10-05', '2024-11-04', org, org, 'overdue'),
+    ('INV-2024-009', c1, 52000.00, 30000.00, '2024-10-15', '2024-11-14', org, org, 'overdue'),
+    ('INV-2024-010', c3, 19000.00, 19000.00, '2024-10-20', '2024-11-19', org, org, 'overdue');
+
+  -- 61-90 Days overdue
+  INSERT INTO finance.invoices (invoice_number, customer_id, total_amount, balance_due, invoice_date, due_date, org_id, branch_id, status) VALUES
+    ('INV-2024-011', c4, 65000.00, 50000.00, '2024-09-01', '2024-10-01', org, org, 'overdue'),
+    ('INV-2024-012', c2, 18000.00, 18000.00, '2024-09-15', '2024-10-15', org, org, 'overdue');
+
+  -- 90+ Days overdue
+  INSERT INTO finance.invoices (invoice_number, customer_id, total_amount, balance_due, invoice_date, due_date, org_id, branch_id, status) VALUES
+    ('INV-2024-013', c5, 25000.00, 25000.00, '2024-07-01', '2024-07-31', org, org, 'overdue'),
+    ('INV-2024-014', c1, 42000.00, 42000.00, '2024-06-15', '2024-07-15', org, org, 'overdue'),
+    ('INV-2024-015', c3, 15000.00, 15000.00, '2024-08-01', '2024-08-31', org, org, 'overdue');
+
+  -- Fully paid invoices (for last payment date tracking)
+  INSERT INTO finance.invoices (invoice_number, customer_id, total_amount, balance_due, invoice_date, due_date, org_id, branch_id, status) VALUES
+    ('INV-2024-016', c1, 30000.00, 0, '2024-09-01', '2024-10-01', org, org, 'paid'),
+    ('INV-2024-017', c2, 25000.00, 0, '2024-10-01', '2024-10-31', org, org, 'paid'),
+    ('INV-2024-018', c4, 40000.00, 0, '2024-11-01', '2024-12-01', org, org, 'paid');
+
+  -- Customer payments
+  INSERT INTO finance.customer_payments (customer_id, payment_date, amount, org_id, branch_id) VALUES
+    (c1, '2024-12-05', 30000.00, org, org),
+    (c1, '2024-11-15', 22000.00, org, org),
+    (c2, '2024-11-20', 25000.00, org, org),
+    (c3, '2024-10-15', 12000.00, org, org),
+    (c4, '2024-12-10', 40000.00, org, org),
+    (c4, '2024-11-05', 15000.00, org, org),
+    (c5, '2024-12-18', 7000.00, org, org);
+
+  RAISE NOTICE 'AR Aging data seeded: 18 invoices, 7 payments, 5 customers with credit limits';
 END $$;

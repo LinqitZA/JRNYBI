@@ -623,6 +623,66 @@ ORDER BY on_time_pct ASC NULLS LAST, avg_days_to_pay DESC NULLS LAST;
         "options": {"parameters": DATE_PARAMS},
         "tags": ["finance", "jrny-report"],
     },
+    # ---- Finance: Revenue by Dimension ----
+    "revenue_by_dimension": {
+        "name": "Revenue by Dimension",
+        "description": "Revenue from GL entries sliced by dimension type (cost centre, department, project, territory) with contribution percentage.",
+        "query": """
+SELECT
+    rd.dimension_type,
+    rd.dimension_name,
+    rd.dimension_code,
+    SUM(rd.revenue_amount)                                               AS revenue,
+    ROUND(
+        100.0 * SUM(rd.revenue_amount)
+        / NULLIF(SUM(SUM(rd.revenue_amount)) OVER (), 0),
+        2
+    )                                                                    AS pct_of_total,
+    COUNT(DISTINCT rd.gl_entry_id)                                       AS entry_count
+FROM reporting.v_revenue_by_dimension rd
+WHERE rd.posting_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ dimension_type }}' = '' OR rd.dimension_type = '{{ dimension_type }}')
+GROUP BY rd.dimension_type, rd.dimension_name, rd.dimension_code
+ORDER BY revenue DESC;
+""".strip(),
+        "options": {
+            "parameters": DATE_PARAMS + [
+                {
+                    "name": "dimension_type",
+                    "title": "Dimension Type",
+                    "type": "text",
+                    "value": "",
+                },
+            ]
+        },
+        "tags": ["finance", "jrny-report"],
+    },
+    "revenue_dimension_trend": {
+        "name": "Revenue by Dimension - Trend",
+        "description": "Monthly revenue trend broken down by dimension member for time-series analysis.",
+        "query": """
+SELECT
+    rd.posting_month                                       AS month,
+    rd.dimension_name,
+    SUM(rd.revenue_amount)                                 AS revenue
+FROM reporting.v_revenue_by_dimension rd
+WHERE rd.posting_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ dimension_type }}' = '' OR rd.dimension_type = '{{ dimension_type }}')
+GROUP BY rd.posting_month, rd.dimension_name
+ORDER BY rd.posting_month, rd.dimension_name;
+""".strip(),
+        "options": {
+            "parameters": DATE_PARAMS + [
+                {
+                    "name": "dimension_type",
+                    "title": "Dimension Type",
+                    "type": "text",
+                    "value": "",
+                },
+            ]
+        },
+        "tags": ["finance", "jrny-report"],
+    },
     # ---- Finance: Budget vs Actual Variance ----
     "budget_variance": {
         "name": "Budget vs Actual Variance",
@@ -1306,6 +1366,58 @@ VISUALIZATIONS = {
             },
         },
     ],
+    "revenue_by_dimension": [
+        {
+            "name": "Revenue by Dimension (Bar)",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "bar",
+                "columnMapping": {
+                    "dimension_name": "x",
+                    "revenue": "y",
+                },
+                "sortX": True,
+                "legend": {"enabled": False},
+                "xAxis": {"type": "category"},
+                "yAxis": [{"type": "linear", "title": {"text": "Revenue"}}],
+                "series": {"stacking": None},
+            },
+        },
+        {
+            "name": "Revenue by Dimension Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "dimension_type", "title": "Dimension Type", "visible": True},
+                    {"name": "dimension_name", "title": "Dimension", "visible": True},
+                    {"name": "dimension_code", "title": "Code", "visible": True},
+                    {"name": "revenue", "title": "Revenue", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "pct_of_total", "title": "% of Total", "visible": True, "displayAs": "number", "numberFormat": "0.00", "alignContent": "right"},
+                    {"name": "entry_count", "title": "Entries", "visible": True, "alignContent": "right"},
+                ],
+            },
+        },
+    ],
+    "revenue_dimension_trend": [
+        {
+            "name": "Revenue Trend by Dimension",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "line",
+                "columnMapping": {
+                    "month": "x",
+                    "revenue": "y",
+                    "dimension_name": "series",
+                },
+                "xAxis": {"type": "datetime", "labels": {"enabled": True}},
+                "yAxis": [{"type": "linear", "title": {"text": "Revenue"}}],
+                "sortX": True,
+                "legend": {"enabled": True},
+                "series": {"stacking": None},
+            },
+        },
+    ],
     "ap_aging": [
         {
             "name": "AP Aging Detail Table",
@@ -1506,6 +1618,15 @@ DASHBOARDS = {
         "widgets": [
             {"query_key": "payment_terms_histogram", "vis_index": 0, "width": 6},  # Histogram
             {"query_key": "payment_terms_customer", "vis_index": 0, "width": 6},   # Customer table
+        ],
+    },
+    "revenue_by_dimension_dashboard": {
+        "name": "Revenue by Dimension",
+        "tags": ["finance", "jrny-report", "report:finance"],
+        "widgets": [
+            {"query_key": "revenue_by_dimension", "vis_index": 0, "width": 6},      # Bar chart
+            {"query_key": "revenue_dimension_trend", "vis_index": 0, "width": 6},    # Trend line
+            {"query_key": "revenue_by_dimension", "vis_index": 1, "width": 6},       # Table
         ],
     },
 }

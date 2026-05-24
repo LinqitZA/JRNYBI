@@ -42,6 +42,7 @@ DROP VIEW IF EXISTS reporting.v_sales_returns_analysis CASCADE;
 DROP VIEW IF EXISTS reporting.v_revenue_by_category CASCADE;
 DROP VIEW IF EXISTS reporting.v_credit_note_summary CASCADE;
 DROP VIEW IF EXISTS reporting.v_payment_terms_compliance CASCADE;
+DROP VIEW IF EXISTS reporting.v_revenue_by_dimension CASCADE;
 
 -- Also drop any legacy reporting tables (dev migration path)
 DROP TABLE IF EXISTS reporting.v_sales_orders CASCADE;
@@ -1023,6 +1024,42 @@ COMMENT ON COLUMN reporting.v_payment_terms_compliance.branch_id IS 'Branch ID f
 
 
 -- ============================================================================
+-- 27. v_revenue_by_dimension — Revenue from GL entries sliced by dimension
+-- ============================================================================
+CREATE VIEW reporting.v_revenue_by_dimension AS
+SELECT
+  gl.id                                                     AS gl_entry_id,
+  gl.posting_date,
+  coa.account_code,
+  coa.account_name,
+  coa.account_type,
+  coa.account_category,
+  (gl.credit - gl.debit)                                    AS revenue_amount,
+  dim.dimension_type,
+  dm.member_code                                            AS dimension_code,
+  dm.member_name                                            AS dimension_name,
+  dm.id                                                     AS dimension_member_id,
+  DATE_TRUNC('month', gl.posting_date)::DATE                AS posting_month,
+  gl.org_id,
+  NULL::UUID                                                AS branch_id
+FROM finance.gl_entries gl
+JOIN finance.chart_of_accounts coa ON coa.id = gl.account_id
+LEFT JOIN finance.gl_entry_dimensions ged ON ged.gl_entry_id = gl.id
+LEFT JOIN finance.dimension_members dm ON dm.id = ged.dimension_member_id
+LEFT JOIN finance.gl_dimensions dim ON dim.id = dm.dimension_id
+WHERE coa.account_type = 'revenue';
+
+COMMENT ON VIEW  reporting.v_revenue_by_dimension IS 'Revenue GL entries sliced by cost centre, department, project, or territory dimensions';
+COMMENT ON COLUMN reporting.v_revenue_by_dimension.revenue_amount IS 'Revenue amount (credit minus debit for revenue accounts)';
+COMMENT ON COLUMN reporting.v_revenue_by_dimension.dimension_type IS 'Dimension category: cost_centre, department, project, territory';
+COMMENT ON COLUMN reporting.v_revenue_by_dimension.dimension_name IS 'Dimension member name for grouping';
+COMMENT ON COLUMN reporting.v_revenue_by_dimension.posting_month IS 'Month of posting for trend analysis';
+COMMENT ON COLUMN reporting.v_revenue_by_dimension.dimension_member_id IS 'fk:finance.dimension_members.id Dimension member FK';
+COMMENT ON COLUMN reporting.v_revenue_by_dimension.org_id IS 'Organization ID for RLS filtering';
+COMMENT ON COLUMN reporting.v_revenue_by_dimension.branch_id IS 'Branch ID for RLS filtering';
+
+
+-- ============================================================================
 -- COMMENT ON annotations for base tables (idempotent)
 -- ============================================================================
 COMMENT ON VIEW reporting.v_sales_orders IS 'Denormalized sales order view with customer name and line aggregates';
@@ -1037,5 +1074,5 @@ COMMENT ON VIEW reporting.v_product_catalogue IS 'Product catalogue with pricing
 
 
 -- ============================================================================
--- Done — all 26 reporting views created successfully
+-- Done — all 27 reporting views created successfully
 -- ============================================================================
