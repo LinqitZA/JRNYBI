@@ -2424,3 +2424,43 @@ Agent: Single agent handling feature #132
 - Features passing: 134+ (172 total, ~78%)
 - Feature #132 verified and passing
 - Server at http://localhost:5001
+
+## Session 33: 2026-05-24
+Agent: Single agent handling feature #150
+
+### Feature #150: Tax/VAT Summary report (PASSING)
+- Created `finance.invoice_lines` table with tax_code, tax_rate, vat_amount columns
+- Created `finance.purchase_invoice_lines` table with matching VAT fields
+- Created `reporting.v_vat_summary` view combining output tax (sales) and input tax (purchases)
+  * UNION ALL of output_vat (from invoice_lines + invoices join) and input_vat (purchase_invoice_lines)
+  * Grouped by tax_code, tax_rate, period with org_id/branch_id for RLS
+- Seeded VAT test data: 16 invoice lines, 13 purchase invoice lines
+  * Tax codes: VAT (15%), VAT-Zero (0%), Exempt (0%)
+  * Output VAT: R23,190 on R154,600 taxable
+  * Input VAT: R20,715 on R138,100 taxable
+  * Net VAT payable: R2,475
+- Created 2 queries via API:
+  * Query 48: Tax/VAT Summary (aggregated by period, tax_code, tax_rate)
+  * Query 49: Monthly Liability Trend (output/input/net by month)
+- Created 2 custom visualizations:
+  * Vis 196: VAT Summary Table with formatted columns (output, input, net)
+  * Vis 197: Monthly VAT Liability Trend chart (red columns output, green columns input, blue line net)
+- Created dashboard 36 "Tax/VAT Summary" (slug: tax-vat-summary)
+  * 2 widgets: trend chart + summary table
+  * Published with tags: ["finance", "jrny-report", "report:finance"]
+- Both queries use data_source_id=1 (jrny_pg with RLS)
+- Date range parameters: start_date/end_date (fiscal period filtering)
+- Verified: dashboard loads 200 authenticated, 401 unauthenticated
+- Verified: data persists across server restart
+- Verified: no mock data patterns in modified files
+- Committed as 4c277d39
+
+## Files Modified
+- seed/create_dev_schemas.sql - Added invoice_lines, purchase_invoice_lines tables + VAT seed data
+- seed/create_reporting_views.sql - Added reporting.v_vat_summary view (#28)
+- seed/jrny_reports.py - Added vat_summary query/viz/dashboard definitions
+
+## Current Status
+- Features passing: 148 (172 total, ~86%)
+- Feature #150 verified and passing
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
