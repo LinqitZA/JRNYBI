@@ -44,6 +44,7 @@ DROP VIEW IF EXISTS reporting.v_credit_note_summary CASCADE;
 DROP VIEW IF EXISTS reporting.v_payment_terms_compliance CASCADE;
 DROP VIEW IF EXISTS reporting.v_revenue_by_dimension CASCADE;
 DROP VIEW IF EXISTS reporting.v_vat_summary CASCADE;
+DROP VIEW IF EXISTS reporting.v_inventory_turnover CASCADE;
 
 -- Also drop any legacy reporting tables (dev migration path)
 DROP TABLE IF EXISTS reporting.v_sales_orders CASCADE;
@@ -1146,5 +1147,94 @@ COMMENT ON COLUMN reporting.v_vat_summary.branch_id IS 'Branch ID for RLS filter
 
 
 -- ============================================================================
--- Done — all 28 reporting views created successfully
+-- 29. v_inventory_turnover — Stock turn ratio by product/category
+-- ============================================================================
+CREATE VIEW reporting.v_inventory_turnover AS
+WITH usage AS (
+  -- Total issues (COGS proxy) per product in the period window
+  SELECT
+    sm.product_id,
+    sm.warehouse_id,
+    SUM(ABS(sm.quantity))                                    AS total_issued,
+    SUM(ABS(sm.quantity) * COALESCE(p.unit_cost, 0))         AS cogs_value,
+    MIN(sm.movement_date)                                    AS first_movement,
+    MAX(sm.movement_date)                                    AS last_movement,
+    COUNT(DISTINCT DATE_TRUNC('day', sm.movement_date))      AS active_days,
+    sm.org_id,
+    sm.branch_id
+  FROM inventory.stock_movements sm
+  LEFT JOIN inventory.products p ON p.id = sm.product_id
+  WHERE sm.movement_type = 'issue'
+  GROUP BY sm.product_id, sm.warehouse_id, sm.org_id, sm.branch_id
+)
+SELECT
+  sl.id,
+  p.product_code,
+  p.product_name,
+  p.category,
+  w.warehouse_name                                          AS warehouse,
+  sl.quantity                                                AS current_stock,
+  COALESCE(sl.unit_cost, p.unit_cost, 0)                    AS unit_cost,
+  (sl.quantity * COALESCE(sl.unit_cost, p.unit_cost, 0))::NUMERIC(12,2)
+                                                             AS stock_value,
+  COALESCE(u.total_issued, 0)                               AS total_issued,
+  COALESCE(u.cogs_value, 0)                                 AS cogs_value,
+  -- Average stock value (simple: current + 0) / 2 as proxy
+  CASE
+    WHEN (sl.quantity * COALESCE(sl.unit_cost, p.unit_cost, 0)) > 0
+      THEN ROUND(
+        COALESCE(u.cogs_value, 0)
+        / (sl.quantity * COALESCE(sl.unit_cost, p.unit_cost, 0)),
+        2
+      )
+    ELSE 0
+  END                                                        AS turnover_ratio,
+  -- Average daily usage based on issue history
+  CASE
+    WHEN COALESCE(u.active_days, 0) > 0
+      THEN ROUND(u.total_issued / u.active_days, 2)
+    ELSE 0
+  END                                                        AS avg_daily_usage,
+  -- Days of stock on hand
+  CASE
+    WHEN COALESCE(u.active_days, 0) > 0 AND u.total_issued > 0
+      THEN ROUND(sl.quantity / (u.total_issued / u.active_days), 0)
+    ELSE NULL
+  END                                                        AS days_of_stock,
+  -- Classification
+  CASE
+    WHEN COALESCE(u.active_days, 0) = 0 THEN 'No Movement'
+    WHEN COALESCE(u.cogs_value, 0) /
+         NULLIF(sl.quantity * COALESCE(sl.unit_cost, p.unit_cost, 0), 0) >= 4
+      THEN 'Fast Mover'
+    WHEN COALESCE(u.cogs_value, 0) /
+         NULLIF(sl.quantity * COALESCE(sl.unit_cost, p.unit_cost, 0), 0) >= 1
+      THEN 'Normal'
+    ELSE 'Slow Mover'
+  END                                                        AS turnover_class,
+  sl.product_id,
+  sl.warehouse_id,
+  sl.org_id,
+  COALESCE(w.branch_id, u.branch_id)                        AS branch_id
+FROM inventory.stock_levels sl
+LEFT JOIN inventory.products p ON p.id = sl.product_id
+LEFT JOIN inventory.warehouses w ON w.id = sl.warehouse_id
+LEFT JOIN usage u ON u.product_id = sl.product_id
+                  AND u.warehouse_id = sl.warehouse_id
+WHERE sl.quantity > 0;
+
+COMMENT ON VIEW  reporting.v_inventory_turnover IS 'Inventory turnover analysis: stock turn ratio, days-of-stock, and fast/slow mover classification';
+COMMENT ON COLUMN reporting.v_inventory_turnover.turnover_ratio IS 'COGS / current stock value — higher = faster moving';
+COMMENT ON COLUMN reporting.v_inventory_turnover.avg_daily_usage IS 'Average daily issue quantity based on movement history';
+COMMENT ON COLUMN reporting.v_inventory_turnover.days_of_stock IS 'Estimated days of supply at current usage rate';
+COMMENT ON COLUMN reporting.v_inventory_turnover.turnover_class IS 'Classification: Fast Mover (>=4x), Normal (1-4x), Slow Mover (<1x), No Movement';
+COMMENT ON COLUMN reporting.v_inventory_turnover.cogs_value IS 'Cost of goods sold (issues x unit cost)';
+COMMENT ON COLUMN reporting.v_inventory_turnover.product_id IS 'fk:inventory.products.id Product FK';
+COMMENT ON COLUMN reporting.v_inventory_turnover.warehouse_id IS 'fk:inventory.warehouses.id Warehouse FK';
+COMMENT ON COLUMN reporting.v_inventory_turnover.org_id IS 'Organization ID for RLS filtering';
+COMMENT ON COLUMN reporting.v_inventory_turnover.branch_id IS 'Branch ID for RLS filtering';
+
+
+-- ============================================================================
+-- Done — all 29 reporting views created successfully
 -- ============================================================================
