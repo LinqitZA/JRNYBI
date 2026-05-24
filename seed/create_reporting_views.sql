@@ -41,6 +41,7 @@ DROP VIEW IF EXISTS reporting.v_quote_to_order_conversion CASCADE;
 DROP VIEW IF EXISTS reporting.v_sales_returns_analysis CASCADE;
 DROP VIEW IF EXISTS reporting.v_revenue_by_category CASCADE;
 DROP VIEW IF EXISTS reporting.v_credit_note_summary CASCADE;
+DROP VIEW IF EXISTS reporting.v_payment_terms_compliance CASCADE;
 
 -- Also drop any legacy reporting tables (dev migration path)
 DROP TABLE IF EXISTS reporting.v_sales_orders CASCADE;
@@ -973,6 +974,55 @@ COMMENT ON COLUMN reporting.v_credit_note_summary.branch_id IS 'Branch ID for RL
 
 
 -- ============================================================================
+-- 26. v_payment_terms_compliance — Invoice payment compliance with days-to-pay
+-- ============================================================================
+CREATE VIEW reporting.v_payment_terms_compliance AS
+SELECT
+  inv.id                                                    AS invoice_id,
+  inv.invoice_number,
+  c.first_name || ' ' || c.last_name                      AS customer_name,
+  inv.customer_id,
+  inv.invoice_date,
+  inv.due_date,
+  inv.total_amount,
+  inv.balance_due,
+  cp.payment_date,
+  cp.amount                                                 AS payment_amount,
+  CASE
+    WHEN cp.payment_date IS NOT NULL
+      THEN cp.payment_date - inv.invoice_date
+    ELSE NULL
+  END                                                       AS days_to_pay,
+  CASE
+    WHEN cp.payment_date IS NULL THEN 'Unpaid'
+    WHEN cp.payment_date <= inv.due_date THEN 'On Time'
+    ELSE 'Late'
+  END                                                       AS payment_status,
+  CASE
+    WHEN cp.payment_date IS NOT NULL AND cp.payment_date > inv.due_date
+      THEN cp.payment_date - inv.due_date
+    ELSE 0
+  END                                                       AS days_late,
+  inv.due_date - inv.invoice_date                           AS payment_terms_days,
+  DATE_TRUNC('month', inv.invoice_date)::DATE               AS invoice_month,
+  COALESCE(inv.org_id, c.org_id)                            AS org_id,
+  inv.branch_id
+FROM finance.invoices inv
+LEFT JOIN core.contacts c ON c.id = inv.customer_id
+LEFT JOIN finance.customer_payments cp ON cp.invoice_id = inv.id;
+
+COMMENT ON VIEW  reporting.v_payment_terms_compliance IS 'Invoice payment compliance with days-to-pay and on-time metrics';
+COMMENT ON COLUMN reporting.v_payment_terms_compliance.days_to_pay IS 'Days between invoice date and payment date';
+COMMENT ON COLUMN reporting.v_payment_terms_compliance.payment_status IS 'Payment timing: On Time, Late, or Unpaid';
+COMMENT ON COLUMN reporting.v_payment_terms_compliance.days_late IS 'Number of days payment was received after due date (0 if on time)';
+COMMENT ON COLUMN reporting.v_payment_terms_compliance.payment_terms_days IS 'Number of days between invoice and due date (payment terms)';
+COMMENT ON COLUMN reporting.v_payment_terms_compliance.invoice_month IS 'Month of invoice for trend analysis';
+COMMENT ON COLUMN reporting.v_payment_terms_compliance.customer_id IS 'fk:core.contacts.id Invoice customer FK';
+COMMENT ON COLUMN reporting.v_payment_terms_compliance.org_id IS 'Organization ID for RLS filtering';
+COMMENT ON COLUMN reporting.v_payment_terms_compliance.branch_id IS 'Branch ID for RLS filtering';
+
+
+-- ============================================================================
 -- COMMENT ON annotations for base tables (idempotent)
 -- ============================================================================
 COMMENT ON VIEW reporting.v_sales_orders IS 'Denormalized sales order view with customer name and line aggregates';
@@ -987,5 +1037,5 @@ COMMENT ON VIEW reporting.v_product_catalogue IS 'Product catalogue with pricing
 
 
 -- ============================================================================
--- Done — all 25 reporting views created successfully
+-- Done — all 26 reporting views created successfully
 -- ============================================================================

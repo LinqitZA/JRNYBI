@@ -314,6 +314,23 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='finance' AND table_name='customer_payments') THEN
+    EXECUTE '
+      CREATE TABLE finance.customer_payments (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        invoice_id UUID,
+        customer_id UUID,
+        payment_date DATE DEFAULT CURRENT_DATE,
+        amount NUMERIC(12,2) DEFAULT 0,
+        payment_method TEXT,
+        reference TEXT,
+        org_id UUID,
+        branch_id UUID
+      )';
+  END IF;
+END $$;
+
 -- Inventory schema
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='inventory' AND table_name='stock_levels') THEN
@@ -1060,6 +1077,26 @@ END $$;
 DO $$ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_cp_invoice' AND table_schema = 'finance'
+  ) THEN
+    ALTER TABLE finance.customer_payments
+      ADD CONSTRAINT fk_cp_invoice FOREIGN KEY (invoice_id) REFERENCES finance.invoices(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_cp_customer' AND table_schema = 'finance'
+  ) THEN
+    ALTER TABLE finance.customer_payments
+      ADD CONSTRAINT fk_cp_customer FOREIGN KEY (customer_id) REFERENCES core.contacts(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
     WHERE constraint_name = 'fk_pol_po' AND table_schema = 'procurement'
   ) THEN
     ALTER TABLE procurement.purchase_order_lines
@@ -1450,6 +1487,10 @@ COMMENT ON COLUMN finance.credit_notes.reason IS 'Credit note reason: Quality Is
 COMMENT ON TABLE finance.credit_note_lines IS 'Line items on a credit note';
 COMMENT ON COLUMN finance.credit_note_lines.credit_note_id IS 'fk:finance.credit_notes.id Parent credit note';
 COMMENT ON COLUMN finance.credit_note_lines.product_id IS 'fk:inventory.products.id Product being credited';
+COMMENT ON TABLE finance.customer_payments IS 'Customer payments against invoices';
+COMMENT ON COLUMN finance.customer_payments.invoice_id IS 'fk:finance.invoices.id Invoice being paid';
+COMMENT ON COLUMN finance.customer_payments.customer_id IS 'fk:core.contacts.id Customer making the payment';
+COMMENT ON COLUMN finance.customer_payments.payment_method IS 'Payment method: EFT, Cash, Cheque, Credit Card';
 
 COMMENT ON TABLE inventory.stock_levels IS 'Current stock levels by warehouse';
 

@@ -345,6 +345,130 @@ LIMIT 50;
         "options": {"parameters": DATE_PARAMS},
         "tags": ["procurement", "jrny-report"],
     },
+    # ---- Finance: GL Account Activity ----
+    "gl_account_activity": {
+        "name": "GL Account Activity",
+        "description": "Transaction-level detail for any GL account in a date range. Shows debit, credit, and running balance for drill-down investigation.",
+        "query": """
+WITH opening AS (
+    SELECT
+        COALESCE(SUM(gl.debit - gl.credit), 0) AS opening_balance
+    FROM reporting.v_general_ledger gl
+    WHERE gl.account_code = '{{ account_code }}'
+      AND gl.posting_date < '{{ start_date }}'
+),
+activity AS (
+    SELECT
+        gl.posting_date,
+        gl.account_code,
+        gl.account_name,
+        gl.account_type,
+        gl.debit,
+        gl.credit,
+        gl.net_amount
+    FROM reporting.v_general_ledger gl
+    WHERE gl.account_code = '{{ account_code }}'
+      AND gl.posting_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+)
+SELECT
+    a.posting_date,
+    a.account_code,
+    a.account_name,
+    a.account_type,
+    a.debit,
+    a.credit,
+    a.net_amount,
+    (SELECT opening_balance FROM opening)
+        + SUM(a.net_amount) OVER (ORDER BY a.posting_date, a.debit DESC ROWS UNBOUNDED PRECEDING)
+        AS running_balance
+FROM activity a
+ORDER BY a.posting_date, a.debit DESC;
+""".strip(),
+        "options": {
+            "parameters": [
+                {
+                    "name": "account_code",
+                    "title": "Account Code",
+                    "type": "text",
+                    "value": "4000",
+                },
+                {
+                    "name": "start_date",
+                    "title": "Start Date",
+                    "type": "date",
+                    "value": "2024-01-01",
+                },
+                {
+                    "name": "end_date",
+                    "title": "End Date",
+                    "type": "date",
+                    "value": "2024-12-31",
+                },
+            ]
+        },
+        "tags": ["finance", "jrny-report"],
+    },
+    "gl_account_summary": {
+        "name": "GL Account Activity - Summary",
+        "description": "Opening balance, total debits, credits, and closing balance for a GL account in a date range.",
+        "query": """
+SELECT
+    '{{ account_code }}' AS account_code,
+    coa.account_name,
+    coa.account_type,
+    COALESCE(ob.opening_balance, 0) AS opening_balance,
+    COALESCE(act.total_debit, 0) AS total_debit,
+    COALESCE(act.total_credit, 0) AS total_credit,
+    COALESCE(act.total_net, 0) AS period_movement,
+    COALESCE(ob.opening_balance, 0) + COALESCE(act.total_net, 0) AS closing_balance,
+    COALESCE(act.transaction_count, 0) AS transaction_count
+FROM (
+    SELECT account_name, account_type
+    FROM reporting.v_general_ledger
+    WHERE account_code = '{{ account_code }}'
+    LIMIT 1
+) coa
+LEFT JOIN LATERAL (
+    SELECT SUM(debit - credit) AS opening_balance
+    FROM reporting.v_general_ledger
+    WHERE account_code = '{{ account_code }}'
+      AND posting_date < '{{ start_date }}'
+) ob ON TRUE
+LEFT JOIN LATERAL (
+    SELECT
+        SUM(debit) AS total_debit,
+        SUM(credit) AS total_credit,
+        SUM(debit - credit) AS total_net,
+        COUNT(*) AS transaction_count
+    FROM reporting.v_general_ledger
+    WHERE account_code = '{{ account_code }}'
+      AND posting_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+) act ON TRUE;
+""".strip(),
+        "options": {
+            "parameters": [
+                {
+                    "name": "account_code",
+                    "title": "Account Code",
+                    "type": "text",
+                    "value": "4000",
+                },
+                {
+                    "name": "start_date",
+                    "title": "Start Date",
+                    "type": "date",
+                    "value": "2024-01-01",
+                },
+                {
+                    "name": "end_date",
+                    "title": "End Date",
+                    "type": "date",
+                    "value": "2024-12-31",
+                },
+            ]
+        },
+        "tags": ["finance", "jrny-report"],
+    },
     # ---- Finance: Accounts Payable Aging ----
     "ap_aging": {
         "name": "Accounts Payable Aging",
@@ -429,6 +553,72 @@ SELECT
 FROM reporting.v_credit_note_summary cn
 WHERE cn.credit_note_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
 ORDER BY cn.credit_note_date DESC, cn.customer_name;
+""".strip(),
+        "options": {"parameters": DATE_PARAMS},
+        "tags": ["finance", "jrny-report"],
+    },
+    # ---- Finance: Payment Terms Compliance ----
+    "payment_terms_histogram": {
+        "name": "Payment Terms Compliance - Days to Pay",
+        "description": "Distribution of days-to-pay across all paid invoices, with on-time vs late breakdown.",
+        "query": """
+SELECT
+    CASE
+        WHEN ptc.days_to_pay <= 7 THEN '0-7 days'
+        WHEN ptc.days_to_pay <= 14 THEN '8-14 days'
+        WHEN ptc.days_to_pay <= 21 THEN '15-21 days'
+        WHEN ptc.days_to_pay <= 30 THEN '22-30 days'
+        WHEN ptc.days_to_pay <= 45 THEN '31-45 days'
+        WHEN ptc.days_to_pay <= 60 THEN '46-60 days'
+        WHEN ptc.days_to_pay <= 90 THEN '61-90 days'
+        ELSE '90+ days'
+    END                                        AS days_to_pay_bucket,
+    ptc.payment_status,
+    COUNT(*)                                   AS invoice_count,
+    SUM(ptc.total_amount)                      AS total_value,
+    ROUND(AVG(ptc.days_to_pay), 1)             AS avg_days_to_pay
+FROM reporting.v_payment_terms_compliance ptc
+WHERE ptc.invoice_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ptc.payment_status != 'Unpaid'
+GROUP BY 1, ptc.payment_status
+ORDER BY
+    CASE
+        WHEN days_to_pay_bucket = '0-7 days' THEN 1
+        WHEN days_to_pay_bucket = '8-14 days' THEN 2
+        WHEN days_to_pay_bucket = '15-21 days' THEN 3
+        WHEN days_to_pay_bucket = '22-30 days' THEN 4
+        WHEN days_to_pay_bucket = '31-45 days' THEN 5
+        WHEN days_to_pay_bucket = '46-60 days' THEN 6
+        WHEN days_to_pay_bucket = '61-90 days' THEN 7
+        ELSE 8
+    END;
+""".strip(),
+        "options": {"parameters": DATE_PARAMS},
+        "tags": ["finance", "jrny-report"],
+    },
+    "payment_terms_customer": {
+        "name": "Payment Terms Compliance - By Customer",
+        "description": "Customer-level payment compliance showing average days-to-pay, on-time percentage, and outstanding balance.",
+        "query": """
+SELECT
+    ptc.customer_name,
+    COUNT(DISTINCT ptc.invoice_id)                                           AS total_invoices,
+    COUNT(DISTINCT CASE WHEN ptc.payment_status = 'On Time' THEN ptc.invoice_id END)  AS on_time_count,
+    COUNT(DISTINCT CASE WHEN ptc.payment_status = 'Late' THEN ptc.invoice_id END)     AS late_count,
+    COUNT(DISTINCT CASE WHEN ptc.payment_status = 'Unpaid' THEN ptc.invoice_id END)   AS unpaid_count,
+    ROUND(
+        100.0 * COUNT(DISTINCT CASE WHEN ptc.payment_status = 'On Time' THEN ptc.invoice_id END)
+        / NULLIF(COUNT(DISTINCT CASE WHEN ptc.payment_status != 'Unpaid' THEN ptc.invoice_id END), 0),
+        1
+    )                                                                        AS on_time_pct,
+    ROUND(AVG(ptc.days_to_pay), 1)                                           AS avg_days_to_pay,
+    ROUND(AVG(ptc.days_late), 1)                                             AS avg_days_late,
+    SUM(ptc.total_amount)                                                    AS total_invoiced,
+    SUM(ptc.balance_due)                                                     AS total_outstanding
+FROM reporting.v_payment_terms_compliance ptc
+WHERE ptc.invoice_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+GROUP BY ptc.customer_name
+ORDER BY on_time_pct ASC NULLS LAST, avg_days_to_pay DESC NULLS LAST;
 """.strip(),
         "options": {"parameters": DATE_PARAMS},
         "tags": ["finance", "jrny-report"],
@@ -931,6 +1121,87 @@ VISUALIZATIONS = {
             },
         },
     ],
+    "gl_account_activity": [
+        {
+            "name": "GL Account Activity Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 50,
+                "columns": [
+                    {"name": "posting_date", "title": "Posting Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "account_code", "title": "Account Code", "visible": True},
+                    {"name": "account_name", "title": "Account Name", "visible": True},
+                    {"name": "account_type", "title": "Type", "visible": True},
+                    {"name": "debit", "title": "Debit", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "credit", "title": "Credit", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "net_amount", "title": "Net", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "running_balance", "title": "Running Balance", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                ],
+            },
+        },
+    ],
+    "gl_account_summary": [
+        {
+            "name": "Opening Balance",
+            "type": "COUNTER",
+            "options": {
+                "counterLabel": "Opening Balance",
+                "counterColName": "opening_balance",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 2,
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0.00",
+            },
+        },
+        {
+            "name": "Closing Balance",
+            "type": "COUNTER",
+            "options": {
+                "counterLabel": "Closing Balance",
+                "counterColName": "closing_balance",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 2,
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0.00",
+            },
+        },
+        {
+            "name": "Period Movement",
+            "type": "COUNTER",
+            "options": {
+                "counterLabel": "Period Movement",
+                "counterColName": "period_movement",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 2,
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0.00",
+            },
+        },
+        {
+            "name": "Account Summary Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 5,
+                "columns": [
+                    {"name": "account_code", "title": "Account Code", "visible": True},
+                    {"name": "account_name", "title": "Account Name", "visible": True},
+                    {"name": "account_type", "title": "Type", "visible": True},
+                    {"name": "opening_balance", "title": "Opening Balance", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "total_debit", "title": "Total Debit", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "total_credit", "title": "Total Credit", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "period_movement", "title": "Movement", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "closing_balance", "title": "Closing Balance", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "transaction_count", "title": "Transactions", "visible": True, "alignContent": "right"},
+                ],
+            },
+        },
+    ],
     "budget_variance": [
         {
             "name": "Budget vs Actual Detail Table",
@@ -989,6 +1260,48 @@ VISUALIZATIONS = {
                     {"name": "over_budget_count", "title": "Over Budget", "visible": True, "alignContent": "right"},
                     {"name": "under_budget_count", "title": "Under Budget", "visible": True, "alignContent": "right"},
                     {"name": "significant_variances", "title": ">10% Variances", "visible": True, "alignContent": "right"},
+                ],
+            },
+        },
+    ],
+    "payment_terms_histogram": [
+        {
+            "name": "Days to Pay Distribution",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "column",
+                "columnMapping": {
+                    "days_to_pay_bucket": "x",
+                    "invoice_count": "y",
+                },
+                "seriesOptions": {
+                    "invoice_count": {"type": "column", "yAxis": 0, "name": "Invoice Count"},
+                },
+                "xAxis": {"type": "category"},
+                "yAxis": [{"type": "linear", "title": {"text": "Invoices"}}],
+                "sortX": True,
+                "legend": {"enabled": True},
+                "series": {"stacking": "normal"},
+            },
+        },
+    ],
+    "payment_terms_customer": [
+        {
+            "name": "Customer Payment Compliance Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "customer_name", "title": "Customer", "visible": True},
+                    {"name": "total_invoices", "title": "Invoices", "visible": True, "alignContent": "right"},
+                    {"name": "on_time_count", "title": "On Time", "visible": True, "alignContent": "right"},
+                    {"name": "late_count", "title": "Late", "visible": True, "alignContent": "right"},
+                    {"name": "unpaid_count", "title": "Unpaid", "visible": True, "alignContent": "right"},
+                    {"name": "on_time_pct", "title": "On Time %", "visible": True, "displayAs": "number", "numberFormat": "0.0", "alignContent": "right"},
+                    {"name": "avg_days_to_pay", "title": "Avg Days to Pay", "visible": True, "alignContent": "right"},
+                    {"name": "avg_days_late", "title": "Avg Days Late", "visible": True, "alignContent": "right"},
+                    {"name": "total_invoiced", "title": "Total Invoiced", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "total_outstanding", "title": "Outstanding", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                 ],
             },
         },
@@ -1147,6 +1460,17 @@ DASHBOARDS = {
             {"query_key": "supplier_spend_analysis", "vis_index": 1, "width": 6},
         ],
     },
+    "gl_account_activity_dashboard": {
+        "name": "GL Account Activity",
+        "tags": ["finance", "jrny-report", "report:finance"],
+        "widgets": [
+            {"query_key": "gl_account_summary", "vis_index": 0, "width": 2},   # Opening Balance KPI
+            {"query_key": "gl_account_summary", "vis_index": 1, "width": 2},   # Closing Balance KPI
+            {"query_key": "gl_account_summary", "vis_index": 2, "width": 2},   # Period Movement KPI
+            {"query_key": "gl_account_summary", "vis_index": 3, "width": 6},   # Summary table
+            {"query_key": "gl_account_activity", "vis_index": 0, "width": 6},   # Detail table
+        ],
+    },
     "budget_variance_dashboard": {
         "name": "Budget vs Actual Variance",
         "tags": ["finance", "jrny-report", "report:finance"],
@@ -1174,6 +1498,14 @@ DASHBOARDS = {
             {"query_key": "credit_note_trend", "vis_index": 1, "width": 3},  # CN Rate % line
             {"query_key": "credit_note_trend", "vis_index": 2, "width": 3},  # Reason pie
             {"query_key": "credit_note_detail", "vis_index": 0, "width": 6}, # Detail table
+        ],
+    },
+    "payment_terms_dashboard": {
+        "name": "Payment Terms Compliance",
+        "tags": ["finance", "jrny-report", "report:finance"],
+        "widgets": [
+            {"query_key": "payment_terms_histogram", "vis_index": 0, "width": 6},  # Histogram
+            {"query_key": "payment_terms_customer", "vis_index": 0, "width": 6},   # Customer table
         ],
     },
 }
