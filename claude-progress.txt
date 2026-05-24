@@ -2399,3 +2399,28 @@ Agent: Batch agent handling features #138, #139, #140
 - Features passing: 136+ (172 total)
 - All 3 assigned features (#138, #139, #140) complete
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+
+## Session 32: 2026-05-24
+Agent: Single agent handling feature #132
+
+### Feature #132: Wire report seed script into first-boot sequence (PASSING)
+- Added seed_reports() function to init.sh that runs after start_app() completes
+- seed_reports() checks JRNYBI_ADMIN_API_KEY env var first, falls back to DB query:
+  SELECT api_key FROM users WHERE 1 = ANY(groups) ORDER BY id LIMIT 1
+- Runs seed/jrny_reports.py inside the server container via docker compose exec
+  with JRNYBI_BASE_URL=http://localhost:5000 (internal container port)
+- Added admin user auto-creation in init_database() if no users exist:
+  Creates admin@jrny.co.za "JRNY Admin" with random password via create_root CLI
+- Wired seed_reports into both default and --reset init.sh paths (after start_app)
+- Tested successfully: script creates 10 queries, 16 visualizations, 9 dashboards
+- Verified idempotency: second run correctly skips all existing queries/dashboards
+- Verified all 10 seed reports present via API with correct category tags
+- No mock data patterns detected
+
+## Files Modified
+- init.sh - Added seed_reports() function, admin user creation, wired into main flow
+
+## Current Status
+- Features passing: 134+ (172 total, ~78%)
+- Feature #132 verified and passing
+- Server at http://localhost:5001
