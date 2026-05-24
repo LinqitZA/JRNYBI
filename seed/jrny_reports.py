@@ -808,6 +808,48 @@ ORDER BY
         },
         "tags": ["finance", "jrny-report"],
     },
+    # ---- Finance: Tax/VAT Summary ----
+    "vat_summary": {
+        "name": "Tax/VAT Summary",
+        "description": "VAT collected vs paid by tax code and period. Supports VAT return filing preparation with output tax, input tax, and net liability calculation.",
+        "query": """
+SELECT
+    vs.tax_period                                         AS period,
+    vs.tax_code,
+    vs.tax_rate,
+    SUM(CASE WHEN vs.vat_type = 'output' THEN vs.taxable_amount ELSE 0 END) AS output_taxable,
+    SUM(CASE WHEN vs.vat_type = 'output' THEN vs.vat_amount ELSE 0 END)     AS output_vat,
+    SUM(CASE WHEN vs.vat_type = 'input' THEN vs.taxable_amount ELSE 0 END)  AS input_taxable,
+    SUM(CASE WHEN vs.vat_type = 'input' THEN vs.vat_amount ELSE 0 END)      AS input_vat,
+    SUM(CASE WHEN vs.vat_type = 'output' THEN vs.vat_amount ELSE 0 END)
+      - SUM(CASE WHEN vs.vat_type = 'input' THEN vs.vat_amount ELSE 0 END)  AS net_vat_payable,
+    SUM(vs.line_count)                                                       AS total_lines
+FROM reporting.v_vat_summary vs
+WHERE vs.tax_period BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+GROUP BY vs.tax_period, vs.tax_code, vs.tax_rate
+ORDER BY vs.tax_period, vs.tax_code;
+""".strip(),
+        "options": {"parameters": DATE_PARAMS},
+        "tags": ["finance", "jrny-report"],
+    },
+    "vat_liability_trend": {
+        "name": "Tax/VAT Summary - Monthly Liability Trend",
+        "description": "Monthly VAT liability trend showing output VAT, input VAT, and net payable over time.",
+        "query": """
+SELECT
+    vs.tax_period                                         AS month,
+    SUM(CASE WHEN vs.vat_type = 'output' THEN vs.vat_amount ELSE 0 END) AS output_vat,
+    SUM(CASE WHEN vs.vat_type = 'input' THEN vs.vat_amount ELSE 0 END)  AS input_vat,
+    SUM(CASE WHEN vs.vat_type = 'output' THEN vs.vat_amount ELSE 0 END)
+      - SUM(CASE WHEN vs.vat_type = 'input' THEN vs.vat_amount ELSE 0 END)  AS net_vat_payable
+FROM reporting.v_vat_summary vs
+WHERE vs.tax_period BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+GROUP BY vs.tax_period
+ORDER BY vs.tax_period;
+""".strip(),
+        "options": {"parameters": DATE_PARAMS},
+        "tags": ["finance", "jrny-report"],
+    },
 }
 
 
@@ -1493,6 +1535,53 @@ VISUALIZATIONS = {
             },
         },
     ],
+    "vat_summary": [
+        {
+            "name": "VAT Summary Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "period", "title": "Period", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM"},
+                    {"name": "tax_code", "title": "Tax Code", "visible": True},
+                    {"name": "tax_rate", "title": "Rate %", "visible": True, "displayAs": "number", "numberFormat": "0.00", "alignContent": "right"},
+                    {"name": "output_taxable", "title": "Output Taxable", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "output_vat", "title": "Output VAT", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "input_taxable", "title": "Input Taxable", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "input_vat", "title": "Input VAT", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "net_vat_payable", "title": "Net VAT Payable", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "total_lines", "title": "Lines", "visible": True, "alignContent": "right"},
+                ],
+            },
+        },
+    ],
+    "vat_liability_trend": [
+        {
+            "name": "Monthly VAT Liability Trend",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "column",
+                "columnMapping": {
+                    "month": "x",
+                    "output_vat": "y",
+                    "input_vat": "y",
+                    "net_vat_payable": "y",
+                },
+                "seriesOptions": {
+                    "output_vat": {"type": "column", "yAxis": 0, "name": "Output VAT (Collected)", "color": "#e74c3c"},
+                    "input_vat": {"type": "column", "yAxis": 0, "name": "Input VAT (Paid)", "color": "#2ecc71"},
+                    "net_vat_payable": {"type": "line", "yAxis": 0, "name": "Net VAT Payable", "color": "#2563eb"},
+                },
+                "yAxis": [
+                    {"type": "linear", "title": {"text": "VAT Amount"}},
+                ],
+                "xAxis": {"type": "datetime", "labels": {"enabled": True}},
+                "series": {"stacking": None},
+                "sortX": True,
+                "legend": {"enabled": True},
+            },
+        },
+    ],
 }
 
 
@@ -1627,6 +1716,14 @@ DASHBOARDS = {
             {"query_key": "revenue_by_dimension", "vis_index": 0, "width": 6},      # Bar chart
             {"query_key": "revenue_dimension_trend", "vis_index": 0, "width": 6},    # Trend line
             {"query_key": "revenue_by_dimension", "vis_index": 1, "width": 6},       # Table
+        ],
+    },
+    "vat_summary_dashboard": {
+        "name": "Tax/VAT Summary",
+        "tags": ["finance", "jrny-report", "report:finance"],
+        "widgets": [
+            {"query_key": "vat_liability_trend", "vis_index": 0, "width": 6},  # Monthly VAT trend chart
+            {"query_key": "vat_summary", "vis_index": 0, "width": 6},          # VAT summary table
         ],
     },
 }
