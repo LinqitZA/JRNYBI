@@ -2622,3 +2622,57 @@ Agent: Handling feature #160
 - Features passing: 155+ (172 total)
 - Feature #160 complete
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+
+## Session 42: 2026-05-24
+Agent: Batch agent handling features #167, #168, #169
+
+### Feature #167: Bank Reconciliation Status report (PASSING)
+- Created cashbook.statement_lines table (statement imports with match_status)
+- Created cashbook.bank_reconciliations table (reconciliation sessions)
+- Created reporting.v_bank_reconciliation_status view (CTE-based, no duplicate rows)
+  * Aggregates: total_lines, matched_count, unmatched_count, pct_reconciled per account
+  * matched_value, unmatched_value, oldest_unmatched_date/days
+  * Last reconciliation date and status from separate CTE
+- Created reporting.v_unmatched_statement_lines view (detail of unmatched items)
+  * Includes aging_bucket (0-7, 8-30, 31-60, 61-90, 90+ Days)
+  * direction (Credit/Debit), days_outstanding
+- Dashboard id=50 "Bank Reconciliation Status" with 3 widgets:
+  * Matched vs Unmatched Value by Account (stacked column chart)
+  * Reconciliation Status Table (per-account summary)
+  * Unmatched Items Table (detail sorted by age)
+- Dashboard tagged: cashbook, jrny-report, report:cashbook
+- Seeded 3 bank accounts, 15 transactions, 17 statement lines, 5 reconciliations
+
+### Feature #168: Cash Position Summary report (PASSING)
+- Created reporting.v_cash_position view
+  * Per-account current_balance from bank_accounts
+  * Projected inflows from AR (finance.invoices balance_due)
+  * Projected outflows from AP (procurement.purchase_orders)
+  * 30/60/90 day projections using date filters
+  * Uses CROSS JOIN for org-wide AR/AP totals (not per-account)
+- Dashboard id=51 "Cash Position Summary" with 4 widgets:
+  * Total Cash Now (COUNTER from projection query)
+  * Projected in 30 Days (COUNTER from projection query)
+  * Cash Projection Chart (area chart: Now/30/60/90 days)
+  * Cash Position Table (per-account balances with projections)
+- Dashboard tagged: cashbook, jrny-report, report:cashbook
+
+### Feature #169: Unmatched Transactions report (PASSING)
+- Query uses v_unmatched_statement_lines with bank_account text filter parameter
+- Dashboard id=52 "Unmatched Transactions" with 4 widgets:
+  * Total Unmatched Value (COUNTER)
+  * Oldest Item Age (COUNTER, in days)
+  * Unmatched by Account Chart (stacked column: credits vs debits)
+  * Unmatched Transactions Table (all items sorted by days_outstanding DESC)
+- Dashboard tagged: cashbook, jrny-report, report:cashbook
+
+## Files Modified
+- seed/create_dev_schemas.sql - Added statement_lines, bank_reconciliations tables + FK + seed data
+- seed/create_reporting_views.sql - Added v_bank_reconciliation_status, v_unmatched_statement_lines, v_cash_position
+- seed/jrny_reports.py - Added 6 queries, 10 visualizations, 3 dashboards for cashbook reports
+- Committed as 246118e5
+
+## Current Status
+- Features passing: 163+ (172 total)
+- Features #167, #168, #169 all complete
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
