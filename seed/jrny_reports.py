@@ -305,6 +305,322 @@ ORDER BY shortfall DESC;
         "options": {"parameters": []},
         "tags": ["inventory", "jrny-report"],
     },
+    # ---- Inventory: Reorder Recommendations ----
+    "reorder_recommendations": {
+        "name": "Reorder Recommendations",
+        "description": "Products at or below reorder point with suggested order quantities, estimated cost, and preferred supplier. Actionable report that can drive PO creation.",
+        "query": """
+WITH preferred_suppliers AS (
+    SELECT DISTINCT ON (pol.product_id)
+        pol.product_id,
+        c.first_name || ' ' || c.last_name AS supplier_name,
+        po.supplier_id
+    FROM procurement.purchase_order_lines pol
+    JOIN procurement.purchase_orders po ON po.id = pol.po_id
+    JOIN core.contacts c ON c.id = po.supplier_id
+    ORDER BY pol.product_id, po.order_date DESC
+)
+SELECT
+    il.product_code,
+    il.product_name,
+    il.warehouse,
+    il.quantity_on_hand,
+    il.reorder_point,
+    il.reorder_point - il.quantity_on_hand AS shortfall,
+    GREATEST(il.reorder_point - il.quantity_on_hand, il.reorder_point) AS suggested_order_qty,
+    il.unit_cost,
+    (GREATEST(il.reorder_point - il.quantity_on_hand, il.reorder_point) * il.unit_cost)::NUMERIC(12,2) AS estimated_reorder_cost,
+    COALESCE(ps.supplier_name, 'No Supplier on File') AS preferred_supplier
+FROM reporting.v_inventory_levels il
+LEFT JOIN preferred_suppliers ps ON ps.product_id = il.product_id
+WHERE il.quantity_on_hand <= il.reorder_point
+ORDER BY shortfall DESC;
+""".strip(),
+        "options": {"parameters": []},
+        "tags": ["inventory", "jrny-report", "report:inventory"],
+    },
+    "reorder_recommendations_kpi": {
+        "name": "Reorder Recommendations - KPIs",
+        "description": "Summary KPIs for reorder recommendations: total items below reorder and total estimated reorder cost.",
+        "query": """
+SELECT
+    COUNT(*) AS items_below_reorder,
+    COALESCE(SUM(
+        GREATEST(il.reorder_point - il.quantity_on_hand, il.reorder_point) * il.unit_cost
+    ), 0)::NUMERIC(12,2) AS total_reorder_cost
+FROM reporting.v_inventory_levels il
+WHERE il.quantity_on_hand <= il.reorder_point;
+""".strip(),
+        "options": {"parameters": []},
+        "tags": ["inventory", "jrny-report", "report:inventory"],
+    },
+    # ---- Inventory: Turnover Analysis ----
+    "inventory_turnover": {
+        "name": "Inventory Turnover Analysis",
+        "description": "Stock turn ratio by product/category showing days-of-stock-on-hand. Identifies fast movers (might need more stock) and slow movers (too much capital tied up).",
+        "query": """
+WITH period_usage AS (
+    SELECT
+        sm.product_id,
+        sm.warehouse_id,
+        SUM(ABS(sm.quantity))                                    AS total_issued,
+        SUM(ABS(sm.quantity) * COALESCE(p.unit_cost, 0))         AS cogs_value,
+        COUNT(DISTINCT DATE_TRUNC('day', sm.movement_date))      AS active_days
+    FROM inventory.stock_movements sm
+    LEFT JOIN inventory.products p ON p.id = sm.product_id
+    WHERE sm.movement_type = 'issue'
+      AND sm.movement_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    GROUP BY sm.product_id, sm.warehouse_id
+)
+SELECT
+    p.product_code,
+    p.product_name,
+    p.category,
+    w.warehouse_name                                             AS warehouse,
+    sl.quantity                                                   AS current_stock,
+    COALESCE(sl.unit_cost, p.unit_cost, 0)                       AS unit_cost,
+    (sl.quantity * COALESCE(sl.unit_cost, p.unit_cost, 0))::NUMERIC(12,2) AS stock_value,
+    COALESCE(pu.total_issued, 0)                                 AS total_issued,
+    COALESCE(pu.cogs_value, 0)                                   AS cogs_value,
+    CASE
+        WHEN (sl.quantity * COALESCE(sl.unit_cost, p.unit_cost, 0)) > 0
+          THEN ROUND(COALESCE(pu.cogs_value, 0) / (sl.quantity * COALESCE(sl.unit_cost, p.unit_cost, 0)), 2)
+        ELSE 0
+    END                                                          AS turnover_ratio,
+    CASE
+        WHEN COALESCE(pu.active_days, 0) > 0
+          THEN ROUND(pu.total_issued / pu.active_days, 2)
+        ELSE 0
+    END                                                          AS avg_daily_usage,
+    CASE
+        WHEN COALESCE(pu.active_days, 0) > 0 AND pu.total_issued > 0
+          THEN ROUND(sl.quantity / (pu.total_issued / pu.active_days), 0)
+        ELSE NULL
+    END                                                          AS days_of_stock,
+    CASE
+        WHEN COALESCE(pu.active_days, 0) = 0 THEN 'No Movement'
+        WHEN COALESCE(pu.cogs_value, 0) /
+             NULLIF(sl.quantity * COALESCE(sl.unit_cost, p.unit_cost, 0), 0) >= 4
+          THEN 'Fast Mover'
+        WHEN COALESCE(pu.cogs_value, 0) /
+             NULLIF(sl.quantity * COALESCE(sl.unit_cost, p.unit_cost, 0), 0) >= 1
+          THEN 'Normal'
+        ELSE 'Slow Mover'
+    END                                                          AS turnover_class
+FROM inventory.stock_levels sl
+LEFT JOIN inventory.products p ON p.id = sl.product_id
+LEFT JOIN inventory.warehouses w ON w.id = sl.warehouse_id
+LEFT JOIN period_usage pu ON pu.product_id = sl.product_id
+                          AND pu.warehouse_id = sl.warehouse_id
+WHERE sl.quantity > 0
+  AND ('{{ category }}' = '' OR p.category = '{{ category }}')
+ORDER BY turnover_ratio DESC;
+""".strip(),
+        "options": {
+            "parameters": DATE_PARAMS + [
+                {
+                    "name": "category",
+                    "title": "Product Category",
+                    "type": "text",
+                    "value": "",
+                },
+            ]
+        },
+        "tags": ["inventory", "jrny-report"],
+    },
+    # ---- Inventory: ABC Analysis ----
+    "abc_analysis_detail": {
+        "name": "ABC Analysis - Product Detail",
+        "description": "Products classified A/B/C by revenue contribution (Pareto principle). A-items = top 80% revenue, B-items = 80-95%, C-items = 95-100%.",
+        "query": """
+WITH product_revenue AS (
+    SELECT
+        p.id AS product_id,
+        p.product_code,
+        p.product_name,
+        p.category,
+        SUM(sol.quantity) AS total_qty_sold,
+        SUM(sol.line_total) AS total_revenue
+    FROM sales.sales_order_lines sol
+    JOIN sales.sales_orders so ON so.id = sol.order_id
+    JOIN inventory.products p ON p.id = sol.product_id
+    WHERE so.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    GROUP BY p.id, p.product_code, p.product_name, p.category
+),
+ranked AS (
+    SELECT
+        pr.*,
+        SUM(pr.total_revenue) OVER () AS grand_total,
+        ROUND(100.0 * pr.total_revenue / NULLIF(SUM(pr.total_revenue) OVER (), 0), 2) AS revenue_pct,
+        ROUND(100.0 * SUM(pr.total_revenue) OVER (ORDER BY pr.total_revenue DESC
+            ROWS UNBOUNDED PRECEDING) / NULLIF(SUM(pr.total_revenue) OVER (), 0), 2) AS cumulative_pct,
+        ROW_NUMBER() OVER (ORDER BY pr.total_revenue DESC) AS rank
+    FROM product_revenue pr
+),
+with_stock AS (
+    SELECT
+        r.*,
+        COALESCE(sl_agg.current_stock, 0) AS current_stock,
+        COALESCE(sl_agg.stock_value, 0) AS stock_value,
+        CASE
+            WHEN r.cumulative_pct <= 80 THEN 'A'
+            WHEN r.cumulative_pct <= 95 THEN 'B'
+            ELSE 'C'
+        END AS abc_class
+    FROM ranked r
+    LEFT JOIN LATERAL (
+        SELECT
+            SUM(sl.quantity) AS current_stock,
+            SUM(sl.quantity * COALESCE(sl.unit_cost, 0))::NUMERIC(12,2) AS stock_value
+        FROM inventory.stock_levels sl
+        WHERE sl.product_id = r.product_id
+          AND sl.quantity > 0
+    ) sl_agg ON TRUE
+)
+SELECT
+    rank,
+    product_code,
+    product_name,
+    category,
+    abc_class,
+    total_qty_sold,
+    total_revenue,
+    revenue_pct,
+    cumulative_pct,
+    current_stock,
+    stock_value
+FROM with_stock
+ORDER BY rank;
+""".strip(),
+        "options": {"parameters": DATE_PARAMS},
+        "tags": ["inventory", "jrny-report"],
+    },
+    "abc_analysis_summary": {
+        "name": "ABC Analysis - Summary",
+        "description": "ABC classification summary: item count, revenue percentage, and stock value per class.",
+        "query": """
+WITH product_revenue AS (
+    SELECT
+        p.id AS product_id,
+        SUM(sol.line_total) AS total_revenue
+    FROM sales.sales_order_lines sol
+    JOIN sales.sales_orders so ON so.id = sol.order_id
+    JOIN inventory.products p ON p.id = sol.product_id
+    WHERE so.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    GROUP BY p.id
+),
+ranked AS (
+    SELECT
+        pr.*,
+        ROUND(100.0 * SUM(pr.total_revenue) OVER (ORDER BY pr.total_revenue DESC
+            ROWS UNBOUNDED PRECEDING) / NULLIF(SUM(pr.total_revenue) OVER (), 0), 2) AS cumulative_pct
+    FROM product_revenue pr
+),
+classified AS (
+    SELECT
+        r.*,
+        CASE
+            WHEN r.cumulative_pct <= 80 THEN 'A'
+            WHEN r.cumulative_pct <= 95 THEN 'B'
+            ELSE 'C'
+        END AS abc_class
+    FROM ranked r
+)
+SELECT
+    c.abc_class AS class,
+    COUNT(*) AS item_count,
+    ROUND(100.0 * COUNT(*) / NULLIF(SUM(COUNT(*)) OVER (), 0), 1) AS item_pct,
+    SUM(c.total_revenue) AS total_revenue,
+    ROUND(100.0 * SUM(c.total_revenue) / NULLIF(SUM(SUM(c.total_revenue)) OVER (), 0), 1) AS revenue_pct,
+    COALESCE(SUM(sl_agg.stock_value), 0) AS stock_value
+FROM classified c
+LEFT JOIN LATERAL (
+    SELECT SUM(sl.quantity * COALESCE(sl.unit_cost, 0))::NUMERIC(12,2) AS stock_value
+    FROM inventory.stock_levels sl
+    WHERE sl.product_id = c.product_id AND sl.quantity > 0
+) sl_agg ON TRUE
+GROUP BY c.abc_class
+ORDER BY c.abc_class;
+""".strip(),
+        "options": {"parameters": DATE_PARAMS},
+        "tags": ["inventory", "jrny-report"],
+    },
+    # ---- Inventory: Pick & Pack Performance ----
+    "pick_pack_kpi": {
+        "name": "Pick & Pack Performance - KPIs",
+        "description": "Operational KPIs: picks per hour, accuracy/fill rate, average fulfilment time.",
+        "query": """
+SELECT
+    COUNT(*) AS total_deliveries,
+    ROUND(AVG(pp.shipped_qty), 1) AS avg_lines_per_order,
+    CASE
+        WHEN SUM(pp.pick_duration_mins) > 0
+          THEN ROUND(SUM(pp.shipped_qty) / (SUM(pp.pick_duration_mins) / 60.0), 1)
+        ELSE 0
+    END AS picks_per_hour,
+    ROUND(AVG(pp.fill_rate_pct), 1) AS avg_fill_rate_pct,
+    ROUND(AVG(pp.total_fulfilment_mins), 1) AS avg_fulfilment_mins,
+    ROUND(AVG(pp.pick_duration_mins), 1) AS avg_pick_mins,
+    ROUND(AVG(pp.pack_duration_mins), 1) AS avg_pack_mins
+FROM reporting.v_pick_pack_performance pp
+WHERE pp.delivery_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND pp.status != 'cancelled';
+""".strip(),
+        "options": {"parameters": DATE_PARAMS},
+        "tags": ["inventory", "jrny-report"],
+    },
+    "pick_pack_trend": {
+        "name": "Pick & Pack Performance - Daily Trend",
+        "description": "Daily trends: picks per hour, fill rate, and fulfilment time over the selected period.",
+        "query": """
+SELECT
+    pp.delivery_date AS date,
+    COUNT(*) AS deliveries,
+    ROUND(AVG(pp.shipped_qty), 1) AS avg_lines_per_order,
+    CASE
+        WHEN SUM(pp.pick_duration_mins) > 0
+          THEN ROUND(SUM(pp.shipped_qty) / (SUM(pp.pick_duration_mins) / 60.0), 1)
+        ELSE 0
+    END AS picks_per_hour,
+    ROUND(AVG(pp.fill_rate_pct), 1) AS avg_fill_rate_pct,
+    ROUND(AVG(pp.total_fulfilment_mins), 1) AS avg_fulfilment_mins
+FROM reporting.v_pick_pack_performance pp
+WHERE pp.delivery_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND pp.status != 'cancelled'
+GROUP BY pp.delivery_date
+ORDER BY pp.delivery_date;
+""".strip(),
+        "options": {"parameters": DATE_PARAMS},
+        "tags": ["inventory", "jrny-report"],
+    },
+    "pick_pack_detail": {
+        "name": "Pick & Pack Performance - Detail",
+        "description": "Per-delivery pick and pack performance metrics.",
+        "query": """
+SELECT
+    pp.delivery_number,
+    pp.order_number,
+    pp.delivery_date,
+    pp.status,
+    pp.ordered_qty,
+    pp.shipped_qty,
+    pp.fill_rate_pct,
+    ROUND(pp.pick_duration_mins, 1) AS pick_mins,
+    ROUND(pp.pack_duration_mins, 1) AS pack_mins,
+    ROUND(pp.total_fulfilment_mins, 1) AS total_mins,
+    CASE
+        WHEN pp.pick_duration_mins > 0
+          THEN ROUND(pp.shipped_qty / (pp.pick_duration_mins / 60.0), 1)
+        ELSE NULL
+    END AS picks_per_hour
+FROM reporting.v_pick_pack_performance pp
+WHERE pp.delivery_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND pp.status != 'cancelled'
+ORDER BY pp.delivery_date DESC, pp.delivery_number;
+""".strip(),
+        "options": {"parameters": DATE_PARAMS},
+        "tags": ["inventory", "jrny-report"],
+    },
     "purchase_order_status": {
         "name": "Purchase Order Status",
         "description": "Purchase order pipeline grouped by status.",
@@ -1084,6 +1400,208 @@ VISUALIZATIONS = {
             },
         },
     ],
+    "inventory_turnover": [
+        {
+            "name": "Turnover vs Stock Value (Scatter)",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "scatter",
+                "columnMapping": {
+                    "stock_value": "x",
+                    "turnover_ratio": "y",
+                    "product_name": "series",
+                },
+                "xAxis": {
+                    "type": "linear",
+                    "title": {"text": "Stock Value"},
+                    "labels": {"enabled": True},
+                },
+                "yAxis": [
+                    {
+                        "type": "linear",
+                        "title": {"text": "Turnover Ratio"},
+                    },
+                ],
+                "legend": {"enabled": False},
+                "series": {"stacking": None},
+                "numberFormat": "0,0.00",
+                "showDataLabels": False,
+                "sortX": True,
+            },
+        },
+        {
+            "name": "Inventory Turnover Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "product_code", "title": "Product Code", "visible": True},
+                    {"name": "product_name", "title": "Product Name", "visible": True},
+                    {"name": "category", "title": "Category", "visible": True},
+                    {"name": "warehouse", "title": "Warehouse", "visible": True},
+                    {"name": "current_stock", "title": "Current Stock", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0,0"},
+                    {"name": "avg_daily_usage", "title": "Avg Daily Usage", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0,0.00"},
+                    {"name": "turnover_ratio", "title": "Turnover Ratio", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0,0.00"},
+                    {"name": "days_of_stock", "title": "Days of Stock", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0,0"},
+                    {"name": "stock_value", "title": "Stock Value", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0,0.00"},
+                    {"name": "turnover_class", "title": "Classification", "visible": True},
+                ],
+            },
+        },
+    ],
+    "abc_analysis_detail": [
+        {
+            "name": "Pareto Chart",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "column",
+                "columnMapping": {
+                    "product_name": "x",
+                    "total_revenue": "y",
+                    "cumulative_pct": "y",
+                },
+                "seriesOptions": {
+                    "total_revenue": {"type": "column", "yAxis": 0, "name": "Revenue", "color": "#2563eb"},
+                    "cumulative_pct": {"type": "line", "yAxis": 1, "name": "Cumulative %", "color": "#dc2626"},
+                },
+                "xAxis": {"type": "category", "labels": {"enabled": True}},
+                "yAxis": [
+                    {"type": "linear", "title": {"text": "Revenue"}},
+                    {"type": "linear", "title": {"text": "Cumulative %"}, "opposite": True, "rangeMax": 100},
+                ],
+                "sortX": False,
+                "legend": {"enabled": True},
+                "series": {"stacking": None},
+            },
+        },
+        {
+            "name": "ABC Detail Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "rank", "title": "#", "visible": True, "alignContent": "right"},
+                    {"name": "product_code", "title": "Product Code", "visible": True},
+                    {"name": "product_name", "title": "Product Name", "visible": True},
+                    {"name": "category", "title": "Category", "visible": True},
+                    {"name": "abc_class", "title": "ABC Class", "visible": True},
+                    {"name": "total_qty_sold", "title": "Qty Sold", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0,0"},
+                    {"name": "total_revenue", "title": "Revenue", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0,0.00"},
+                    {"name": "revenue_pct", "title": "Rev %", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0.00"},
+                    {"name": "cumulative_pct", "title": "Cum %", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0.00"},
+                    {"name": "current_stock", "title": "Stock", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0,0"},
+                    {"name": "stock_value", "title": "Stock Value", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0,0.00"},
+                ],
+            },
+        },
+    ],
+    "abc_analysis_summary": [
+        {
+            "name": "ABC Summary Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 10,
+                "columns": [
+                    {"name": "class", "title": "Class", "visible": True},
+                    {"name": "item_count", "title": "Item Count", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0,0"},
+                    {"name": "item_pct", "title": "Items %", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0.0"},
+                    {"name": "total_revenue", "title": "Revenue", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0,0.00"},
+                    {"name": "revenue_pct", "title": "Revenue %", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0.0"},
+                    {"name": "stock_value", "title": "Stock Value", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0,0.00"},
+                ],
+            },
+        },
+    ],
+    "pick_pack_kpi": [
+        {
+            "name": "Picks per Hour",
+            "type": "COUNTER",
+            "options": {
+                "counterLabel": "Picks / Hour",
+                "counterColName": "picks_per_hour",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 1,
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0.0",
+            },
+        },
+        {
+            "name": "Fill Rate %",
+            "type": "COUNTER",
+            "options": {
+                "counterLabel": "Fill Rate %",
+                "counterColName": "avg_fill_rate_pct",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 1,
+                "stringSuffix": "%",
+                "tooltipFormat": "0.0",
+            },
+        },
+        {
+            "name": "Avg Fulfilment Time",
+            "type": "COUNTER",
+            "options": {
+                "counterLabel": "Avg Fulfilment (mins)",
+                "counterColName": "avg_fulfilment_mins",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 1,
+                "stringSuffix": " min",
+                "tooltipFormat": "0,0.0",
+            },
+        },
+    ],
+    "pick_pack_trend": [
+        {
+            "name": "Performance Trend",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "line",
+                "columnMapping": {
+                    "date": "x",
+                    "picks_per_hour": "y",
+                    "avg_fill_rate_pct": "y",
+                },
+                "seriesOptions": {
+                    "picks_per_hour": {"type": "line", "yAxis": 0, "name": "Picks/Hour", "color": "#2563eb"},
+                    "avg_fill_rate_pct": {"type": "line", "yAxis": 1, "name": "Fill Rate %", "color": "#16a34a"},
+                },
+                "xAxis": {"type": "datetime", "labels": {"enabled": True}},
+                "yAxis": [
+                    {"type": "linear", "title": {"text": "Picks per Hour"}},
+                    {"type": "linear", "title": {"text": "Fill Rate %"}, "opposite": True},
+                ],
+                "sortX": True,
+                "legend": {"enabled": True},
+                "series": {"stacking": None},
+            },
+        },
+    ],
+    "pick_pack_detail": [
+        {
+            "name": "Delivery Performance Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "delivery_number", "title": "Delivery #", "visible": True},
+                    {"name": "order_number", "title": "Order #", "visible": True},
+                    {"name": "delivery_date", "title": "Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "status", "title": "Status", "visible": True},
+                    {"name": "ordered_qty", "title": "Ordered", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0,0"},
+                    {"name": "shipped_qty", "title": "Shipped", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0,0"},
+                    {"name": "fill_rate_pct", "title": "Fill %", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0.0"},
+                    {"name": "pick_mins", "title": "Pick (min)", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0.0"},
+                    {"name": "pack_mins", "title": "Pack (min)", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0.0"},
+                    {"name": "total_mins", "title": "Total (min)", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0.0"},
+                    {"name": "picks_per_hour", "title": "Picks/Hr", "visible": True, "alignContent": "right", "displayAs": "number", "numberFormat": "0.0"},
+                ],
+            },
+        },
+    ],
     "purchase_order_status": [
         {
             "name": "PO Status Pipeline",
@@ -1644,6 +2162,34 @@ DASHBOARDS = {
             {"query_key": "inventory_valuation", "vis_index": 2, "width": 2},  # KPI: Item Count
             {"query_key": "inventory_valuation", "vis_index": 0, "width": 6},  # Table
             {"query_key": "stock_below_reorder", "vis_index": 0, "width": 6},  # Reorder table
+        ],
+    },
+    "inventory_turnover_dashboard": {
+        "name": "Inventory Turnover",
+        "tags": ["inventory", "jrny-report", "report:inventory"],
+        "widgets": [
+            {"query_key": "inventory_turnover", "vis_index": 0, "width": 6},  # Scatter plot
+            {"query_key": "inventory_turnover", "vis_index": 1, "width": 6},  # Detail table
+        ],
+    },
+    "abc_analysis_dashboard": {
+        "name": "ABC Analysis",
+        "tags": ["inventory", "jrny-report", "report:inventory"],
+        "widgets": [
+            {"query_key": "abc_analysis_summary", "vis_index": 0, "width": 3},    # Summary table
+            {"query_key": "abc_analysis_detail", "vis_index": 0, "width": 6},      # Pareto chart
+            {"query_key": "abc_analysis_detail", "vis_index": 1, "width": 6},      # Detail table
+        ],
+    },
+    "pick_pack_dashboard": {
+        "name": "Pick & Pack Performance",
+        "tags": ["inventory", "jrny-report", "report:inventory"],
+        "widgets": [
+            {"query_key": "pick_pack_kpi", "vis_index": 0, "width": 2},      # Picks/Hour KPI
+            {"query_key": "pick_pack_kpi", "vis_index": 1, "width": 2},      # Fill Rate KPI
+            {"query_key": "pick_pack_kpi", "vis_index": 2, "width": 2},      # Fulfilment Time KPI
+            {"query_key": "pick_pack_trend", "vis_index": 0, "width": 6},    # Trend chart
+            {"query_key": "pick_pack_detail", "vis_index": 0, "width": 6},   # Detail table
         ],
     },
     "purchase_orders_dashboard": {

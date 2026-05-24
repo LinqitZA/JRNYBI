@@ -45,6 +45,7 @@ DROP VIEW IF EXISTS reporting.v_payment_terms_compliance CASCADE;
 DROP VIEW IF EXISTS reporting.v_revenue_by_dimension CASCADE;
 DROP VIEW IF EXISTS reporting.v_vat_summary CASCADE;
 DROP VIEW IF EXISTS reporting.v_inventory_turnover CASCADE;
+DROP VIEW IF EXISTS reporting.v_grn_summary CASCADE;
 
 -- Also drop any legacy reporting tables (dev migration path)
 DROP TABLE IF EXISTS reporting.v_sales_orders CASCADE;
@@ -1151,7 +1152,8 @@ COMMENT ON COLUMN reporting.v_vat_summary.branch_id IS 'Branch ID for RLS filter
 -- ============================================================================
 CREATE VIEW reporting.v_inventory_turnover AS
 WITH usage AS (
-  -- Total issues (COGS proxy) per product in the period window
+  -- Total issues (COGS proxy) per product — all-time for the base view
+  -- Date filtering is done at query level using movement_date columns
   SELECT
     sm.product_id,
     sm.warehouse_id,
@@ -1236,5 +1238,73 @@ COMMENT ON COLUMN reporting.v_inventory_turnover.branch_id IS 'Branch ID for RLS
 
 
 -- ============================================================================
--- Done — all 29 reporting views created successfully
+-- 30. v_grn_summary — Goods Receipt Note summary with inspection + lead time
+-- ============================================================================
+DROP VIEW IF EXISTS reporting.v_grn_summary CASCADE;
+
+CREATE VIEW reporting.v_grn_summary AS
+SELECT
+  gr.id                                                       AS grn_id,
+  gr.grn_number,
+  gr.receipt_date,
+  gr.status                                                   AS grn_status,
+  gr.received_by,
+  -- Supplier info
+  gr.supplier_id,
+  c.first_name || ' ' || c.last_name                         AS supplier_name,
+  -- PO info
+  gr.po_id,
+  po.po_number,
+  po.order_date                                               AS po_date,
+  po.expected_date                                            AS po_expected_date,
+  -- Lead time: days from PO order_date to actual receipt_date
+  (gr.receipt_date - po.order_date)                           AS lead_time_days,
+  -- Whether receipt was on time (receipt_date <= expected_date)
+  CASE WHEN gr.receipt_date <= po.expected_date THEN TRUE ELSE FALSE END AS on_time,
+  -- Line-level details
+  grl.id                                                      AS grn_line_id,
+  p.product_code,
+  p.product_name,
+  p.category                                                  AS product_category,
+  grl.expected_qty,
+  grl.received_qty,
+  grl.rejected_qty,
+  grl.unit_cost,
+  grl.line_total,
+  -- Fill rate: received / expected (clamped to avoid div by zero)
+  CASE
+    WHEN grl.expected_qty > 0
+    THEN ROUND((grl.received_qty / grl.expected_qty) * 100, 1)
+    ELSE 0
+  END                                                         AS fill_rate_pct,
+  -- Inspection result
+  gi.result                                                   AS inspection_result,
+  gi.defect_type,
+  gi.inspector,
+  gi.inspection_date,
+  -- RLS columns
+  gr.org_id,
+  gr.branch_id
+FROM inventory.goods_receipts gr
+LEFT JOIN core.contacts c          ON c.id = gr.supplier_id
+LEFT JOIN procurement.purchase_orders po ON po.id = gr.po_id
+LEFT JOIN inventory.goods_receipt_lines grl ON grl.grn_id = gr.id
+LEFT JOIN inventory.products p     ON p.id = grl.product_id
+LEFT JOIN inventory.grn_inspection gi ON gi.grn_line_id = grl.id;
+
+COMMENT ON VIEW  reporting.v_grn_summary IS 'Goods Receipt Note summary with line details, inspection results, and supplier lead times';
+COMMENT ON COLUMN reporting.v_grn_summary.grn_number IS 'Unique GRN reference number';
+COMMENT ON COLUMN reporting.v_grn_summary.supplier_name IS 'Supplier display name';
+COMMENT ON COLUMN reporting.v_grn_summary.supplier_id IS 'fk:core.contacts.id Supplier FK';
+COMMENT ON COLUMN reporting.v_grn_summary.po_id IS 'fk:procurement.purchase_orders.id Purchase order FK';
+COMMENT ON COLUMN reporting.v_grn_summary.lead_time_days IS 'Days from PO creation to goods receipt';
+COMMENT ON COLUMN reporting.v_grn_summary.on_time IS 'Whether receipt was on or before PO expected date';
+COMMENT ON COLUMN reporting.v_grn_summary.fill_rate_pct IS 'Percentage of ordered quantity received (received/expected * 100)';
+COMMENT ON COLUMN reporting.v_grn_summary.inspection_result IS 'Quality inspection outcome: pass, fail, conditional';
+COMMENT ON COLUMN reporting.v_grn_summary.org_id IS 'Organization ID for RLS filtering';
+COMMENT ON COLUMN reporting.v_grn_summary.branch_id IS 'Branch ID for RLS filtering';
+
+
+-- ============================================================================
+-- Done — all 30 reporting views created successfully
 -- ============================================================================
