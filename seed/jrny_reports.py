@@ -313,11 +313,11 @@ ORDER BY shortfall DESC;
 WITH preferred_suppliers AS (
     SELECT DISTINCT ON (pol.product_id)
         pol.product_id,
-        c.first_name || ' ' || c.last_name AS supplier_name,
+        s.supplier_name,
         po.supplier_id
     FROM procurement.purchase_order_lines pol
     JOIN procurement.purchase_orders po ON po.id = pol.po_id
-    JOIN core.contacts c ON c.id = po.supplier_id
+    JOIN reporting.v_suppliers s ON s.id = po.supplier_id
     ORDER BY pol.product_id, po.order_date DESC
 )
 SELECT
@@ -1400,6 +1400,60 @@ VISUALIZATIONS = {
             },
         },
     ],
+    "reorder_recommendations": [
+        {
+            "name": "Reorder Recommendations Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "product_code", "title": "Product Code", "visible": True},
+                    {"name": "product_name", "title": "Product", "visible": True},
+                    {"name": "warehouse", "title": "Warehouse", "visible": True},
+                    {"name": "quantity_on_hand", "title": "Qty on Hand", "visible": True, "alignContent": "right"},
+                    {"name": "reorder_point", "title": "Reorder Point", "visible": True, "alignContent": "right"},
+                    {"name": "shortfall", "title": "Shortfall", "visible": True, "alignContent": "right"},
+                    {"name": "suggested_order_qty", "title": "Suggested Order Qty", "visible": True, "alignContent": "right"},
+                    {"name": "unit_cost", "title": "Unit Cost", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "estimated_reorder_cost", "title": "Est. Reorder Cost", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "preferred_supplier", "title": "Preferred Supplier", "visible": True},
+                ],
+            },
+        },
+    ],
+    "reorder_recommendations_kpi": [
+        {
+            "name": "Items Below Reorder",
+            "type": "COUNTER",
+            "options": {
+                "counterLabel": "Items Below Reorder Point",
+                "counterColName": "items_below_reorder",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 0,
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "defaultColumns": 2,
+                "defaultRows": 5,
+            },
+        },
+        {
+            "name": "Total Reorder Cost",
+            "type": "COUNTER",
+            "options": {
+                "counterLabel": "Total Estimated Reorder Cost",
+                "counterColName": "total_reorder_cost",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 2,
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "defaultColumns": 2,
+                "defaultRows": 5,
+                "formatTargetValue": True,
+            },
+        },
+    ],
     "inventory_turnover": [
         {
             "name": "Turnover vs Stock Value (Scatter)",
@@ -2179,6 +2233,15 @@ DASHBOARDS = {
             {"query_key": "abc_analysis_summary", "vis_index": 0, "width": 3},    # Summary table
             {"query_key": "abc_analysis_detail", "vis_index": 0, "width": 6},      # Pareto chart
             {"query_key": "abc_analysis_detail", "vis_index": 1, "width": 6},      # Detail table
+        ],
+    },
+    "reorder_recommendations_dashboard": {
+        "name": "Reorder Recommendations",
+        "tags": ["inventory", "jrny-report", "report:inventory"],
+        "widgets": [
+            {"query_key": "reorder_recommendations_kpi", "vis_index": 0, "width": 2},  # Items Below Reorder KPI
+            {"query_key": "reorder_recommendations_kpi", "vis_index": 1, "width": 2},  # Total Reorder Cost KPI
+            {"query_key": "reorder_recommendations", "vis_index": 0, "width": 6},       # Detail Table
         ],
     },
     "pick_pack_dashboard": {
