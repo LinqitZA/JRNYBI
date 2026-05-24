@@ -2533,3 +2533,55 @@ Agent: Batch agent handling features #151, #152, #153
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
 - Reports created via API (stored in PostgreSQL metadata DB)
 - Test data seeded into inventory tables for report verification
+
+## Session: 2026-05-24
+Agent: Batch agent handling features #154, #155, #156
+
+### Feature #154: Inventory Turnover report (PASSING)
+- Created reporting.v_inventory_turnover view in create_reporting_views.sql
+  - CTE-based: usage (issues per product) joined with stock_levels, products, warehouses
+  - Columns: product_code, product_name, category, warehouse, current_stock, unit_cost, stock_value
+  - Computed: total_issued, cogs_value, turnover_ratio, avg_daily_usage, days_of_stock, turnover_class
+  - Classification: Fast Mover (>=4x), Normal (1-4x), Slow Mover (<1x), No Movement
+  - Includes product_id, warehouse_id, org_id, branch_id for FK/RLS
+- Query uses inline CTE with date range filtering on stock_movements for period-specific turnover
+- Parameters: start_date, end_date (date), category (text filter)
+- Visualizations: Scatter plot (stock_value x-axis, turnover_ratio y-axis), Detail table (10 columns)
+- Dashboard ID 41: "Inventory Turnover" tagged report:inventory, 2 widgets
+- Query ID 59, Viz IDs 221 (scatter), 222 (table)
+
+### Feature #155: ABC Analysis report (PASSING)
+- Two queries for ABC classification:
+  1. ABC Analysis - Product Detail (id=60): CTE-based with product_revenue, ranked, with_stock
+     - Calculates cumulative_pct via window function, assigns A/B/C class (80/95/100 thresholds)
+     - Joins stock_levels for current stock value per product
+  2. ABC Analysis - Summary (id=61): Grouped by abc_class with item_count, item_pct, revenue_pct, stock_value
+- Parameters: start_date, end_date (date)
+- Visualizations:
+  - Pareto Chart (column + cumulative line, dual y-axis)
+  - ABC Summary Table (class, item count, items %, revenue, revenue %, stock value)
+  - ABC Detail Table (rank, product, category, class, qty sold, revenue, rev %, cum %, stock, stock value)
+- Dashboard ID 42: "ABC Analysis" tagged report:inventory, 3 widgets
+
+### Feature #156: Pick and Pack Performance report (PASSING)
+- Uses existing reporting.v_pick_pack_performance view (from feature #131)
+- Three queries:
+  1. KPIs (id=64): total_deliveries, avg_lines_per_order, picks_per_hour, avg_fill_rate_pct, avg_fulfilment_mins
+  2. Daily Trend (id=65): date, deliveries, avg_lines_per_order, picks_per_hour, avg_fill_rate_pct
+  3. Detail (id=66): per-delivery metrics with pick/pack/total mins and picks_per_hour
+- Parameters: start_date, end_date (date)
+- Visualizations:
+  - 3 KPI counters: Picks/Hour, Fill Rate %, Avg Fulfilment Time
+  - Performance Trend line chart (picks/hour + fill rate dual y-axis)
+  - Delivery Performance Table (11 columns)
+- Dashboard ID 44: "Pick & Pack Performance" tagged report:inventory, 5 widgets
+
+## Files Modified
+- seed/create_reporting_views.sql - Added v_inventory_turnover view (view #29)
+- seed/jrny_reports.py - Added query/viz/dashboard definitions for all 3 reports
+
+## Current Status
+- Features passing: 155+ (172 total)
+- All 3 assigned features (#154, #155, #156) implemented and verified
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+- Committed as 73a15783
