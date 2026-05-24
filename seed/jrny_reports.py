@@ -2176,6 +2176,142 @@ ORDER BY stage DESC;
         },
         "tags": ["sales", "jrny-report", "report:sales"],
     },
+    # ---- Customer Activity Log ----
+    "activity_customer_summary": {
+        "name": "Customer Activity Log - Account Summary",
+        "description": "Summary of customer engagement showing last activity date, activity counts by type, and dormancy status (no activity in 30+ days).",
+        "query": """
+SELECT
+    c.first_name || ' ' || c.last_name AS customer_name,
+    MAX(a.activity_date)::date AS last_activity_date,
+    (CURRENT_DATE - MAX(a.activity_date)::date) AS days_since_last_activity,
+    COUNT(*) AS total_activities,
+    COUNT(*) FILTER (WHERE a.activity_type = 'call') AS calls,
+    COUNT(*) FILTER (WHERE a.activity_type = 'email') AS emails,
+    COUNT(*) FILTER (WHERE a.activity_type = 'meeting') AS meetings,
+    rep.first_name || ' ' || rep.last_name AS assigned_rep,
+    CASE
+        WHEN (CURRENT_DATE - MAX(a.activity_date)::date) > 30 THEN 'Dormant'
+        WHEN (CURRENT_DATE - MAX(a.activity_date)::date) > 14 THEN 'At Risk'
+        ELSE 'Active'
+    END AS engagement_status
+FROM crm.activities a
+JOIN core.contacts c ON c.id = a.contact_id
+LEFT JOIN core.contacts rep ON rep.id = a.performed_by
+WHERE (NULLIF('{{ start_date }}', '') IS NULL OR a.activity_date >= NULLIF('{{ start_date }}', '')::date)
+  AND (NULLIF('{{ end_date }}', '') IS NULL OR a.activity_date <= NULLIF('{{ end_date }}', '')::date)
+  AND (NULLIF('{{ assigned_to }}', '') IS NULL OR a.performed_by::text = '{{ assigned_to }}')
+GROUP BY c.id, c.first_name, c.last_name, rep.first_name, rep.last_name
+ORDER BY days_since_last_activity DESC;
+""".strip(),
+        "options": {
+            "parameters": [
+                {
+                    "name": "start_date",
+                    "title": "Activity Date From",
+                    "type": "text",
+                    "value": "",
+                },
+                {
+                    "name": "end_date",
+                    "title": "Activity Date To",
+                    "type": "text",
+                    "value": "",
+                },
+                {
+                    "name": "assigned_to",
+                    "title": "Sales Rep (UUID)",
+                    "type": "text",
+                    "value": "",
+                },
+            ]
+        },
+        "tags": ["sales", "jrny-report", "report:sales"],
+    },
+    "activity_volume_by_type": {
+        "name": "Customer Activity Log - Volume by Type",
+        "description": "Activity count grouped by week and type for trend visualization.",
+        "query": """
+SELECT
+    DATE_TRUNC('week', a.activity_date)::date AS week_start,
+    a.activity_type,
+    COUNT(*) AS activity_count
+FROM crm.activities a
+WHERE (NULLIF('{{ start_date }}', '') IS NULL OR a.activity_date >= NULLIF('{{ start_date }}', '')::date)
+  AND (NULLIF('{{ end_date }}', '') IS NULL OR a.activity_date <= NULLIF('{{ end_date }}', '')::date)
+  AND (NULLIF('{{ assigned_to }}', '') IS NULL OR a.performed_by::text = '{{ assigned_to }}')
+GROUP BY DATE_TRUNC('week', a.activity_date)::date, a.activity_type
+ORDER BY week_start;
+""".strip(),
+        "options": {
+            "parameters": [
+                {
+                    "name": "start_date",
+                    "title": "Activity Date From",
+                    "type": "text",
+                    "value": "",
+                },
+                {
+                    "name": "end_date",
+                    "title": "Activity Date To",
+                    "type": "text",
+                    "value": "",
+                },
+                {
+                    "name": "assigned_to",
+                    "title": "Sales Rep (UUID)",
+                    "type": "text",
+                    "value": "",
+                },
+            ]
+        },
+        "tags": ["sales", "jrny-report", "report:sales"],
+    },
+    "activity_detail": {
+        "name": "Customer Activity Log - Detail",
+        "description": "Full activity log showing all interactions with customer, type, subject, and notes.",
+        "query": """
+SELECT
+    a.activity_date::date AS activity_date,
+    a.activity_type,
+    c.first_name || ' ' || c.last_name AS customer_name,
+    a.subject,
+    a.notes,
+    o.opportunity_name,
+    rep.first_name || ' ' || rep.last_name AS performed_by
+FROM crm.activities a
+JOIN core.contacts c ON c.id = a.contact_id
+LEFT JOIN crm.opportunities o ON o.id = a.opportunity_id
+LEFT JOIN core.contacts rep ON rep.id = a.performed_by
+WHERE (NULLIF('{{ start_date }}', '') IS NULL OR a.activity_date >= NULLIF('{{ start_date }}', '')::date)
+  AND (NULLIF('{{ end_date }}', '') IS NULL OR a.activity_date <= NULLIF('{{ end_date }}', '')::date)
+  AND (NULLIF('{{ assigned_to }}', '') IS NULL OR a.performed_by::text = '{{ assigned_to }}')
+ORDER BY a.activity_date DESC;
+""".strip(),
+        "options": {
+            "parameters": [
+                {
+                    "name": "start_date",
+                    "title": "Activity Date From",
+                    "type": "text",
+                    "value": "",
+                },
+                {
+                    "name": "end_date",
+                    "title": "Activity Date To",
+                    "type": "text",
+                    "value": "",
+                },
+                {
+                    "name": "assigned_to",
+                    "title": "Sales Rep (UUID)",
+                    "type": "text",
+                    "value": "",
+                },
+            ]
+        },
+        "tags": ["sales", "jrny-report", "report:sales"],
+    },
     "customer_master_health_summary": {
         "name": "Customer Master Summary - Health Distribution",
         "description": "Aggregated customer count by health status for pie chart visualization.",
@@ -4195,6 +4331,72 @@ VISUALIZATIONS = {
             },
         },
     ],
+    # ---- Customer Activity Log Visualizations ----
+    "activity_customer_summary": [
+        {
+            "name": "Account Engagement Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "customer_name", "title": "Customer", "visible": True},
+                    {"name": "last_activity_date", "title": "Last Activity", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "days_since_last_activity", "title": "Days Since", "visible": True, "alignContent": "right"},
+                    {"name": "total_activities", "title": "Total", "visible": True, "alignContent": "right"},
+                    {"name": "calls", "title": "Calls", "visible": True, "alignContent": "right"},
+                    {"name": "emails", "title": "Emails", "visible": True, "alignContent": "right"},
+                    {"name": "meetings", "title": "Meetings", "visible": True, "alignContent": "right"},
+                    {"name": "assigned_rep", "title": "Rep", "visible": True},
+                    {"name": "engagement_status", "title": "Status", "visible": True},
+                ],
+            },
+        },
+    ],
+    "activity_volume_by_type": [
+        {
+            "name": "Activity Volume by Type (Stacked)",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "column",
+                "columnMapping": {
+                    "week_start": "x",
+                    "activity_count": "y",
+                    "activity_type": "series",
+                },
+                "legend": {"enabled": True},
+                "series": {"stacking": "stack"},
+                "seriesOptions": {
+                    "call": {"type": "column", "name": "Calls", "color": "#1890ff"},
+                    "email": {"type": "column", "name": "Emails", "color": "#52c41a"},
+                    "meeting": {"type": "column", "name": "Meetings", "color": "#fa8c16"},
+                },
+                "xAxis": {"type": "-", "labels": {"enabled": True}},
+                "yAxis": [
+                    {"type": "linear", "title": {"text": "Activity Count"}},
+                ],
+                "numberFormat": "0",
+                "sortX": True,
+            },
+        },
+    ],
+    "activity_detail": [
+        {
+            "name": "Activity Log Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "activity_date", "title": "Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "activity_type", "title": "Type", "visible": True},
+                    {"name": "customer_name", "title": "Customer", "visible": True},
+                    {"name": "subject", "title": "Subject", "visible": True},
+                    {"name": "notes", "title": "Notes", "visible": True},
+                    {"name": "opportunity_name", "title": "Opportunity", "visible": True},
+                    {"name": "performed_by", "title": "Rep", "visible": True},
+                ],
+            },
+        },
+    ],
     # ---- Sales Pipeline / Opportunity Funnel Visualizations ----
     "pipeline_funnel": [
         {
@@ -4641,6 +4843,16 @@ DASHBOARDS = {
             {"query_key": "pipeline_detail", "vis_index": 0, "width": 6},       # Opportunity detail table
             {"query_key": "pipeline_win_loss", "vis_index": 0, "width": 3},     # Win/Loss chart
             {"query_key": "pipeline_win_loss", "vis_index": 1, "width": 3},     # Win/Loss summary table
+        ],
+    },
+    # ---- Customer Activity Log Dashboard ----
+    "customer_activity_dashboard": {
+        "name": "Customer Activity Log",
+        "tags": ["sales", "jrny-report", "report:sales"],
+        "widgets": [
+            {"query_key": "activity_volume_by_type", "vis_index": 0, "width": 6},      # Activity volume chart
+            {"query_key": "activity_customer_summary", "vis_index": 0, "width": 6},     # Account engagement table
+            {"query_key": "activity_detail", "vis_index": 0, "width": 6},               # Full activity log
         ],
     },
 }

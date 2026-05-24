@@ -3783,3 +3783,88 @@ BEGIN
 
   RAISE NOTICE 'Opportunities seeded: 18 opportunities across 6 stages, 2 sales reps';
 END $$;
+
+-- ============================================================================
+-- Customer Activity Log seed data
+-- ============================================================================
+-- Add performed_by column if not exists
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'crm' AND table_name = 'activities' AND column_name = 'performed_by'
+  ) THEN
+    ALTER TABLE crm.activities ADD COLUMN performed_by UUID;
+  END IF;
+END $$;
+
+DO $$
+DECLARE
+  org UUID := '11111111-2222-3333-4444-555555555555';
+  c1 UUID; c2 UUID; c3 UUID; c4 UUID; c5 UUID;
+  rep1 UUID; rep2 UUID;
+  opp1 UUID; opp2 UUID; opp3 UUID;
+BEGIN
+  IF EXISTS (SELECT 1 FROM crm.activities LIMIT 1) THEN
+    RAISE NOTICE 'Activities already seeded, skipping';
+    RETURN;
+  END IF;
+
+  -- Get existing customer contacts
+  SELECT id INTO c1 FROM core.contacts WHERE first_name = 'Alice' AND last_name = 'Johnson' LIMIT 1;
+  SELECT id INTO c2 FROM core.contacts WHERE first_name = 'Bob' AND last_name = 'Smith' LIMIT 1;
+  SELECT id INTO c3 FROM core.contacts WHERE first_name = 'Carol' AND last_name = 'Davis' LIMIT 1;
+  SELECT id INTO c4 FROM core.contacts WHERE first_name = 'David' AND last_name = 'Wilson' LIMIT 1;
+  SELECT id INTO c5 FROM core.contacts WHERE first_name = 'Emma' AND last_name = 'Taylor' LIMIT 1;
+
+  -- Get sales reps
+  SELECT id INTO rep1 FROM core.contacts WHERE email = 'rep1@jrny.co.za' LIMIT 1;
+  SELECT id INTO rep2 FROM core.contacts WHERE email = 'rep2@jrny.co.za' LIMIT 1;
+
+  -- Get some opportunities for linking
+  SELECT id INTO opp1 FROM crm.opportunities WHERE opportunity_name = 'Enterprise License Renewal' LIMIT 1;
+  SELECT id INTO opp2 FROM crm.opportunities WHERE opportunity_name = 'Multi-branch Deployment' LIMIT 1;
+  SELECT id INTO opp3 FROM crm.opportunities WHERE opportunity_name = 'Inventory Module Upgrade' LIMIT 1;
+
+  -- Recent activities (within last 30 days) - actively managed customers
+  INSERT INTO crm.activities (activity_type, subject, contact_id, opportunity_id, notes, activity_date, org_id, performed_by) VALUES
+    ('call', 'Follow-up on license renewal pricing', c1, opp1, 'Discussed volume discount options. Client wants proposal by EOW.', '2025-05-20 10:30:00', org, rep1),
+    ('email', 'Sent updated proposal document', c1, opp1, 'Attached revised pricing with 3-year commitment discount.', '2025-05-22 14:15:00', org, rep1),
+    ('meeting', 'Quarterly business review', c2, opp2, 'Reviewed deployment progress. 3 branches live, 2 remaining.', '2025-05-18 09:00:00', org, rep1),
+    ('call', 'Check on implementation timeline', c2, opp2, 'Client confirmed go-live for remaining branches by end of June.', '2025-05-23 11:00:00', org, rep1),
+    ('email', 'Technical requirements document', c4, opp3, 'Sent updated requirements based on last meeting notes.', '2025-05-19 16:45:00', org, rep2),
+    ('meeting', 'Demo of inventory module', c4, opp3, 'Showed new features. Client impressed with barcode scanning.', '2025-05-21 14:00:00', org, rep2),
+    ('call', 'Pricing clarification', c4, opp3, 'Answered questions about per-user vs per-warehouse pricing.', '2025-05-24 09:30:00', org, rep2),
+    ('email', 'Meeting notes and next steps', c3, NULL, 'Sent summary of discovery call. Scheduled follow-up for next week.', '2025-05-17 12:00:00', org, rep1),
+    ('call', 'Discovery call - new requirements', c3, NULL, 'Identified need for custom reporting. Will prepare demo.', '2025-05-15 10:00:00', org, rep1);
+
+  -- Activities 30-60 days ago
+  INSERT INTO crm.activities (activity_type, subject, contact_id, opportunity_id, notes, activity_date, org_id, performed_by) VALUES
+    ('meeting', 'Initial scoping meeting', c1, opp1, 'Discussed renewal requirements and new module needs.', '2025-04-15 10:00:00', org, rep1),
+    ('email', 'Follow-up with pricing sheet', c1, opp1, 'Sent standard pricing and license comparison.', '2025-04-16 09:00:00', org, rep1),
+    ('call', 'Budget approval status', c2, opp2, 'Budget approved. Procurement to issue PO next week.', '2025-04-20 11:30:00', org, rep1),
+    ('meeting', 'Technical deep dive', c4, opp3, 'Walked through integration requirements with IT team.', '2025-04-10 14:00:00', org, rep2),
+    ('email', 'Integration specifications', c4, opp3, 'Sent API documentation and sample code.', '2025-04-12 08:30:00', org, rep2),
+    ('call', 'Check-in on evaluation', c3, NULL, 'Client still evaluating. No blockers identified.', '2025-04-08 15:00:00', org, rep1);
+
+  -- Activities 60-90 days ago
+  INSERT INTO crm.activities (activity_type, subject, contact_id, opportunity_id, notes, activity_date, org_id, performed_by) VALUES
+    ('email', 'Introduction and capabilities overview', c2, NULL, 'Sent company overview and case studies.', '2025-03-01 10:00:00', org, rep1),
+    ('meeting', 'First meeting - needs assessment', c2, opp2, 'Identified multi-branch deployment as priority.', '2025-03-10 09:00:00', org, rep1),
+    ('call', 'Introductory call', c4, NULL, 'Discussed current pain points with inventory management.', '2025-03-05 14:30:00', org, rep2),
+    ('email', 'Product literature', c4, NULL, 'Sent brochure and ROI calculator.', '2025-03-06 09:15:00', org, rep2);
+
+  -- Dormant customer (Emma - no activity in 45+ days)
+  INSERT INTO crm.activities (activity_type, subject, contact_id, opportunity_id, notes, activity_date, org_id, performed_by) VALUES
+    ('call', 'Initial outreach', c5, NULL, 'Left voicemail. Will try again next week.', '2025-03-20 10:00:00', org, rep2),
+    ('email', 'Introduction email', c5, NULL, 'Sent introductory email with product overview.', '2025-03-21 11:00:00', org, rep2),
+    ('call', 'Second attempt', c5, NULL, 'Spoke briefly. Client busy, asked to call back in April.', '2025-04-02 14:00:00', org, rep2);
+
+  -- Older historical activities (90+ days)
+  INSERT INTO crm.activities (activity_type, subject, contact_id, opportunity_id, notes, activity_date, org_id, performed_by) VALUES
+    ('meeting', 'Annual review meeting', c1, NULL, 'Discussed renewal and expansion plans for 2025.', '2025-02-10 10:00:00', org, rep1),
+    ('email', 'Year-end summary report', c1, NULL, 'Sent usage statistics and recommendations.', '2025-01-15 09:00:00', org, rep1),
+    ('call', 'Holiday check-in', c3, NULL, 'Quick call to maintain relationship.', '2025-02-01 11:30:00', org, rep1),
+    ('meeting', 'Product roadmap preview', c2, NULL, 'Shared upcoming features relevant to their needs.', '2025-02-20 14:00:00', org, rep1);
+
+  RAISE NOTICE 'Activities seeded: 27 activities across 5 customers, 2 reps, 3 types';
+END $$;
