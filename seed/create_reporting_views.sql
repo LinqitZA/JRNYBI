@@ -46,6 +46,8 @@ DROP VIEW IF EXISTS reporting.v_revenue_by_dimension CASCADE;
 DROP VIEW IF EXISTS reporting.v_vat_summary CASCADE;
 DROP VIEW IF EXISTS reporting.v_inventory_turnover CASCADE;
 DROP VIEW IF EXISTS reporting.v_grn_summary CASCADE;
+DROP VIEW IF EXISTS reporting.v_stock_count_variance CASCADE;
+DROP VIEW IF EXISTS reporting.v_bin_utilization CASCADE;
 
 -- Also drop any legacy reporting tables (dev migration path)
 DROP TABLE IF EXISTS reporting.v_sales_orders CASCADE;
@@ -1306,5 +1308,125 @@ COMMENT ON COLUMN reporting.v_grn_summary.branch_id IS 'Branch ID for RLS filter
 
 
 -- ============================================================================
--- Done — all 30 reporting views created successfully
+-- 31. v_stock_count_variance — Stock count variances by product and zone
+-- ============================================================================
+DROP VIEW IF EXISTS reporting.v_stock_count_variance CASCADE;
+
+CREATE VIEW reporting.v_stock_count_variance AS
+SELECT
+  sc.id                                                       AS count_id,
+  sc.count_number,
+  sc.count_date,
+  sc.status                                                   AS count_status,
+  sc.counted_by,
+  sc.approved_by,
+  -- Warehouse info
+  sc.warehouse_id,
+  w.warehouse_code,
+  w.warehouse_name,
+  -- Line-level details
+  cl.id                                                       AS line_id,
+  cl.zone,
+  p.id                                                        AS product_id,
+  p.product_code,
+  p.product_name,
+  p.category                                                  AS product_category,
+  cl.book_qty,
+  cl.physical_qty,
+  cl.variance_qty,
+  cl.unit_cost,
+  cl.variance_value,
+  -- Variance classification
+  CASE
+    WHEN cl.variance_qty < 0 THEN 'Shrinkage'
+    WHEN cl.variance_qty > 0 THEN 'Over-count'
+    ELSE 'Match'
+  END                                                         AS variance_type,
+  -- Variance percentage
+  CASE
+    WHEN cl.book_qty > 0
+    THEN ROUND((cl.variance_qty / cl.book_qty) * 100, 2)
+    ELSE 0
+  END                                                         AS variance_pct,
+  -- RLS columns
+  sc.org_id,
+  sc.branch_id
+FROM inventory.stock_counts sc
+LEFT JOIN inventory.warehouses w ON w.id = sc.warehouse_id
+LEFT JOIN inventory.count_lines cl ON cl.count_id = sc.id
+LEFT JOIN inventory.products p ON p.id = cl.product_id;
+
+COMMENT ON VIEW  reporting.v_stock_count_variance IS 'Stock count variances with product, zone, and warehouse details for shrinkage analysis';
+COMMENT ON COLUMN reporting.v_stock_count_variance.count_number IS 'Stock count reference number';
+COMMENT ON COLUMN reporting.v_stock_count_variance.warehouse_id IS 'fk:inventory.warehouses.id Warehouse FK';
+COMMENT ON COLUMN reporting.v_stock_count_variance.product_id IS 'fk:inventory.products.id Product FK';
+COMMENT ON COLUMN reporting.v_stock_count_variance.variance_qty IS 'Quantity variance: physical - book (negative = shrinkage)';
+COMMENT ON COLUMN reporting.v_stock_count_variance.variance_value IS 'Monetary value of variance (variance_qty * unit_cost)';
+COMMENT ON COLUMN reporting.v_stock_count_variance.variance_type IS 'Classification: Shrinkage, Over-count, or Match';
+COMMENT ON COLUMN reporting.v_stock_count_variance.variance_pct IS 'Variance as percentage of book quantity';
+COMMENT ON COLUMN reporting.v_stock_count_variance.org_id IS 'Organization ID for RLS filtering';
+COMMENT ON COLUMN reporting.v_stock_count_variance.branch_id IS 'Branch ID for RLS filtering';
+
+
+-- ============================================================================
+-- 32. v_bin_utilization — Warehouse bin utilization by zone
+-- ============================================================================
+DROP VIEW IF EXISTS reporting.v_bin_utilization CASCADE;
+
+CREATE VIEW reporting.v_bin_utilization AS
+SELECT
+  wz.id                                                       AS zone_id,
+  wz.zone_code,
+  wz.zone_name,
+  wz.zone_type,
+  wz.capacity_bins,
+  -- Warehouse info
+  wz.warehouse_id,
+  w.warehouse_code,
+  w.warehouse_name,
+  -- Bin details
+  wb.id                                                       AS bin_id,
+  wb.bin_code,
+  wb.bin_type,
+  wb.max_capacity,
+  wb.is_active,
+  -- Stock in bin
+  COALESCE(sb.quantity, 0)                                    AS current_qty,
+  p.product_code,
+  p.product_name,
+  p.category                                                  AS product_category,
+  -- Bin status
+  CASE
+    WHEN sb.id IS NULL OR sb.quantity = 0 THEN 'Empty'
+    WHEN sb.quantity > wb.max_capacity THEN 'Over-capacity'
+    WHEN sb.quantity >= wb.max_capacity * 0.8 THEN 'Near-full'
+    ELSE 'In-use'
+  END                                                         AS bin_status,
+  -- Fill rate for individual bin
+  CASE
+    WHEN wb.max_capacity > 0
+    THEN ROUND((COALESCE(sb.quantity, 0) / wb.max_capacity) * 100, 1)
+    ELSE 0
+  END                                                         AS bin_fill_pct,
+  -- RLS columns
+  wz.org_id,
+  w.branch_id
+FROM inventory.warehouse_zones wz
+JOIN inventory.warehouses w ON w.id = wz.warehouse_id
+LEFT JOIN inventory.warehouse_bins wb ON wb.zone_id = wz.id AND wb.is_active = TRUE
+LEFT JOIN inventory.stock_bins sb ON sb.bin_id = wb.id AND sb.quantity > 0
+LEFT JOIN inventory.products p ON p.id = sb.product_id;
+
+COMMENT ON VIEW  reporting.v_bin_utilization IS 'Warehouse bin utilization by zone with occupancy and capacity details';
+COMMENT ON COLUMN reporting.v_bin_utilization.zone_id IS 'fk:inventory.warehouse_zones.id Zone FK';
+COMMENT ON COLUMN reporting.v_bin_utilization.warehouse_id IS 'fk:inventory.warehouses.id Warehouse FK';
+COMMENT ON COLUMN reporting.v_bin_utilization.bin_id IS 'fk:inventory.warehouse_bins.id Bin FK';
+COMMENT ON COLUMN reporting.v_bin_utilization.bin_status IS 'Bin status: Empty, In-use, Near-full, Over-capacity';
+COMMENT ON COLUMN reporting.v_bin_utilization.bin_fill_pct IS 'Bin fill percentage (current_qty / max_capacity * 100)';
+COMMENT ON COLUMN reporting.v_bin_utilization.org_id IS 'Organization ID for RLS filtering';
+COMMENT ON COLUMN reporting.v_bin_utilization.branch_id IS 'Branch ID for RLS filtering';
+
+
+-- ============================================================================
+-- Done — all 32 reporting views created successfully
 -- ============================================================================

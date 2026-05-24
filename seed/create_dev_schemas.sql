@@ -2233,3 +2233,704 @@ BEGIN
 
   RAISE NOTICE 'VAT/Tax seed data inserted: invoice_lines + purchase_invoice_lines';
 END $$;
+
+-- ============================================================================
+-- Goods Receipt (GRN) tables for inbound logistics reporting
+-- ============================================================================
+
+-- Goods Receipt header
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='inventory' AND table_name='goods_receipts') THEN
+    EXECUTE '
+      CREATE TABLE inventory.goods_receipts (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        grn_number TEXT NOT NULL,
+        po_id UUID,
+        supplier_id UUID,
+        receipt_date DATE DEFAULT CURRENT_DATE,
+        status TEXT DEFAULT ''completed'',
+        received_by TEXT,
+        notes TEXT,
+        org_id UUID,
+        branch_id UUID
+      )';
+  END IF;
+END $$;
+
+-- Goods Receipt line items
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='inventory' AND table_name='goods_receipt_lines') THEN
+    EXECUTE '
+      CREATE TABLE inventory.goods_receipt_lines (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        grn_id UUID,
+        product_id UUID,
+        po_line_id UUID,
+        expected_qty NUMERIC(12,2) DEFAULT 0,
+        received_qty NUMERIC(12,2) DEFAULT 0,
+        rejected_qty NUMERIC(12,2) DEFAULT 0,
+        unit_cost NUMERIC(12,2) DEFAULT 0,
+        line_total NUMERIC(12,2) DEFAULT 0,
+        org_id UUID
+      )';
+  END IF;
+END $$;
+
+-- GRN Quality Inspection records
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='inventory' AND table_name='grn_inspection') THEN
+    EXECUTE '
+      CREATE TABLE inventory.grn_inspection (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        grn_line_id UUID,
+        inspection_date DATE DEFAULT CURRENT_DATE,
+        result TEXT DEFAULT ''pass'',
+        inspector TEXT,
+        defect_type TEXT,
+        notes TEXT,
+        org_id UUID
+      )';
+  END IF;
+END $$;
+
+-- FK constraints for GRN tables
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_grn_po' AND table_schema = 'inventory'
+  ) THEN
+    ALTER TABLE inventory.goods_receipts
+      ADD CONSTRAINT fk_grn_po FOREIGN KEY (po_id) REFERENCES procurement.purchase_orders(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_grn_supplier' AND table_schema = 'inventory'
+  ) THEN
+    ALTER TABLE inventory.goods_receipts
+      ADD CONSTRAINT fk_grn_supplier FOREIGN KEY (supplier_id) REFERENCES core.contacts(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_grl_grn' AND table_schema = 'inventory'
+  ) THEN
+    ALTER TABLE inventory.goods_receipt_lines
+      ADD CONSTRAINT fk_grl_grn FOREIGN KEY (grn_id) REFERENCES inventory.goods_receipts(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_grl_product' AND table_schema = 'inventory'
+  ) THEN
+    ALTER TABLE inventory.goods_receipt_lines
+      ADD CONSTRAINT fk_grl_product FOREIGN KEY (product_id) REFERENCES inventory.products(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_inspection_grl' AND table_schema = 'inventory'
+  ) THEN
+    ALTER TABLE inventory.grn_inspection
+      ADD CONSTRAINT fk_inspection_grl FOREIGN KEY (grn_line_id) REFERENCES inventory.goods_receipt_lines(id);
+  END IF;
+END $$;
+
+COMMENT ON TABLE inventory.goods_receipts IS 'Goods Receipt Notes (GRN) header records for inbound logistics';
+COMMENT ON COLUMN inventory.goods_receipts.grn_number IS 'Unique GRN reference number | display_column';
+COMMENT ON COLUMN inventory.goods_receipts.receipt_date IS 'Date goods were received at warehouse';
+COMMENT ON COLUMN inventory.goods_receipts.status IS 'Receipt status: completed, partial, rejected';
+
+COMMENT ON TABLE inventory.goods_receipt_lines IS 'GRN line items with expected vs received quantities';
+COMMENT ON COLUMN inventory.goods_receipt_lines.expected_qty IS 'Quantity ordered on the PO line';
+COMMENT ON COLUMN inventory.goods_receipt_lines.received_qty IS 'Actual quantity received and accepted';
+COMMENT ON COLUMN inventory.goods_receipt_lines.rejected_qty IS 'Quantity rejected during inspection';
+
+COMMENT ON TABLE inventory.grn_inspection IS 'Quality inspection records for GRN line items';
+COMMENT ON COLUMN inventory.grn_inspection.result IS 'Inspection result: pass, fail, conditional';
+COMMENT ON COLUMN inventory.grn_inspection.defect_type IS 'Type of defect found (if any)';
+
+-- ============================================================================
+-- Seed test data for GRN report
+-- ============================================================================
+DO $$
+DECLARE
+  org UUID := '11111111-2222-3333-4444-555555555555';
+  br  UUID := 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  -- Suppliers
+  s1 UUID; s2 UUID; s3 UUID;
+  -- Products
+  p1 UUID; p2 UUID; p3 UUID; p4 UUID;
+  -- POs
+  po1 UUID; po2 UUID; po3 UUID; po4 UUID; po5 UUID; po6 UUID;
+  -- GRNs
+  grn1 UUID; grn2 UUID; grn3 UUID; grn4 UUID; grn5 UUID; grn6 UUID; grn7 UUID; grn8 UUID;
+  -- GRN Lines
+  gl1 UUID; gl2 UUID; gl3 UUID; gl4 UUID; gl5 UUID; gl6 UUID;
+  gl7 UUID; gl8 UUID; gl9 UUID; gl10 UUID; gl11 UUID; gl12 UUID;
+  gl13 UUID; gl14 UUID; gl15 UUID; gl16 UUID;
+BEGIN
+  -- Only seed if goods_receipts table is empty
+  IF EXISTS (SELECT 1 FROM inventory.goods_receipts LIMIT 1) THEN
+    RETURN;
+  END IF;
+
+  -- Ensure org exists
+  IF NOT EXISTS (SELECT 1 FROM core.organizations WHERE id = org) THEN
+    INSERT INTO core.organizations (id, name) VALUES (org, 'Test Org');
+  END IF;
+
+  -- Create supplier contacts
+  SELECT id INTO s1 FROM core.contacts WHERE email = 'supplier1@example.com' LIMIT 1;
+  IF s1 IS NULL THEN
+    INSERT INTO core.contacts (first_name, last_name, email, org_id) VALUES ('Acme', 'Supplies', 'supplier1@example.com', org) RETURNING id INTO s1;
+  END IF;
+  SELECT id INTO s2 FROM core.contacts WHERE email = 'supplier2@example.com' LIMIT 1;
+  IF s2 IS NULL THEN
+    INSERT INTO core.contacts (first_name, last_name, email, org_id) VALUES ('Global', 'Parts', 'supplier2@example.com', org) RETURNING id INTO s2;
+  END IF;
+  SELECT id INTO s3 FROM core.contacts WHERE email = 'supplier3@example.com' LIMIT 1;
+  IF s3 IS NULL THEN
+    INSERT INTO core.contacts (first_name, last_name, email, org_id) VALUES ('Premier', 'Materials', 'supplier3@example.com', org) RETURNING id INTO s3;
+  END IF;
+
+  -- Get existing products
+  SELECT id INTO p1 FROM inventory.products WHERE product_code = 'WIDGET-A' LIMIT 1;
+  SELECT id INTO p2 FROM inventory.products WHERE product_code = 'GADGET-B' LIMIT 1;
+  SELECT id INTO p3 FROM inventory.products WHERE product_code = 'PART-C' LIMIT 1;
+  SELECT id INTO p4 FROM inventory.products WHERE product_code = 'SUPPLY-D' LIMIT 1;
+
+  -- Create POs for GRN reference (varying lead times)
+  INSERT INTO procurement.purchase_orders (po_number, supplier_id, total_amount, status, order_date, expected_date, org_id, branch_id)
+    VALUES ('PO-GRN-001', s1, 15000.00, 'received', '2024-01-05', '2024-01-20', org, br) RETURNING id INTO po1;
+  INSERT INTO procurement.purchase_orders (po_number, supplier_id, total_amount, status, order_date, expected_date, org_id, branch_id)
+    VALUES ('PO-GRN-002', s2, 8500.00, 'received', '2024-02-01', '2024-02-14', org, br) RETURNING id INTO po2;
+  INSERT INTO procurement.purchase_orders (po_number, supplier_id, total_amount, status, order_date, expected_date, org_id, branch_id)
+    VALUES ('PO-GRN-003', s1, 12000.00, 'received', '2024-03-10', '2024-03-25', org, br) RETURNING id INTO po3;
+  INSERT INTO procurement.purchase_orders (po_number, supplier_id, total_amount, status, order_date, expected_date, org_id, branch_id)
+    VALUES ('PO-GRN-004', s3, 20000.00, 'partial', '2024-04-01', '2024-04-15', org, br) RETURNING id INTO po4;
+  INSERT INTO procurement.purchase_orders (po_number, supplier_id, total_amount, status, order_date, expected_date, org_id, branch_id)
+    VALUES ('PO-GRN-005', s2, 9500.00, 'received', '2024-05-10', '2024-05-25', org, br) RETURNING id INTO po5;
+  INSERT INTO procurement.purchase_orders (po_number, supplier_id, total_amount, status, order_date, expected_date, org_id, branch_id)
+    VALUES ('PO-GRN-006', s3, 16000.00, 'received', '2024-06-01', '2024-06-18', org, br) RETURNING id INTO po6;
+
+  -- GRN 1: Acme Supplies — full receipt, on time (lead 13 days)
+  INSERT INTO inventory.goods_receipts (grn_number, po_id, supplier_id, receipt_date, status, received_by, org_id, branch_id)
+    VALUES ('GRN-2024-001', po1, s1, '2024-01-18', 'completed', 'John Warehouse', org, br) RETURNING id INTO grn1;
+  INSERT INTO inventory.goods_receipt_lines (grn_id, product_id, expected_qty, received_qty, rejected_qty, unit_cost, line_total, org_id)
+    VALUES (grn1, p1, 50, 50, 0, 80.00, 4000.00, org) RETURNING id INTO gl1;
+  INSERT INTO inventory.goods_receipt_lines (grn_id, product_id, expected_qty, received_qty, rejected_qty, unit_cost, line_total, org_id)
+    VALUES (grn1, p2, 30, 30, 0, 130.00, 3900.00, org) RETURNING id INTO gl2;
+
+  -- GRN 2: Global Parts — short delivery (received 18 of 25), late (lead 17 days vs expected 13)
+  INSERT INTO inventory.goods_receipts (grn_number, po_id, supplier_id, receipt_date, status, received_by, org_id, branch_id)
+    VALUES ('GRN-2024-002', po2, s2, '2024-02-18', 'partial', 'Jane Receiving', org, br) RETURNING id INTO grn2;
+  INSERT INTO inventory.goods_receipt_lines (grn_id, product_id, expected_qty, received_qty, rejected_qty, unit_cost, line_total, org_id)
+    VALUES (grn2, p3, 100, 80, 5, 25.00, 2000.00, org) RETURNING id INTO gl3;
+  INSERT INTO inventory.goods_receipt_lines (grn_id, product_id, expected_qty, received_qty, rejected_qty, unit_cost, line_total, org_id)
+    VALUES (grn2, p4, 50, 40, 0, 12.00, 480.00, org) RETURNING id INTO gl4;
+
+  -- GRN 3: Acme Supplies — full receipt with quality issues (lead 12 days)
+  INSERT INTO inventory.goods_receipts (grn_number, po_id, supplier_id, receipt_date, status, received_by, org_id, branch_id)
+    VALUES ('GRN-2024-003', po3, s1, '2024-03-22', 'completed', 'John Warehouse', org, br) RETURNING id INTO grn3;
+  INSERT INTO inventory.goods_receipt_lines (grn_id, product_id, expected_qty, received_qty, rejected_qty, unit_cost, line_total, org_id)
+    VALUES (grn3, p1, 40, 40, 8, 80.00, 3200.00, org) RETURNING id INTO gl5;
+  INSERT INTO inventory.goods_receipt_lines (grn_id, product_id, expected_qty, received_qty, rejected_qty, unit_cost, line_total, org_id)
+    VALUES (grn3, p3, 60, 58, 0, 25.00, 1450.00, org) RETURNING id INTO gl6;
+
+  -- GRN 4: Premier Materials — first partial receipt (lead 16 days)
+  INSERT INTO inventory.goods_receipts (grn_number, po_id, supplier_id, receipt_date, status, received_by, org_id, branch_id)
+    VALUES ('GRN-2024-004', po4, s3, '2024-04-17', 'partial', 'John Warehouse', org, br) RETURNING id INTO grn4;
+  INSERT INTO inventory.goods_receipt_lines (grn_id, product_id, expected_qty, received_qty, rejected_qty, unit_cost, line_total, org_id)
+    VALUES (grn4, p2, 80, 50, 3, 130.00, 6500.00, org) RETURNING id INTO gl7;
+  INSERT INTO inventory.goods_receipt_lines (grn_id, product_id, expected_qty, received_qty, rejected_qty, unit_cost, line_total, org_id)
+    VALUES (grn4, p4, 200, 120, 0, 12.00, 1440.00, org) RETURNING id INTO gl8;
+
+  -- GRN 5: Premier Materials — second receipt for same PO (lead 30 days from PO)
+  INSERT INTO inventory.goods_receipts (grn_number, po_id, supplier_id, receipt_date, status, received_by, org_id, branch_id)
+    VALUES ('GRN-2024-005', po4, s3, '2024-05-01', 'completed', 'Jane Receiving', org, br) RETURNING id INTO grn5;
+  INSERT INTO inventory.goods_receipt_lines (grn_id, product_id, expected_qty, received_qty, rejected_qty, unit_cost, line_total, org_id)
+    VALUES (grn5, p2, 30, 28, 2, 130.00, 3640.00, org) RETURNING id INTO gl9;
+  INSERT INTO inventory.goods_receipt_lines (grn_id, product_id, expected_qty, received_qty, rejected_qty, unit_cost, line_total, org_id)
+    VALUES (grn5, p4, 80, 80, 0, 12.00, 960.00, org) RETURNING id INTO gl10;
+
+  -- GRN 6: Global Parts — perfect receipt (lead 14 days, on time)
+  INSERT INTO inventory.goods_receipts (grn_number, po_id, supplier_id, receipt_date, status, received_by, org_id, branch_id)
+    VALUES ('GRN-2024-006', po5, s2, '2024-05-24', 'completed', 'John Warehouse', org, br) RETURNING id INTO grn6;
+  INSERT INTO inventory.goods_receipt_lines (grn_id, product_id, expected_qty, received_qty, rejected_qty, unit_cost, line_total, org_id)
+    VALUES (grn6, p1, 60, 60, 0, 80.00, 4800.00, org) RETURNING id INTO gl11;
+  INSERT INTO inventory.goods_receipt_lines (grn_id, product_id, expected_qty, received_qty, rejected_qty, unit_cost, line_total, org_id)
+    VALUES (grn6, p3, 150, 150, 0, 25.00, 3750.00, org) RETURNING id INTO gl12;
+
+  -- GRN 7: Premier Materials — late receipt with rejected items (lead 20 days)
+  INSERT INTO inventory.goods_receipts (grn_number, po_id, supplier_id, receipt_date, status, received_by, org_id, branch_id)
+    VALUES ('GRN-2024-007', po6, s3, '2024-06-21', 'completed', 'Jane Receiving', org, br) RETURNING id INTO grn7;
+  INSERT INTO inventory.goods_receipt_lines (grn_id, product_id, expected_qty, received_qty, rejected_qty, unit_cost, line_total, org_id)
+    VALUES (grn7, p2, 45, 42, 5, 130.00, 5460.00, org) RETURNING id INTO gl13;
+  INSERT INTO inventory.goods_receipt_lines (grn_id, product_id, expected_qty, received_qty, rejected_qty, unit_cost, line_total, org_id)
+    VALUES (grn7, p1, 35, 35, 2, 80.00, 2800.00, org) RETURNING id INTO gl14;
+
+  -- GRN 8: Acme Supplies — late June receipt, perfect quality
+  INSERT INTO inventory.goods_receipts (grn_number, po_id, supplier_id, receipt_date, status, received_by, notes, org_id, branch_id)
+    VALUES ('GRN-2024-008', po3, s1, '2024-06-28', 'completed', 'John Warehouse', 'Replacement batch for rejected items', org, br) RETURNING id INTO grn8;
+  INSERT INTO inventory.goods_receipt_lines (grn_id, product_id, expected_qty, received_qty, rejected_qty, unit_cost, line_total, org_id)
+    VALUES (grn8, p1, 8, 8, 0, 80.00, 640.00, org) RETURNING id INTO gl15;
+  INSERT INTO inventory.goods_receipt_lines (grn_id, product_id, expected_qty, received_qty, rejected_qty, unit_cost, line_total, org_id)
+    VALUES (grn8, p4, 25, 25, 0, 12.00, 300.00, org) RETURNING id INTO gl16;
+
+  -- Insert inspection records
+  -- GRN 1 lines: all pass
+  INSERT INTO inventory.grn_inspection (grn_line_id, inspection_date, result, inspector, org_id) VALUES (gl1, '2024-01-18', 'pass', 'QC Team A', org);
+  INSERT INTO inventory.grn_inspection (grn_line_id, inspection_date, result, inspector, org_id) VALUES (gl2, '2024-01-18', 'pass', 'QC Team A', org);
+
+  -- GRN 2 lines: first line has conditional (some minor defects), second passes
+  INSERT INTO inventory.grn_inspection (grn_line_id, inspection_date, result, inspector, defect_type, notes, org_id)
+    VALUES (gl3, '2024-02-19', 'conditional', 'QC Team B', 'Minor scratches', '5 units with surface scratches - accepted with discount', org);
+  INSERT INTO inventory.grn_inspection (grn_line_id, inspection_date, result, inspector, org_id) VALUES (gl4, '2024-02-19', 'pass', 'QC Team B', org);
+
+  -- GRN 3 lines: first line fails (8 rejected), second passes
+  INSERT INTO inventory.grn_inspection (grn_line_id, inspection_date, result, inspector, defect_type, notes, org_id)
+    VALUES (gl5, '2024-03-22', 'fail', 'QC Team A', 'Dimensional variance', '8 units out of spec - returned to supplier', org);
+  INSERT INTO inventory.grn_inspection (grn_line_id, inspection_date, result, inspector, org_id) VALUES (gl6, '2024-03-22', 'pass', 'QC Team A', org);
+
+  -- GRN 4 lines: first line conditional (3 rejected), second passes
+  INSERT INTO inventory.grn_inspection (grn_line_id, inspection_date, result, inspector, defect_type, notes, org_id)
+    VALUES (gl7, '2024-04-18', 'conditional', 'QC Team B', 'Packaging damage', '3 units damaged in transit', org);
+  INSERT INTO inventory.grn_inspection (grn_line_id, inspection_date, result, inspector, org_id) VALUES (gl8, '2024-04-18', 'pass', 'QC Team B', org);
+
+  -- GRN 5 lines: first line conditional (2 rejected), second passes
+  INSERT INTO inventory.grn_inspection (grn_line_id, inspection_date, result, inspector, defect_type, notes, org_id)
+    VALUES (gl9, '2024-05-02', 'conditional', 'QC Team A', 'Cosmetic defects', '2 units with paint issues', org);
+  INSERT INTO inventory.grn_inspection (grn_line_id, inspection_date, result, inspector, org_id) VALUES (gl10, '2024-05-02', 'pass', 'QC Team A', org);
+
+  -- GRN 6 lines: all pass (perfect)
+  INSERT INTO inventory.grn_inspection (grn_line_id, inspection_date, result, inspector, org_id) VALUES (gl11, '2024-05-24', 'pass', 'QC Team B', org);
+  INSERT INTO inventory.grn_inspection (grn_line_id, inspection_date, result, inspector, org_id) VALUES (gl12, '2024-05-24', 'pass', 'QC Team B', org);
+
+  -- GRN 7 lines: first fails (5 rejected), second conditional (2 rejected)
+  INSERT INTO inventory.grn_inspection (grn_line_id, inspection_date, result, inspector, defect_type, notes, org_id)
+    VALUES (gl13, '2024-06-22', 'fail', 'QC Team A', 'Functional defect', '5 units non-functional - returned', org);
+  INSERT INTO inventory.grn_inspection (grn_line_id, inspection_date, result, inspector, defect_type, notes, org_id)
+    VALUES (gl14, '2024-06-22', 'conditional', 'QC Team A', 'Minor scratches', '2 units with minor cosmetic issues - accepted', org);
+
+  -- GRN 8 lines: all pass (replacement batch)
+  INSERT INTO inventory.grn_inspection (grn_line_id, inspection_date, result, inspector, org_id) VALUES (gl15, '2024-06-28', 'pass', 'QC Team A', org);
+  INSERT INTO inventory.grn_inspection (grn_line_id, inspection_date, result, inspector, org_id) VALUES (gl16, '2024-06-28', 'pass', 'QC Team A', org);
+
+  RAISE NOTICE 'GRN seed data inserted: 8 GRNs, 16 lines, 16 inspections';
+END $$;
+
+-- ============================================================================
+-- Stock Count / Stock Take tables for variance reporting
+-- ============================================================================
+
+-- Stock Count header (stock take exercise)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='inventory' AND table_name='stock_counts') THEN
+    EXECUTE '
+      CREATE TABLE inventory.stock_counts (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        count_number TEXT NOT NULL,
+        warehouse_id UUID,
+        count_date DATE DEFAULT CURRENT_DATE,
+        status TEXT DEFAULT ''completed'',
+        counted_by TEXT,
+        approved_by TEXT,
+        notes TEXT,
+        org_id UUID,
+        branch_id UUID
+      )';
+  END IF;
+END $$;
+
+-- Stock Count line items (per-product count results)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='inventory' AND table_name='count_lines') THEN
+    EXECUTE '
+      CREATE TABLE inventory.count_lines (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        count_id UUID,
+        product_id UUID,
+        zone TEXT,
+        book_qty NUMERIC(12,2) DEFAULT 0,
+        physical_qty NUMERIC(12,2) DEFAULT 0,
+        variance_qty NUMERIC(12,2) DEFAULT 0,
+        unit_cost NUMERIC(12,2) DEFAULT 0,
+        variance_value NUMERIC(12,2) DEFAULT 0,
+        notes TEXT,
+        org_id UUID
+      )';
+  END IF;
+END $$;
+
+-- FK constraints for stock count tables
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_stock_counts_warehouse' AND table_schema = 'inventory'
+  ) THEN
+    ALTER TABLE inventory.stock_counts
+      ADD CONSTRAINT fk_stock_counts_warehouse FOREIGN KEY (warehouse_id) REFERENCES inventory.warehouses(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_count_lines_count' AND table_schema = 'inventory'
+  ) THEN
+    ALTER TABLE inventory.count_lines
+      ADD CONSTRAINT fk_count_lines_count FOREIGN KEY (count_id) REFERENCES inventory.stock_counts(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_count_lines_product' AND table_schema = 'inventory'
+  ) THEN
+    ALTER TABLE inventory.count_lines
+      ADD CONSTRAINT fk_count_lines_product FOREIGN KEY (product_id) REFERENCES inventory.products(id);
+  END IF;
+END $$;
+
+COMMENT ON TABLE inventory.stock_counts IS 'Stock take exercise headers';
+COMMENT ON COLUMN inventory.stock_counts.count_number IS 'Unique stock count reference | display_column';
+COMMENT ON COLUMN inventory.stock_counts.count_date IS 'Date the stock take was performed';
+COMMENT ON COLUMN inventory.stock_counts.status IS 'Count status: in_progress, completed, cancelled';
+
+COMMENT ON TABLE inventory.count_lines IS 'Per-product stock count results with variances';
+COMMENT ON COLUMN inventory.count_lines.zone IS 'Warehouse zone or location where count was performed';
+COMMENT ON COLUMN inventory.count_lines.book_qty IS 'System (book) quantity at time of count';
+COMMENT ON COLUMN inventory.count_lines.physical_qty IS 'Actual physically counted quantity';
+COMMENT ON COLUMN inventory.count_lines.variance_qty IS 'Difference: physical_qty - book_qty (negative = shrinkage)';
+COMMENT ON COLUMN inventory.count_lines.variance_value IS 'Monetary value of variance (variance_qty * unit_cost)';
+
+-- ============================================================================
+-- Seed test data for Stock Count Variance report
+-- ============================================================================
+DO $$
+DECLARE
+  org UUID := '11111111-2222-3333-4444-555555555555';
+  br  UUID := 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  w1 UUID; w2 UUID;
+  p1 UUID; p2 UUID; p3 UUID; p4 UUID;
+  sc1 UUID; sc2 UUID; sc3 UUID;
+BEGIN
+  -- Only seed if stock_counts table is empty
+  IF EXISTS (SELECT 1 FROM inventory.stock_counts LIMIT 1) THEN
+    RETURN;
+  END IF;
+
+  -- Get warehouses (create if needed)
+  SELECT id INTO w1 FROM inventory.warehouses WHERE warehouse_code = 'WH-MAIN' LIMIT 1;
+  IF w1 IS NULL THEN
+    INSERT INTO inventory.warehouses (warehouse_code, warehouse_name, location, org_id, branch_id)
+      VALUES ('WH-MAIN', 'Main Warehouse', 'Johannesburg', org, br) RETURNING id INTO w1;
+  END IF;
+  SELECT id INTO w2 FROM inventory.warehouses WHERE warehouse_code = 'WH-SECONDARY' LIMIT 1;
+  IF w2 IS NULL THEN
+    INSERT INTO inventory.warehouses (warehouse_code, warehouse_name, location, org_id, branch_id)
+      VALUES ('WH-SECONDARY', 'Secondary Warehouse', 'Cape Town', org, br) RETURNING id INTO w2;
+  END IF;
+
+  -- Get products
+  SELECT id INTO p1 FROM inventory.products WHERE product_code = 'WIDGET-A' LIMIT 1;
+  SELECT id INTO p2 FROM inventory.products WHERE product_code = 'GADGET-B' LIMIT 1;
+  SELECT id INTO p3 FROM inventory.products WHERE product_code = 'PART-C' LIMIT 1;
+  SELECT id INTO p4 FROM inventory.products WHERE product_code = 'SUPPLY-D' LIMIT 1;
+
+  -- Stock Count 1: Q1 2024 count at Main Warehouse (some shrinkage)
+  INSERT INTO inventory.stock_counts (count_number, warehouse_id, count_date, status, counted_by, approved_by, org_id, branch_id)
+    VALUES ('SC-2024-Q1', w1, '2024-03-31', 'completed', 'Team Alpha', 'Warehouse Manager', org, br) RETURNING id INTO sc1;
+
+  INSERT INTO inventory.count_lines (count_id, product_id, zone, book_qty, physical_qty, variance_qty, unit_cost, variance_value, org_id) VALUES
+    (sc1, p1, 'Zone A', 100, 97, -3, 80.00, -240.00, org),
+    (sc1, p2, 'Zone A', 50, 48, -2, 130.00, -260.00, org),
+    (sc1, p3, 'Zone B', 500, 495, -5, 25.00, -125.00, org),
+    (sc1, p4, 'Zone B', 200, 205, 5, 12.00, 60.00, org),
+    (sc1, p1, 'Zone C', 75, 75, 0, 80.00, 0.00, org),
+    (sc1, p3, 'Zone C', 300, 292, -8, 25.00, -200.00, org);
+
+  -- Stock Count 2: Q2 2024 count at Secondary Warehouse (larger variances)
+  INSERT INTO inventory.stock_counts (count_number, warehouse_id, count_date, status, counted_by, approved_by, org_id, branch_id)
+    VALUES ('SC-2024-Q2', w2, '2024-06-30', 'completed', 'Team Beta', 'Warehouse Manager', org, br) RETURNING id INTO sc2;
+
+  INSERT INTO inventory.count_lines (count_id, product_id, zone, book_qty, physical_qty, variance_qty, unit_cost, variance_value, org_id) VALUES
+    (sc2, p1, 'Zone A', 80, 72, -8, 80.00, -640.00, org),
+    (sc2, p2, 'Zone A', 35, 35, 0, 130.00, 0.00, org),
+    (sc2, p3, 'Zone B', 400, 385, -15, 25.00, -375.00, org),
+    (sc2, p4, 'Zone B', 150, 148, -2, 12.00, -24.00, org),
+    (sc2, p1, 'Zone C', 60, 63, 3, 80.00, 240.00, org),
+    (sc2, p2, 'Zone C', 25, 22, -3, 130.00, -390.00, org);
+
+  -- Stock Count 3: Q3 2024 count at Main Warehouse (improved accuracy)
+  INSERT INTO inventory.stock_counts (count_number, warehouse_id, count_date, status, counted_by, approved_by, org_id, branch_id)
+    VALUES ('SC-2024-Q3', w1, '2024-09-30', 'completed', 'Team Alpha', 'Warehouse Manager', org, br) RETURNING id INTO sc3;
+
+  INSERT INTO inventory.count_lines (count_id, product_id, zone, book_qty, physical_qty, variance_qty, unit_cost, variance_value, org_id) VALUES
+    (sc3, p1, 'Zone A', 120, 119, -1, 80.00, -80.00, org),
+    (sc3, p2, 'Zone A', 45, 45, 0, 130.00, 0.00, org),
+    (sc3, p3, 'Zone B', 550, 548, -2, 25.00, -50.00, org),
+    (sc3, p4, 'Zone B', 180, 180, 0, 12.00, 0.00, org),
+    (sc3, p1, 'Zone C', 90, 88, -2, 80.00, -160.00, org),
+    (sc3, p3, 'Zone C', 350, 347, -3, 25.00, -75.00, org);
+
+  RAISE NOTICE 'Stock count seed data inserted: 3 counts, 18 lines';
+END $$;
+
+-- ============================================================================
+-- Warehouse Bin tables for bin utilization reporting
+-- ============================================================================
+
+-- Warehouse zones (areas within a warehouse)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='inventory' AND table_name='warehouse_zones') THEN
+    EXECUTE '
+      CREATE TABLE inventory.warehouse_zones (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        warehouse_id UUID,
+        zone_code TEXT NOT NULL,
+        zone_name TEXT NOT NULL,
+        zone_type TEXT DEFAULT ''general'',
+        capacity_bins INTEGER DEFAULT 0,
+        org_id UUID
+      )';
+  END IF;
+END $$;
+
+-- Warehouse bins (individual storage locations)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='inventory' AND table_name='warehouse_bins') THEN
+    EXECUTE '
+      CREATE TABLE inventory.warehouse_bins (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        zone_id UUID,
+        bin_code TEXT NOT NULL,
+        bin_type TEXT DEFAULT ''shelf'',
+        max_capacity NUMERIC(12,2) DEFAULT 100,
+        is_active BOOLEAN DEFAULT TRUE,
+        org_id UUID
+      )';
+  END IF;
+END $$;
+
+-- Stock in bins (bin occupancy)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='inventory' AND table_name='stock_bins') THEN
+    EXECUTE '
+      CREATE TABLE inventory.stock_bins (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        bin_id UUID,
+        product_id UUID,
+        quantity NUMERIC(12,2) DEFAULT 0,
+        last_updated TIMESTAMP DEFAULT now(),
+        org_id UUID
+      )';
+  END IF;
+END $$;
+
+-- FK constraints for bin tables
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_zones_warehouse' AND table_schema = 'inventory'
+  ) THEN
+    ALTER TABLE inventory.warehouse_zones
+      ADD CONSTRAINT fk_zones_warehouse FOREIGN KEY (warehouse_id) REFERENCES inventory.warehouses(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_bins_zone' AND table_schema = 'inventory'
+  ) THEN
+    ALTER TABLE inventory.warehouse_bins
+      ADD CONSTRAINT fk_bins_zone FOREIGN KEY (zone_id) REFERENCES inventory.warehouse_zones(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_stock_bins_bin' AND table_schema = 'inventory'
+  ) THEN
+    ALTER TABLE inventory.stock_bins
+      ADD CONSTRAINT fk_stock_bins_bin FOREIGN KEY (bin_id) REFERENCES inventory.warehouse_bins(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_stock_bins_product' AND table_schema = 'inventory'
+  ) THEN
+    ALTER TABLE inventory.stock_bins
+      ADD CONSTRAINT fk_stock_bins_product FOREIGN KEY (product_id) REFERENCES inventory.products(id);
+  END IF;
+END $$;
+
+COMMENT ON TABLE inventory.warehouse_zones IS 'Warehouse zones or areas for storage layout';
+COMMENT ON COLUMN inventory.warehouse_zones.zone_code IS 'Zone code identifier | display_column';
+COMMENT ON COLUMN inventory.warehouse_zones.zone_name IS 'Zone display name | display_column';
+COMMENT ON COLUMN inventory.warehouse_zones.zone_type IS 'Zone type: picking, bulk, receiving, shipping, general';
+COMMENT ON COLUMN inventory.warehouse_zones.capacity_bins IS 'Maximum number of bins in this zone';
+
+COMMENT ON TABLE inventory.warehouse_bins IS 'Individual bin storage locations within warehouse zones';
+COMMENT ON COLUMN inventory.warehouse_bins.bin_code IS 'Bin location code (e.g., A-01-01) | display_column';
+COMMENT ON COLUMN inventory.warehouse_bins.bin_type IS 'Bin type: shelf, floor, rack, pallet';
+COMMENT ON COLUMN inventory.warehouse_bins.max_capacity IS 'Maximum unit capacity for this bin';
+
+COMMENT ON TABLE inventory.stock_bins IS 'Current stock allocation to warehouse bins';
+COMMENT ON COLUMN inventory.stock_bins.quantity IS 'Quantity of product currently in the bin';
+
+-- ============================================================================
+-- Seed test data for Warehouse Bin Utilization report
+-- ============================================================================
+DO $$
+DECLARE
+  org UUID := '11111111-2222-3333-4444-555555555555';
+  w1 UUID; w2 UUID;
+  -- Zones
+  z1a UUID; z1b UUID; z1c UUID; z1d UUID;
+  z2a UUID; z2b UUID; z2c UUID;
+  -- Bin IDs (arrays would be nicer but we keep it simple)
+  b UUID;
+  p1 UUID; p2 UUID; p3 UUID; p4 UUID;
+  bin_counter INTEGER;
+BEGIN
+  -- Only seed if warehouse_zones table is empty
+  IF EXISTS (SELECT 1 FROM inventory.warehouse_zones LIMIT 1) THEN
+    RETURN;
+  END IF;
+
+  -- Get warehouses
+  SELECT id INTO w1 FROM inventory.warehouses WHERE warehouse_code = 'WH-MAIN' LIMIT 1;
+  SELECT id INTO w2 FROM inventory.warehouses WHERE warehouse_code = 'WH-SECONDARY' LIMIT 1;
+
+  -- Get products
+  SELECT id INTO p1 FROM inventory.products WHERE product_code = 'WIDGET-A' LIMIT 1;
+  SELECT id INTO p2 FROM inventory.products WHERE product_code = 'GADGET-B' LIMIT 1;
+  SELECT id INTO p3 FROM inventory.products WHERE product_code = 'PART-C' LIMIT 1;
+  SELECT id INTO p4 FROM inventory.products WHERE product_code = 'SUPPLY-D' LIMIT 1;
+
+  -- ===== Main Warehouse Zones =====
+  INSERT INTO inventory.warehouse_zones (warehouse_id, zone_code, zone_name, zone_type, capacity_bins, org_id)
+    VALUES (w1, 'MWH-A', 'Picking Zone A', 'picking', 20, org) RETURNING id INTO z1a;
+  INSERT INTO inventory.warehouse_zones (warehouse_id, zone_code, zone_name, zone_type, capacity_bins, org_id)
+    VALUES (w1, 'MWH-B', 'Bulk Storage B', 'bulk', 30, org) RETURNING id INTO z1b;
+  INSERT INTO inventory.warehouse_zones (warehouse_id, zone_code, zone_name, zone_type, capacity_bins, org_id)
+    VALUES (w1, 'MWH-C', 'Receiving Area C', 'receiving', 10, org) RETURNING id INTO z1c;
+  INSERT INTO inventory.warehouse_zones (warehouse_id, zone_code, zone_name, zone_type, capacity_bins, org_id)
+    VALUES (w1, 'MWH-D', 'Shipping Zone D', 'shipping', 15, org) RETURNING id INTO z1d;
+
+  -- ===== Secondary Warehouse Zones =====
+  INSERT INTO inventory.warehouse_zones (warehouse_id, zone_code, zone_name, zone_type, capacity_bins, org_id)
+    VALUES (w2, 'SWH-A', 'Picking Zone A', 'picking', 15, org) RETURNING id INTO z2a;
+  INSERT INTO inventory.warehouse_zones (warehouse_id, zone_code, zone_name, zone_type, capacity_bins, org_id)
+    VALUES (w2, 'SWH-B', 'Bulk Storage B', 'bulk', 25, org) RETURNING id INTO z2b;
+  INSERT INTO inventory.warehouse_zones (warehouse_id, zone_code, zone_name, zone_type, capacity_bins, org_id)
+    VALUES (w2, 'SWH-C', 'Receiving Area C', 'receiving', 8, org) RETURNING id INTO z2c;
+
+  -- ===== Create bins and stock for Main Warehouse =====
+  -- Picking Zone A: 20 bins, 16 occupied (80% utilization)
+  FOR bin_counter IN 1..20 LOOP
+    INSERT INTO inventory.warehouse_bins (zone_id, bin_code, bin_type, max_capacity, org_id)
+      VALUES (z1a, 'A-' || LPAD(bin_counter::text, 2, '0'), 'shelf', 50, org)
+      RETURNING id INTO b;
+    IF bin_counter <= 8 THEN
+      INSERT INTO inventory.stock_bins (bin_id, product_id, quantity, org_id)
+        VALUES (b, p1, 20 + (bin_counter * 3), org);
+    ELSIF bin_counter <= 16 THEN
+      INSERT INTO inventory.stock_bins (bin_id, product_id, quantity, org_id)
+        VALUES (b, p3, 30 + (bin_counter * 2), org);
+    END IF;
+    -- bins 17-20 are empty
+  END LOOP;
+
+  -- Bulk Storage B: 30 bins, 25 occupied (83% utilization), some over-capacity
+  FOR bin_counter IN 1..30 LOOP
+    INSERT INTO inventory.warehouse_bins (zone_id, bin_code, bin_type, max_capacity, org_id)
+      VALUES (z1b, 'B-' || LPAD(bin_counter::text, 2, '0'), 'pallet', 200, org)
+      RETURNING id INTO b;
+    IF bin_counter <= 10 THEN
+      INSERT INTO inventory.stock_bins (bin_id, product_id, quantity, org_id)
+        VALUES (b, p2, 150 + (bin_counter * 5), org);
+    ELSIF bin_counter <= 20 THEN
+      INSERT INTO inventory.stock_bins (bin_id, product_id, quantity, org_id)
+        VALUES (b, p4, 100 + (bin_counter * 8), org);
+    ELSIF bin_counter <= 25 THEN
+      -- Over-capacity bins (quantity > max_capacity of 200)
+      INSERT INTO inventory.stock_bins (bin_id, product_id, quantity, org_id)
+        VALUES (b, p3, 210 + (bin_counter * 2), org);
+    END IF;
+    -- bins 26-30 are empty
+  END LOOP;
+
+  -- Receiving Area C: 10 bins, 3 occupied (30% utilization — often cleared)
+  FOR bin_counter IN 1..10 LOOP
+    INSERT INTO inventory.warehouse_bins (zone_id, bin_code, bin_type, max_capacity, org_id)
+      VALUES (z1c, 'C-' || LPAD(bin_counter::text, 2, '0'), 'floor', 500, org)
+      RETURNING id INTO b;
+    IF bin_counter <= 3 THEN
+      INSERT INTO inventory.stock_bins (bin_id, product_id, quantity, org_id)
+        VALUES (b, p1, 200 + (bin_counter * 50), org);
+    END IF;
+  END LOOP;
+
+  -- Shipping Zone D: 15 bins, 12 occupied (80% utilization)
+  FOR bin_counter IN 1..15 LOOP
+    INSERT INTO inventory.warehouse_bins (zone_id, bin_code, bin_type, max_capacity, org_id)
+      VALUES (z1d, 'D-' || LPAD(bin_counter::text, 2, '0'), 'shelf', 100, org)
+      RETURNING id INTO b;
+    IF bin_counter <= 12 THEN
+      INSERT INTO inventory.stock_bins (bin_id, product_id, quantity, org_id)
+        VALUES (b, CASE WHEN bin_counter % 2 = 0 THEN p1 ELSE p4 END, 40 + (bin_counter * 5), org);
+    END IF;
+  END LOOP;
+
+  -- ===== Secondary Warehouse bins =====
+  -- Picking Zone A: 15 bins, 10 occupied (67% utilization)
+  FOR bin_counter IN 1..15 LOOP
+    INSERT INTO inventory.warehouse_bins (zone_id, bin_code, bin_type, max_capacity, org_id)
+      VALUES (z2a, 'SA-' || LPAD(bin_counter::text, 2, '0'), 'shelf', 50, org)
+      RETURNING id INTO b;
+    IF bin_counter <= 10 THEN
+      INSERT INTO inventory.stock_bins (bin_id, product_id, quantity, org_id)
+        VALUES (b, CASE WHEN bin_counter % 3 = 0 THEN p2 WHEN bin_counter % 3 = 1 THEN p1 ELSE p3 END, 15 + (bin_counter * 3), org);
+    END IF;
+  END LOOP;
+
+  -- Bulk Storage B: 25 bins, 22 occupied (88% utilization)
+  FOR bin_counter IN 1..25 LOOP
+    INSERT INTO inventory.warehouse_bins (zone_id, bin_code, bin_type, max_capacity, org_id)
+      VALUES (z2b, 'SB-' || LPAD(bin_counter::text, 2, '0'), 'pallet', 200, org)
+      RETURNING id INTO b;
+    IF bin_counter <= 22 THEN
+      INSERT INTO inventory.stock_bins (bin_id, product_id, quantity, org_id)
+        VALUES (b, CASE WHEN bin_counter % 2 = 0 THEN p4 ELSE p3 END, 80 + (bin_counter * 5), org);
+    END IF;
+  END LOOP;
+
+  -- Receiving Area C: 8 bins, 2 occupied (25% utilization)
+  FOR bin_counter IN 1..8 LOOP
+    INSERT INTO inventory.warehouse_bins (zone_id, bin_code, bin_type, max_capacity, org_id)
+      VALUES (z2c, 'SC-' || LPAD(bin_counter::text, 2, '0'), 'floor', 500, org)
+      RETURNING id INTO b;
+    IF bin_counter <= 2 THEN
+      INSERT INTO inventory.stock_bins (bin_id, product_id, quantity, org_id)
+        VALUES (b, p2, 180 + (bin_counter * 30), org);
+    END IF;
+  END LOOP;
+
+  RAISE NOTICE 'Warehouse bin seed data inserted: 7 zones, 123 bins, 90 stock allocations';
+END $$;
