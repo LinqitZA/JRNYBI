@@ -2256,3 +2256,49 @@ Agent: Batch agent handling features #129, #130
 - Both bug fixes committed as 2113c164
 - Frontend rebuilt (webpack hash: app.34fc95dfd4776dc6b687), deployed to Docker
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+
+## Session 29: 2026-05-24
+Agent: Batch agent handling features #131, #133, #134
+
+### Feature #131: Create expanded reporting views on read replica (PASSING)
+- Created 9 new base tables to support expanded views:
+  * inventory.products, inventory.warehouses, inventory.stock_movements
+  * sales.sales_order_lines, sales.deliveries
+  * finance.chart_of_accounts, finance.accounts_payable, finance.budgets
+  * procurement.purchase_order_lines
+- Added org_id/branch_id columns to existing tables (sales_orders, invoices, gl_entries, stock_levels, purchase_orders, transactions, bank_accounts)
+- Created seed/create_reporting_views.sql migration script with 21 comprehensive views:
+  * Enhanced existing: v_sales_orders, v_invoices, v_inventory_levels, v_purchase_orders, v_cashbook_transactions, v_general_ledger, v_customers, v_suppliers, v_product_catalogue, v_sales_summary, v_customer_orders
+  * New views: v_sales_by_branch, v_outstanding_orders, v_inventory_aging, v_stock_movements, v_pick_pack_performance, v_otif, v_ap_aging, v_budget_variance, v_pnl, v_balance_sheet
+- All 21 views include org_id AND branch_id for RLS filtering (verified)
+- 106 column-level COMMENT ON annotations for data dictionary integration
+- All views queryable, visible in data dictionary API and schema browser
+- Views persist across server restart
+- Updated init.sh to include reporting views creation in deployment
+- Committed as d96b50c5
+
+### Feature #133: Sales by Date by Branch report (PASSING)
+- Created query (id=4) with start_date, end_date, granularity (day/week/month enum)
+- YoY comparison: prior_year_revenue + yoy_change_pct calculated
+- Stacked bar chart (id=8) with branch_name as series
+- Summary table (id=9) with 7 columns
+- Dashboard (id=10) tagged jrny-report + report:sales
+- Created via API
+
+### Feature #134: Outstanding Sales Orders report (PASSING)
+- Created query (id=5) using reporting.v_outstanding_orders view
+- Aging buckets: 0-7 Days, 8-14 Days, 15-30 Days, 30+ Days
+- Pie chart (id=11) with color-coded aging buckets
+- Detail table (id=12) sorted by days_outstanding DESC
+- KPI counter (id=13) for total outstanding value
+- Dashboard (id=11) with KPI + pie + table, tagged report:sales
+- Created via API
+
+## Files Modified
+- seed/create_dev_schemas.sql - Added 9 base tables, org_id/branch_id columns, FK constraints
+- seed/create_reporting_views.sql - NEW: 21 comprehensive reporting views
+- init.sh - Added reporting views creation step
+
+## Current Status
+- Features passing: 133+ (172 total)
+- All 3 assigned features (#131, #133, #134) complete
