@@ -2354,6 +2354,132 @@ VISUALIZATIONS = {
             },
         },
     ],
+    "rfq_response_analysis": [
+        {
+            "name": "Vendor Response Metrics (Table)",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "supplier_name", "title": "Vendor", "visible": True},
+                    {"name": "supplier_code", "title": "Code", "visible": True},
+                    {"name": "rfqs_received", "title": "RFQs Received", "visible": True, "alignContent": "right"},
+                    {"name": "rfqs_responded", "title": "Responded", "visible": True, "alignContent": "right"},
+                    {"name": "rfqs_declined", "title": "Declined", "visible": True, "alignContent": "right"},
+                    {"name": "response_rate_pct", "title": "Response Rate %", "visible": True, "displayAs": "number", "numberFormat": "0,0.0", "alignContent": "right"},
+                    {"name": "avg_response_days", "title": "Avg Response (days)", "visible": True, "displayAs": "number", "numberFormat": "0,0.0", "alignContent": "right"},
+                    {"name": "min_response_days", "title": "Min Days", "visible": True, "alignContent": "right"},
+                    {"name": "max_response_days", "title": "Max Days", "visible": True, "alignContent": "right"},
+                ],
+            },
+        },
+        {
+            "name": "Response Rate by Vendor (Bar)",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "column",
+                "columnMapping": {
+                    "supplier_name": "x",
+                    "response_rate_pct": "y",
+                    "avg_response_days": "y",
+                },
+                "seriesOptions": {
+                    "response_rate_pct": {"type": "column", "yAxis": 0, "name": "Response Rate %", "color": "#2563eb"},
+                    "avg_response_days": {"type": "line", "yAxis": 1, "name": "Avg Response Days", "color": "#d97706"},
+                },
+                "xAxis": {"type": "category", "labels": {"enabled": True}},
+                "yAxis": [
+                    {"type": "linear", "title": {"text": "Response Rate (%)"}},
+                    {"type": "linear", "title": {"text": "Days"}, "opposite": True},
+                ],
+                "series": {"stacking": None},
+                "sortX": True,
+                "legend": {"enabled": True},
+            },
+        },
+    ],
+    "rfq_price_comparison": [
+        {
+            "name": "Price Comparison Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "rfq_number", "title": "RFQ #", "visible": True},
+                    {"name": "rfq_title", "title": "RFQ Title", "visible": True},
+                    {"name": "item_description", "title": "Item", "visible": True},
+                    {"name": "quantity", "title": "Qty", "visible": True, "alignContent": "right"},
+                    {"name": "target_price", "title": "Target Price", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "supplier_name", "title": "Supplier", "visible": True},
+                    {"name": "quoted_price", "title": "Quoted Price", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "lead_time_days", "title": "Lead Time (d)", "visible": True, "alignContent": "right"},
+                    {"name": "price_vs_target_pct", "title": "vs Target %", "visible": True, "displayAs": "number", "numberFormat": "+0,0.0;-0,0.0", "alignContent": "right"},
+                    {"name": "price_bracket", "title": "Bracket", "visible": True},
+                ],
+            },
+        },
+        {
+            "name": "Price Comparison by Item (Grouped Bar)",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "column",
+                "columnMapping": {
+                    "item_description": "x",
+                    "quoted_price": "y",
+                    "supplier_name": "series",
+                },
+                "seriesOptions": {},
+                "xAxis": {"type": "category", "labels": {"enabled": True}},
+                "yAxis": [{"type": "linear", "title": {"text": "Quoted Price"}}],
+                "series": {"stacking": None},
+                "sortX": True,
+                "legend": {"enabled": True},
+            },
+        },
+    ],
+    "rfq_response_kpi": [
+        {
+            "name": "Total RFQs",
+            "type": "COUNTER",
+            "options": {
+                "counterColName": "total_rfqs",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 0,
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0",
+            },
+        },
+        {
+            "name": "Overall Response Rate",
+            "type": "COUNTER",
+            "options": {
+                "counterColName": "overall_response_rate",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 1,
+                "stringSuffix": "%",
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0.0",
+            },
+        },
+        {
+            "name": "Avg Response Time",
+            "type": "COUNTER",
+            "options": {
+                "counterColName": "avg_response_days",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 1,
+                "stringSuffix": " days",
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0.0",
+            },
+        },
+    ],
     "credit_note_trend": [
         {
             "name": "Credit Notes Over Time",
@@ -3144,6 +3270,19 @@ DASHBOARDS = {
             {"query_key": "vendor_scorecard_kpi", "vis_index": 2, "width": 2},           # Best Score KPI
             {"query_key": "vendor_scorecard_dimensions", "vis_index": 0, "width": 6},    # Dimension comparison bar chart
             {"query_key": "vendor_scorecard", "vis_index": 0, "width": 6},               # Rankings table
+        ],
+    },
+    "rfq_response_dashboard": {
+        "name": "RFQ Response Analysis",
+        "tags": ["procurement", "jrny-report", "report:procurement"],
+        "widgets": [
+            {"query_key": "rfq_response_kpi", "vis_index": 0, "width": 2},           # Total RFQs KPI
+            {"query_key": "rfq_response_kpi", "vis_index": 1, "width": 2},           # Response Rate KPI
+            {"query_key": "rfq_response_kpi", "vis_index": 2, "width": 2},           # Avg Response Time KPI
+            {"query_key": "rfq_response_analysis", "vis_index": 1, "width": 6},      # Response rate bar chart
+            {"query_key": "rfq_price_comparison", "vis_index": 1, "width": 6},       # Price comparison grouped bar
+            {"query_key": "rfq_response_analysis", "vis_index": 0, "width": 6},      # Vendor metrics table
+            {"query_key": "rfq_price_comparison", "vis_index": 0, "width": 6},       # Price comparison table
         ],
     },
     "gl_account_activity_dashboard": {
