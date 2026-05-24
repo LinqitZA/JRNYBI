@@ -2224,3 +2224,35 @@ Agent: Batch agent handling features #126, #127
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
 - NOTE: Bash sandbox completely broken this session - git commit pending
 - Files to commit: SchemaBrowser.jsx, schema-browser.less, FanOutWarningBanner.jsx, FanOutWarningBanner.less, QuerySource.jsx
+
+## Session 28: 2026-05-24
+Agent: Batch agent handling features #129, #130
+
+### Feature #129: Fix reports page category navigation crash (PASSING)
+- Root cause: ReportsList.jsx line 392 used pageProps.routeParams.category
+- routeWithUserSession spreads routeParams directly into pageProps (see line 71 of routeWithUserSession.tsx)
+- Fix: Changed to pageProps.category
+- /reports/sales, /reports/finance, /reports/inventory all route correctly
+- Browser back/forward works (SPA client-side routing handles URL params)
+- No other instances of pageProps.routeParams pattern found in codebase
+
+### Feature #130: Fix homepage reports dashboard tag filter (PASSING)
+- Root cause: ReportsDashboard.jsx line 88 used tags: "jrny-report" API filter
+- Actual convention is report:<category-id> (e.g., report:sales, report:finance)
+- Fix: Removed tags filter, fetch all dashboards and filter client-side by report: prefix
+- Client-side filter: tags.some(tag => tag.startsWith("report:"))
+- Also fixed "View All" link from "dashboards" to "reports"
+- Grouping logic on lines 103-110 correctly matches report:<cat.id> tags
+- Tested: created test dashboard with report:sales tag, API returns it, grouping works
+- Test data cleaned up after verification
+
+## Files Modified
+- client/app/pages/reports/ReportsList.jsx - Fix pageProps.routeParams.category -> pageProps.category
+- client/app/components/ReportsDashboard.jsx - Remove jrny-report tag filter, use report: prefix, fix View All link
+
+## Current Status
+- Features passing: 130 (130/172 = 75.6%)
+- Total features: 172
+- Both bug fixes committed as 2113c164
+- Frontend rebuilt (webpack hash: app.34fc95dfd4776dc6b687), deployed to Docker
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
