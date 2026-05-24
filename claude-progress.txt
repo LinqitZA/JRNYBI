@@ -2302,3 +2302,50 @@ Agent: Batch agent handling features #131, #133, #134
 ## Current Status
 - Features passing: 133+ (172 total)
 - All 3 assigned features (#131, #133, #134) complete
+
+## Session: 2026-05-24
+Agent: Batch agent handling features #135, #136, #137
+
+### Feature #135: Quote-to-Order Conversion report (PASSING)
+- Created `reporting.v_quote_to_order_conversion` view joining sales.quotes with sales.sales_orders via quote_id FK
+- Added quote_id FK column on sales.sales_orders, org_id/branch_id/quote_date/sales_rep/expiry_date on sales.quotes
+- View calculates: converted (boolean), days_to_close, quote_month for trend analysis
+- Seeded 15 test quotes across 3 sales reps (Sarah Connor, Mike Ross, Lisa Park) over Jan-Jun 2024
+- 8 quotes converted to orders with varying days_to_close (2-10 days)
+- Created 2 queries: Monthly Trend (conversion_rate_pct, avg_days_to_close) + Rep Performance (per-rep stats)
+- Created 3 visualizations: Line chart (rate+days), Bar chart (volume), TABLE (rep stats)
+- Dashboard "Quote-to-Order Conversion" (id=12, slug=quote-to-order-conversion) with tags [sales, jrny-report]
+- Both queries have start_date/end_date date parameters
+
+### Feature #136: Sales Returns Analysis report (PASSING)
+- Created `sales.sales_returns` and `sales.sales_return_lines` tables with FK constraints
+- Created `reporting.v_sales_returns_analysis` view joining returns with products, orders, and contacts
+- Seeded 8 returns with 11 line items across 5 reasons (Defective, Wrong Item, Quality Issue, Changed Mind, Damaged in Transit)
+- Products in 3 categories: Electronics, Components, Consumables
+- Created 3 queries: By Reason (bar), Rate Trend (return_rate_pct vs sales), Detail Records
+- Created 3 visualizations: Bar chart (by reason), Line+column chart (rate trend), TABLE (detail records)
+- Dashboard "Sales Returns Analysis" (id=14, slug=sales-returns-analysis) with tags [sales, jrny-report]
+- All queries have start_date/end_date + product_category parameters
+
+### Feature #137: Revenue by Product Category report (PASSING)
+- Created `reporting.v_revenue_by_category` view joining sales_order_lines with products and sales_orders
+- View calculates: revenue, cost_of_goods, contribution_margin, margin_pct, order_month
+- Seeded 32 order lines (4 products x 8 orders) across 3 categories
+- Created 2 queries: Category Summary (with % of total using window function) + Product Detail drill-down
+- Created 3 visualizations: Bar chart (revenue vs margin), Summary TABLE, Detail TABLE
+- Dashboard "Revenue by Product Category" (id=25, slug=revenue-by-product-category) with tags [sales, jrny-report]
+- Both queries have start_date/end_date date parameters
+
+## Files Modified
+- seed/create_dev_schemas.sql - Added sales_returns/sales_return_lines tables, quote columns, order_lines data, FK constraints
+- seed/create_reporting_views.sql - Added v_quote_to_order_conversion, v_sales_returns_analysis, v_revenue_by_category views
+- seed/create_quote_report.py - NEW: Report creation script for quote-to-order conversion
+- seed/create_returns_report.py - NEW: Report creation script for sales returns analysis
+- seed/create_revenue_category_report.py - NEW: Report creation script for revenue by product category
+- init.sh - Added root admin user creation and report seeding steps (parallel agent)
+
+## Current Status
+- Features passing: 130+ (172 total, 75.6%+)
+- All 3 assigned features (#135, #136, #137) complete
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+- Committed as d3b6c2a2
