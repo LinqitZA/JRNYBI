@@ -83,11 +83,14 @@ export default function ReportsDashboard() {
 
         if (cancelled) return;
 
-        // Fetch all jrny-report tagged dashboards in one call
+        // Fetch all dashboards and filter client-side by report:<category-id> tags
         const dashResponse = await axios.get("api/dashboards", {
-          params: { tags: "jrny-report", page_size: 250 },
+          params: { page_size: 250 },
         });
-        const allDashboards = dashResponse.results || [];
+        const allDashboards = (dashResponse.results || []).filter((dash) => {
+          const tags = dash.tags || [];
+          return tags.some((tag) => typeof tag === "string" && tag.startsWith("report:"));
+        });
 
         if (cancelled) return;
 
@@ -151,7 +154,7 @@ export default function ReportsDashboard() {
       <div className="t-body tb-padding reports-dashboard">
         <div className="d-flex align-items-center m-b-10">
           <p className="flex-fill f-500 c-black m-0">Reports</p>
-          <Link href="dashboards" className="reports-view-all">
+          <Link href="reports" className="reports-view-all">
             View All
           </Link>
         </div>

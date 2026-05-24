@@ -389,7 +389,7 @@ routes.register(
   routeWithUserSession({
     path: "/reports/:category",
     title: "Reports",
-    render: (pageProps) => <ReportsList {...pageProps} currentCategory={pageProps.routeParams.category} />,
+    render: (pageProps) => <ReportsList {...pageProps} currentCategory={pageProps.category} />,
   })
 );
 
