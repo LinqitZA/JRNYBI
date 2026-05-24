@@ -2349,3 +2349,53 @@ Agent: Batch agent handling features #135, #136, #137
 - All 3 assigned features (#135, #136, #137) complete
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
 - Committed as d3b6c2a2
+
+## Session 31: 2026-05-24
+Agent: Batch agent handling features #138, #139, #140
+
+### Feature #138: Customer Concentration Risk report (PASSING)
+- Created query (id=8) "Customer Concentration Risk - Pareto Analysis"
+  * CTE: customer_revenue ranks customers by SUM(total_amount) DESC
+  * Window functions compute cumulative_revenue and cumulative_pct
+  * ROW_NUMBER assigns rank, CASE assigns pareto_group (Top 80% vs Remaining 20%)
+- Created KPI query (id=9) "Customer Concentration KPI"
+  * COUNT(*) FILTER (WHERE cumulative_pct <= 80) for customers_in_top_80pct
+  * Also outputs total_customers and pct_of_customers
+- Pareto chart (viz id=20): column bars for revenue + line for cumulative %
+  * Dual y-axes: Revenue (left) and Cumulative % (right, max 100)
+  * Revenue bars in JRNY blue (#2563eb), cumulative line in red (#dc2626)
+- Top-20 customer table (viz id=21): rank, customer_name, total_revenue, order_count, revenue_pct, cumulative_pct, pareto_group
+- KPI counter (viz id=23): "Customers generating 80% of revenue" with target showing total
+- Dashboard (id=13) slug=customer-concentration-risk, tagged report:sales
+- Date range parameters: start_date, end_date
+
+### Feature #139: Average Order Value Trend report (PASSING)
+- Created query (id=23) "Average Order Value Trend"
+  * DATE_TRUNC by granularity parameter (month/week/day enum)
+  * LEFT JOIN to crm.buying_groups for customer_group segmentation
+  * 3-period moving average: AVG() OVER (ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)
+  * Period-over-period change: LAG() window function for period_change_pct
+- AOV line chart (viz id=72): period on x, avg_order_value + moving_avg_3period on y, customer_group as series
+- Summary table (viz id=73): period, customer_group, AOV, moving avg, orders, total revenue, change %
+- Dashboard (id=24) slug=average-order-value-trend, tagged report:sales
+- Parameters: start_date (date), end_date (date), granularity (enum: month/week/day)
+
+### Feature #140: Sales Rep Performance report (PASSING)
+- Created query (id=26) "Sales Rep Performance"
+  * JOINs sales_order_audit (action='created') to v_sales_orders for rep attribution
+  * LEFT JOIN core.contacts for rep name (CONCAT first_name + last_name)
+  * Aggregates: total_revenue, order_count, avg_order_value, unique_customers per rep
+  * Prior period CTE: same-length lookback window for growth comparison
+  * revenue_growth_pct, revenue_share_pct, revenue_per_customer computed
+- Horizontal bar chart (viz id=80): rep_name on x, total_revenue on y (bar type)
+- Detail table (viz id=81): rep_name, revenue, orders, avg deal size, customers, % share, growth %, rev/customer
+- Dashboard (id=26) slug=sales-rep-performance, tagged report:sales
+- Parameters: start_date, end_date
+
+## Files Modified
+- No source code changes - all reports created via API (stored in PostgreSQL metadata DB)
+
+## Current Status
+- Features passing: 136+ (172 total)
+- All 3 assigned features (#138, #139, #140) complete
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
