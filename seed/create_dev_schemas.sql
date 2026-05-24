@@ -2108,3 +2108,128 @@ BEGIN
 
   RAISE NOTICE 'AR Aging data seeded: 18 invoices, 7 payments, 5 customers with credit limits';
 END $$;
+
+-- ============================================================================
+-- Invoice lines (with VAT/tax fields) for Tax/VAT Summary report
+-- ============================================================================
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='finance' AND table_name='invoice_lines') THEN
+    EXECUTE '
+      CREATE TABLE finance.invoice_lines (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        invoice_id UUID,
+        product_id UUID,
+        description TEXT,
+        quantity NUMERIC(12,2) DEFAULT 1,
+        unit_price NUMERIC(12,2) DEFAULT 0,
+        line_total NUMERIC(12,2) DEFAULT 0,
+        tax_code TEXT DEFAULT ''VAT'',
+        tax_rate NUMERIC(5,2) DEFAULT 15.00,
+        vat_amount NUMERIC(12,2) DEFAULT 0,
+        org_id UUID,
+        branch_id UUID
+      )';
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='finance' AND table_name='purchase_invoice_lines') THEN
+    EXECUTE '
+      CREATE TABLE finance.purchase_invoice_lines (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        purchase_invoice_id UUID,
+        product_id UUID,
+        description TEXT,
+        quantity NUMERIC(12,2) DEFAULT 1,
+        unit_price NUMERIC(12,2) DEFAULT 0,
+        line_total NUMERIC(12,2) DEFAULT 0,
+        tax_code TEXT DEFAULT ''VAT'',
+        tax_rate NUMERIC(5,2) DEFAULT 15.00,
+        vat_amount NUMERIC(12,2) DEFAULT 0,
+        org_id UUID,
+        branch_id UUID
+      )';
+  END IF;
+END $$;
+
+COMMENT ON TABLE finance.invoice_lines IS 'Line items on customer invoices with VAT/tax detail';
+COMMENT ON COLUMN finance.invoice_lines.tax_code IS 'Tax code: VAT, VAT-Zero, Exempt, etc.';
+COMMENT ON COLUMN finance.invoice_lines.tax_rate IS 'Applicable tax rate percentage (e.g. 15.00 for 15%)';
+COMMENT ON COLUMN finance.invoice_lines.vat_amount IS 'Computed VAT amount for this line item';
+COMMENT ON TABLE finance.purchase_invoice_lines IS 'Line items on supplier purchase invoices with VAT/tax detail';
+COMMENT ON COLUMN finance.purchase_invoice_lines.tax_code IS 'Tax code: VAT, VAT-Zero, Exempt, etc.';
+COMMENT ON COLUMN finance.purchase_invoice_lines.tax_rate IS 'Applicable tax rate percentage (e.g. 15.00 for 15%)';
+COMMENT ON COLUMN finance.purchase_invoice_lines.vat_amount IS 'Computed VAT amount for this line item';
+
+-- FK constraints for invoice_lines
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_invoice_lines_invoice' AND table_schema = 'finance'
+  ) THEN
+    ALTER TABLE finance.invoice_lines
+      ADD CONSTRAINT fk_invoice_lines_invoice FOREIGN KEY (invoice_id) REFERENCES finance.invoices(id);
+  END IF;
+END $$;
+
+-- ============================================================================
+-- VAT/Tax seed data for testing
+-- ============================================================================
+DO $$
+DECLARE
+  org UUID;
+  branch UUID;
+  inv1 UUID; inv2 UUID; inv3 UUID; inv4 UUID; inv5 UUID; inv6 UUID;
+BEGIN
+  SELECT id INTO org FROM core.organizations LIMIT 1;
+  SELECT id INTO branch FROM core.branches WHERE org_id = org LIMIT 1;
+
+  IF EXISTS (SELECT 1 FROM finance.invoice_lines LIMIT 1) THEN
+    RAISE NOTICE 'VAT seed data already exists, skipping';
+    RETURN;
+  END IF;
+
+  SELECT id INTO inv1 FROM finance.invoices ORDER BY invoice_date LIMIT 1 OFFSET 0;
+  SELECT id INTO inv2 FROM finance.invoices ORDER BY invoice_date LIMIT 1 OFFSET 1;
+  SELECT id INTO inv3 FROM finance.invoices ORDER BY invoice_date LIMIT 1 OFFSET 2;
+  SELECT id INTO inv4 FROM finance.invoices ORDER BY invoice_date LIMIT 1 OFFSET 3;
+  SELECT id INTO inv5 FROM finance.invoices ORDER BY invoice_date LIMIT 1 OFFSET 4;
+  SELECT id INTO inv6 FROM finance.invoices ORDER BY invoice_date LIMIT 1 OFFSET 5;
+
+  -- Invoice lines with VAT (Output tax - sales)
+  INSERT INTO finance.invoice_lines (invoice_id, description, quantity, unit_price, line_total, tax_code, tax_rate, vat_amount, org_id, branch_id) VALUES
+    (inv1, 'Product A - Standard rated', 10, 1000.00, 10000.00, 'VAT', 15.00, 1500.00, org, branch),
+    (inv1, 'Service B - Standard rated', 5, 2000.00, 10000.00, 'VAT', 15.00, 1500.00, org, branch),
+    (inv1, 'Export goods - Zero rated', 20, 500.00, 10000.00, 'VAT-Zero', 0.00, 0.00, org, branch),
+    (inv1, 'Medical supplies - Exempt', 8, 750.00, 6000.00, 'Exempt', 0.00, 0.00, org, branch),
+    (inv2, 'Product C - Standard rated', 15, 800.00, 12000.00, 'VAT', 15.00, 1800.00, org, branch),
+    (inv2, 'Consulting fees', 10, 1500.00, 15000.00, 'VAT', 15.00, 2250.00, org, branch),
+    (inv2, 'Export services', 5, 3000.00, 15000.00, 'VAT-Zero', 0.00, 0.00, org, branch),
+    (inv3, 'Product D - Standard rated', 25, 600.00, 15000.00, 'VAT', 15.00, 2250.00, org, branch),
+    (inv3, 'Installation services', 3, 5000.00, 15000.00, 'VAT', 15.00, 2250.00, org, branch),
+    (inv4, 'Product E - Standard rated', 20, 900.00, 18000.00, 'VAT', 15.00, 2700.00, org, branch),
+    (inv4, 'Training services - Exempt', 4, 2500.00, 10000.00, 'Exempt', 0.00, 0.00, org, branch),
+    (inv5, 'Product F - Standard rated', 30, 700.00, 21000.00, 'VAT', 15.00, 3150.00, org, branch),
+    (inv5, 'Support contract', 1, 8000.00, 8000.00, 'VAT', 15.00, 1200.00, org, branch),
+    (inv5, 'Export goods batch 2', 15, 1200.00, 18000.00, 'VAT-Zero', 0.00, 0.00, org, branch),
+    (inv6, 'Product G - Standard rated', 18, 1100.00, 19800.00, 'VAT', 15.00, 2970.00, org, branch),
+    (inv6, 'Maintenance fees', 6, 1800.00, 10800.00, 'VAT', 15.00, 1620.00, org, branch);
+
+  -- Purchase invoice lines with VAT (Input tax - purchases)
+  INSERT INTO finance.purchase_invoice_lines (description, quantity, unit_price, line_total, tax_code, tax_rate, vat_amount, org_id, branch_id) VALUES
+    ('Raw materials - Standard rated', 50, 400.00, 20000.00, 'VAT', 15.00, 3000.00, org, branch),
+    ('Office supplies', 20, 150.00, 3000.00, 'VAT', 15.00, 450.00, org, branch),
+    ('Imported components - Zero rated', 30, 800.00, 24000.00, 'VAT-Zero', 0.00, 0.00, org, branch),
+    ('Packaging materials', 100, 50.00, 5000.00, 'VAT', 15.00, 750.00, org, branch),
+    ('Equipment maintenance', 1, 12000.00, 12000.00, 'VAT', 15.00, 1800.00, org, branch),
+    ('Raw materials batch 2', 60, 350.00, 21000.00, 'VAT', 15.00, 3150.00, org, branch),
+    ('IT services', 1, 8000.00, 8000.00, 'VAT', 15.00, 1200.00, org, branch),
+    ('Warehouse supplies', 40, 200.00, 8000.00, 'VAT', 15.00, 1200.00, org, branch),
+    ('Professional services - Exempt', 1, 15000.00, 15000.00, 'Exempt', 0.00, 0.00, org, branch),
+    ('Production materials', 80, 300.00, 24000.00, 'VAT', 15.00, 3600.00, org, branch),
+    ('Utilities', 1, 4500.00, 4500.00, 'VAT', 15.00, 675.00, org, branch),
+    ('Raw materials batch 3', 70, 380.00, 26600.00, 'VAT', 15.00, 3990.00, org, branch),
+    ('Security services', 1, 6000.00, 6000.00, 'VAT', 15.00, 900.00, org, branch);
+
+  RAISE NOTICE 'VAT/Tax seed data inserted: invoice_lines + purchase_invoice_lines';
+END $$;

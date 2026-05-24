@@ -43,6 +43,7 @@ DROP VIEW IF EXISTS reporting.v_revenue_by_category CASCADE;
 DROP VIEW IF EXISTS reporting.v_credit_note_summary CASCADE;
 DROP VIEW IF EXISTS reporting.v_payment_terms_compliance CASCADE;
 DROP VIEW IF EXISTS reporting.v_revenue_by_dimension CASCADE;
+DROP VIEW IF EXISTS reporting.v_vat_summary CASCADE;
 
 -- Also drop any legacy reporting tables (dev migration path)
 DROP TABLE IF EXISTS reporting.v_sales_orders CASCADE;
@@ -1074,5 +1075,76 @@ COMMENT ON VIEW reporting.v_product_catalogue IS 'Product catalogue with pricing
 
 
 -- ============================================================================
--- Done — all 27 reporting views created successfully
+-- 28. v_vat_summary — VAT/Tax summary combining output tax (sales) and input tax (purchases)
+-- ============================================================================
+CREATE VIEW reporting.v_vat_summary AS
+WITH output_vat AS (
+  SELECT
+    il.tax_code,
+    il.tax_rate,
+    DATE_TRUNC('month', inv.invoice_date)::DATE    AS tax_period,
+    'output'                                        AS vat_type,
+    SUM(il.line_total)                              AS taxable_amount,
+    SUM(il.vat_amount)                              AS vat_amount,
+    COUNT(*)                                        AS line_count,
+    COALESCE(il.org_id, inv.org_id)                 AS org_id,
+    il.branch_id
+  FROM finance.invoice_lines il
+  JOIN finance.invoices inv ON inv.id = il.invoice_id
+  GROUP BY il.tax_code, il.tax_rate,
+           DATE_TRUNC('month', inv.invoice_date),
+           il.org_id, inv.org_id, il.branch_id
+),
+input_vat AS (
+  SELECT
+    pil.tax_code,
+    pil.tax_rate,
+    DATE_TRUNC('month', CURRENT_DATE)::DATE         AS tax_period,
+    'input'                                          AS vat_type,
+    SUM(pil.line_total)                              AS taxable_amount,
+    SUM(pil.vat_amount)                              AS vat_amount,
+    COUNT(*)                                         AS line_count,
+    pil.org_id,
+    pil.branch_id
+  FROM finance.purchase_invoice_lines pil
+  GROUP BY pil.tax_code, pil.tax_rate, pil.org_id, pil.branch_id
+)
+SELECT
+  tax_code,
+  tax_rate,
+  tax_period,
+  vat_type,
+  taxable_amount,
+  vat_amount,
+  line_count,
+  org_id,
+  branch_id
+FROM output_vat
+UNION ALL
+SELECT
+  tax_code,
+  tax_rate,
+  tax_period,
+  vat_type,
+  taxable_amount,
+  vat_amount,
+  line_count,
+  org_id,
+  branch_id
+FROM input_vat;
+
+COMMENT ON VIEW  reporting.v_vat_summary IS 'VAT/Tax summary combining output tax (sales invoices) and input tax (purchase invoices) by tax code and period';
+COMMENT ON COLUMN reporting.v_vat_summary.tax_code IS 'Tax code: VAT (standard), VAT-Zero (zero-rated), Exempt';
+COMMENT ON COLUMN reporting.v_vat_summary.tax_rate IS 'Tax rate percentage (e.g. 15.00 for standard VAT)';
+COMMENT ON COLUMN reporting.v_vat_summary.tax_period IS 'Month of tax period for VAT return grouping';
+COMMENT ON COLUMN reporting.v_vat_summary.vat_type IS 'output (sales/collected) or input (purchases/paid)';
+COMMENT ON COLUMN reporting.v_vat_summary.taxable_amount IS 'Total taxable value before VAT';
+COMMENT ON COLUMN reporting.v_vat_summary.vat_amount IS 'Total VAT amount for the period and tax code';
+COMMENT ON COLUMN reporting.v_vat_summary.line_count IS 'Number of invoice lines in this grouping';
+COMMENT ON COLUMN reporting.v_vat_summary.org_id IS 'Organization ID for RLS filtering';
+COMMENT ON COLUMN reporting.v_vat_summary.branch_id IS 'Branch ID for RLS filtering';
+
+
+-- ============================================================================
+-- Done — all 28 reporting views created successfully
 -- ============================================================================
