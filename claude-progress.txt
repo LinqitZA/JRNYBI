@@ -2585,3 +2585,40 @@ Agent: Batch agent handling features #154, #155, #156
 - All 3 assigned features (#154, #155, #156) implemented and verified
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
 - Committed as 73a15783
+
+## Session 38: 2026-05-24
+Agent: Handling feature #160
+
+### Feature #160: Reorder Recommendation report (PASSING)
+- Created "Reorder Recommendations" query (id=67) using reporting.v_inventory_levels
+  * Filters: il.quantity_on_hand <= il.reorder_point (stock at/below reorder point)
+  * Calculates shortfall: reorder_point - quantity_on_hand
+  * Calculates suggested_order_qty: GREATEST(shortfall, reorder_point)
+  * Includes unit_cost and estimated_reorder_cost (suggested_qty * unit_cost)
+  * Preferred supplier from last PO via DISTINCT ON(product_id) on purchase_order_lines
+  * Sorted by shortfall DESC (highest shortfall first)
+  * Uses reporting.v_suppliers for supplier name lookup
+  * Data source: jrny_pg (id=1, RLS-enabled)
+- Created "Reorder Recommendations - KPIs" query (id=68)
+  * COUNT(*) AS items_below_reorder
+  * SUM(suggested_qty * unit_cost) AS total_reorder_cost
+- Created visualizations:
+  * Reorder Recommendations Table (id=243, type=TABLE, 10 columns with number formatting)
+  * Items Below Reorder (id=245, type=COUNTER, items_below_reorder)
+  * Total Reorder Cost (id=246, type=COUNTER, total_reorder_cost with 2 decimals)
+- Created "Reorder Recommendations" dashboard (id=45, slug=reorder-recommendations)
+  * 3 widgets: 2 KPI counters (width=2) + detail table (width=6)
+  * Tags: ["inventory", "jrny-report", "report:inventory"]
+  * Published (is_draft=false)
+- Updated seed/jrny_reports.py with query, visualization, and dashboard definitions
+- Verified: unauthenticated access returns 401
+- No mock data patterns found
+- Committed as 264b74c0
+
+## Files Modified
+- seed/jrny_reports.py - Added reorder_recommendations and reorder_recommendations_kpi queries, visualizations, and dashboard
+
+## Current Status
+- Features passing: 155+ (172 total)
+- Feature #160 complete
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
