@@ -141,6 +141,14 @@ init_database() {
   # Seed JRNY read-replica data source (idempotent — skips if already exists)
   info "Ensuring JRNY read-replica data source exists..."
   docker compose run --rm server manage ds seed_jrny || warn "Data source seeding skipped (server may not be ready yet)."
+
+  # Create reporting views on the database (idempotent — uses DROP VIEW IF EXISTS)
+  if [ -f "seed/create_reporting_views.sql" ]; then
+    info "Creating/updating reporting views..."
+    docker compose exec -T postgres psql -U postgres postgres < seed/create_reporting_views.sql > /dev/null 2>&1 \
+      && ok "Reporting views created." \
+      || warn "Reporting views creation had issues (views may already exist)."
+  fi
 }
 
 # ---------------------------------------------------------------------------

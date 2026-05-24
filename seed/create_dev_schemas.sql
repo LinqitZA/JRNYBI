@@ -596,176 +596,383 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- Convert reporting "tables" to actual VIEWs that reference base tables.
--- This enables pg_depend-based FK inference for view columns.
+-- ============================================================================
+-- Additional base tables needed for expanded reporting views
+-- ============================================================================
 
--- Drop existing tables if they exist (dev environment only)
-DROP TABLE IF EXISTS reporting.v_sales_orders CASCADE;
-DROP TABLE IF EXISTS reporting.v_invoices CASCADE;
-DROP TABLE IF EXISTS reporting.v_inventory_levels CASCADE;
-DROP TABLE IF EXISTS reporting.v_purchase_orders CASCADE;
-DROP TABLE IF EXISTS reporting.v_cashbook_transactions CASCADE;
-DROP TABLE IF EXISTS reporting.v_general_ledger CASCADE;
-DROP TABLE IF EXISTS reporting.v_customers CASCADE;
-DROP TABLE IF EXISTS reporting.v_suppliers CASCADE;
-DROP TABLE IF EXISTS reporting.v_product_catalogue CASCADE;
+-- Products master table
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='inventory' AND table_name='products') THEN
+    EXECUTE '
+      CREATE TABLE inventory.products (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        product_code TEXT NOT NULL,
+        product_name TEXT NOT NULL,
+        category TEXT,
+        unit_price NUMERIC(12,2) DEFAULT 0,
+        unit_cost NUMERIC(12,2) DEFAULT 0,
+        uom TEXT DEFAULT ''each'',
+        is_active BOOLEAN DEFAULT true,
+        org_id UUID,
+        created_at TIMESTAMP DEFAULT now()
+      )';
+  END IF;
+END $$;
 
--- Also drop existing views to recreate cleanly
-DROP VIEW IF EXISTS reporting.v_sales_orders CASCADE;
-DROP VIEW IF EXISTS reporting.v_invoices CASCADE;
-DROP VIEW IF EXISTS reporting.v_inventory_levels CASCADE;
-DROP VIEW IF EXISTS reporting.v_purchase_orders CASCADE;
-DROP VIEW IF EXISTS reporting.v_cashbook_transactions CASCADE;
-DROP VIEW IF EXISTS reporting.v_general_ledger CASCADE;
-DROP VIEW IF EXISTS reporting.v_customers CASCADE;
-DROP VIEW IF EXISTS reporting.v_suppliers CASCADE;
-DROP VIEW IF EXISTS reporting.v_product_catalogue CASCADE;
+-- Warehouses master table
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='inventory' AND table_name='warehouses') THEN
+    EXECUTE '
+      CREATE TABLE inventory.warehouses (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        warehouse_code TEXT NOT NULL,
+        warehouse_name TEXT NOT NULL,
+        location TEXT,
+        is_active BOOLEAN DEFAULT true,
+        org_id UUID,
+        branch_id UUID
+      )';
+  END IF;
+END $$;
 
--- Create reporting views that reference base tables
--- The customer_id column in v_sales_orders originates from sales.sales_orders.customer_id
--- which has an FK to core.contacts(id) — so the FK inference should pick this up.
-CREATE VIEW reporting.v_sales_orders AS
-SELECT
-  so.id,
-  so.order_number,
-  c.first_name || ' ' || c.last_name AS customer_name,
-  so.customer_id,
-  so.order_date,
-  so.total_amount,
-  so.status,
-  o.id AS org_id,
-  NULL::UUID AS branch_id
-FROM sales.sales_orders so
-LEFT JOIN core.contacts c ON c.id = so.customer_id
-LEFT JOIN core.organizations o ON TRUE;
+-- Stock movements (receipts, issues, adjustments, transfers)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='inventory' AND table_name='stock_movements') THEN
+    EXECUTE '
+      CREATE TABLE inventory.stock_movements (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        product_id UUID,
+        warehouse_id UUID,
+        movement_type TEXT NOT NULL,
+        quantity NUMERIC(12,2) NOT NULL,
+        reference_type TEXT,
+        reference_id UUID,
+        movement_date TIMESTAMP DEFAULT now(),
+        org_id UUID,
+        branch_id UUID
+      )';
+  END IF;
+END $$;
 
-CREATE VIEW reporting.v_invoices AS
-SELECT
-  inv.id,
-  inv.invoice_number,
-  c.first_name || ' ' || c.last_name AS customer_name,
-  inv.customer_id,
-  inv.invoice_date,
-  inv.due_date,
-  inv.total_amount,
-  inv.balance_due,
-  CASE
-    WHEN inv.due_date >= CURRENT_DATE THEN 'Current'
-    WHEN CURRENT_DATE - inv.due_date <= 30 THEN '1-30 Days'
-    WHEN CURRENT_DATE - inv.due_date <= 60 THEN '31-60 Days'
-    WHEN CURRENT_DATE - inv.due_date <= 90 THEN '61-90 Days'
-    ELSE '90+ Days'
-  END AS aging_bucket,
-  NULL::UUID AS org_id
-FROM finance.invoices inv
-LEFT JOIN core.contacts c ON c.id = inv.customer_id;
+-- Sales order line items
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='sales' AND table_name='sales_order_lines') THEN
+    EXECUTE '
+      CREATE TABLE sales.sales_order_lines (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        order_id UUID,
+        product_id UUID,
+        quantity NUMERIC(12,2) DEFAULT 1,
+        unit_price NUMERIC(12,2) DEFAULT 0,
+        discount_pct NUMERIC(5,2) DEFAULT 0,
+        line_total NUMERIC(12,2) DEFAULT 0,
+        org_id UUID
+      )';
+  END IF;
+END $$;
 
-CREATE VIEW reporting.v_inventory_levels AS
-SELECT
-  sl.id,
-  sl.product_id,
-  sl.warehouse_id,
-  sl.quantity AS quantity_on_hand,
-  sl.reorder_point,
-  0::NUMERIC(12,2) AS unit_cost,
-  (sl.quantity * 0)::NUMERIC(12,2) AS total_value,
-  NULL::TEXT AS product_code,
-  NULL::TEXT AS product_name,
-  NULL::TEXT AS warehouse,
-  NULL::UUID AS org_id
-FROM inventory.stock_levels sl;
+-- Deliveries (shipping/fulfilment records)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='sales' AND table_name='deliveries') THEN
+    EXECUTE '
+      CREATE TABLE sales.deliveries (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        order_id UUID,
+        delivery_number TEXT,
+        delivery_date DATE,
+        promised_date DATE,
+        status TEXT DEFAULT ''pending'',
+        shipped_qty NUMERIC(12,2) DEFAULT 0,
+        ordered_qty NUMERIC(12,2) DEFAULT 0,
+        picker_id UUID,
+        pick_start_time TIMESTAMP,
+        pick_end_time TIMESTAMP,
+        pack_start_time TIMESTAMP,
+        pack_end_time TIMESTAMP,
+        org_id UUID,
+        branch_id UUID
+      )';
+  END IF;
+END $$;
 
-CREATE VIEW reporting.v_purchase_orders AS
-SELECT
-  po.id,
-  po.po_number,
-  c.first_name || ' ' || c.last_name AS supplier_name,
-  po.supplier_id,
-  po.order_date,
-  NULL::DATE AS expected_date,
-  po.total_amount,
-  po.status,
-  NULL::UUID AS org_id
-FROM procurement.purchase_orders po
-LEFT JOIN core.contacts c ON c.id = po.supplier_id;
+-- Chart of accounts
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='finance' AND table_name='chart_of_accounts') THEN
+    EXECUTE '
+      CREATE TABLE finance.chart_of_accounts (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        account_code TEXT NOT NULL,
+        account_name TEXT NOT NULL,
+        account_type TEXT NOT NULL,
+        account_category TEXT,
+        parent_id UUID,
+        is_active BOOLEAN DEFAULT true,
+        org_id UUID
+      )';
+  END IF;
+END $$;
 
-CREATE VIEW reporting.v_cashbook_transactions AS
-SELECT
-  t.id,
-  t.transaction_date,
-  t.description,
-  t.amount,
-  t.transaction_type,
-  ba.account_name AS bank_account,
-  t.bank_account_id,
-  NULL::UUID AS org_id
-FROM cashbook.transactions t
-LEFT JOIN cashbook.bank_accounts ba ON ba.id = t.bank_account_id;
+-- Accounts payable (supplier invoices/bills)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='finance' AND table_name='accounts_payable') THEN
+    EXECUTE '
+      CREATE TABLE finance.accounts_payable (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        bill_number TEXT,
+        supplier_id UUID,
+        bill_date DATE DEFAULT CURRENT_DATE,
+        due_date DATE,
+        total_amount NUMERIC(12,2) DEFAULT 0,
+        amount_paid NUMERIC(12,2) DEFAULT 0,
+        balance_due NUMERIC(12,2) DEFAULT 0,
+        status TEXT DEFAULT ''open'',
+        org_id UUID,
+        branch_id UUID
+      )';
+  END IF;
+END $$;
 
-CREATE VIEW reporting.v_general_ledger AS
-SELECT
-  gl.id,
-  gl.account_code,
-  NULL::TEXT AS account_name,
-  gl.debit,
-  gl.credit,
-  gl.posting_date,
-  NULL::UUID AS org_id
-FROM finance.gl_entries gl;
+-- Budget entries
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='finance' AND table_name='budgets') THEN
+    EXECUTE '
+      CREATE TABLE finance.budgets (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        account_id UUID,
+        fiscal_year INTEGER NOT NULL,
+        fiscal_month INTEGER NOT NULL,
+        budget_amount NUMERIC(12,2) DEFAULT 0,
+        org_id UUID,
+        branch_id UUID
+      )';
+  END IF;
+END $$;
 
-CREATE VIEW reporting.v_customers AS
-SELECT
-  c.id,
-  NULL::TEXT AS customer_code,
-  c.first_name || ' ' || c.last_name AS customer_name,
-  c.email,
-  c.phone,
-  c.org_id
-FROM core.contacts c;
+-- Purchase order line items
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='procurement' AND table_name='purchase_order_lines') THEN
+    EXECUTE '
+      CREATE TABLE procurement.purchase_order_lines (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        po_id UUID,
+        product_id UUID,
+        quantity NUMERIC(12,2) DEFAULT 1,
+        unit_cost NUMERIC(12,2) DEFAULT 0,
+        line_total NUMERIC(12,2) DEFAULT 0,
+        received_qty NUMERIC(12,2) DEFAULT 0,
+        org_id UUID
+      )';
+  END IF;
+END $$;
 
-CREATE VIEW reporting.v_suppliers AS
-SELECT
-  c.id,
-  NULL::TEXT AS supplier_code,
-  c.first_name || ' ' || c.last_name AS supplier_name,
-  c.email,
-  c.phone,
-  c.org_id
-FROM core.contacts c;
+-- Add org_id and branch_id to existing tables that lack them
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='sales' AND table_name='sales_orders' AND column_name='org_id') THEN
+    ALTER TABLE sales.sales_orders ADD COLUMN org_id UUID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='sales' AND table_name='sales_orders' AND column_name='branch_id') THEN
+    ALTER TABLE sales.sales_orders ADD COLUMN branch_id UUID;
+  END IF;
+END $$;
 
-CREATE VIEW reporting.v_product_catalogue AS
-SELECT
-  gen_random_uuid() AS id,
-  NULL::TEXT AS product_code,
-  NULL::TEXT AS product_name,
-  NULL::TEXT AS category,
-  0::NUMERIC(12,2) AS unit_price,
-  NULL::UUID AS org_id;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='finance' AND table_name='invoices' AND column_name='org_id') THEN
+    ALTER TABLE finance.invoices ADD COLUMN org_id UUID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='finance' AND table_name='invoices' AND column_name='branch_id') THEN
+    ALTER TABLE finance.invoices ADD COLUMN branch_id UUID;
+  END IF;
+END $$;
 
--- Add COMMENT ON annotations
-COMMENT ON VIEW reporting.v_sales_orders IS 'Denormalized sales order view';
-COMMENT ON COLUMN reporting.v_sales_orders.id IS 'Primary key';
-COMMENT ON COLUMN reporting.v_sales_orders.order_number IS 'Unique order number';
-COMMENT ON COLUMN reporting.v_sales_orders.customer_name IS 'Customer display name';
-COMMENT ON COLUMN reporting.v_sales_orders.total_amount IS 'Order total including tax';
-COMMENT ON COLUMN reporting.v_sales_orders.customer_id IS 'fk:core.contacts.id Customer foreign key';
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='finance' AND table_name='gl_entries' AND column_name='org_id') THEN
+    ALTER TABLE finance.gl_entries ADD COLUMN org_id UUID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='finance' AND table_name='gl_entries' AND column_name='account_id') THEN
+    ALTER TABLE finance.gl_entries ADD COLUMN account_id UUID;
+  END IF;
+END $$;
 
-COMMENT ON VIEW reporting.v_invoices IS 'Denormalized invoice view with aging';
-COMMENT ON COLUMN reporting.v_invoices.aging_bucket IS 'Aging period: Current, 1-30, 31-60, 61-90, 90+';
-COMMENT ON COLUMN reporting.v_invoices.customer_id IS 'fk:core.contacts.id Invoice customer FK';
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='inventory' AND table_name='stock_levels' AND column_name='org_id') THEN
+    ALTER TABLE inventory.stock_levels ADD COLUMN org_id UUID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='inventory' AND table_name='stock_levels' AND column_name='last_received_date') THEN
+    ALTER TABLE inventory.stock_levels ADD COLUMN last_received_date DATE;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='inventory' AND table_name='stock_levels' AND column_name='unit_cost') THEN
+    ALTER TABLE inventory.stock_levels ADD COLUMN unit_cost NUMERIC(12,2) DEFAULT 0;
+  END IF;
+END $$;
 
-COMMENT ON VIEW reporting.v_inventory_levels IS 'Current inventory stock levels';
-COMMENT ON VIEW reporting.v_purchase_orders IS 'Purchase order pipeline view';
-COMMENT ON COLUMN reporting.v_purchase_orders.supplier_id IS 'fk:core.contacts.id Supplier FK';
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='procurement' AND table_name='purchase_orders' AND column_name='org_id') THEN
+    ALTER TABLE procurement.purchase_orders ADD COLUMN org_id UUID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='procurement' AND table_name='purchase_orders' AND column_name='branch_id') THEN
+    ALTER TABLE procurement.purchase_orders ADD COLUMN branch_id UUID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='procurement' AND table_name='purchase_orders' AND column_name='expected_date') THEN
+    ALTER TABLE procurement.purchase_orders ADD COLUMN expected_date DATE;
+  END IF;
+END $$;
 
-COMMENT ON VIEW reporting.v_cashbook_transactions IS 'Bank transaction records';
-COMMENT ON COLUMN reporting.v_cashbook_transactions.bank_account_id IS 'fk:cashbook.bank_accounts.id Bank account FK';
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='cashbook' AND table_name='transactions' AND column_name='org_id') THEN
+    ALTER TABLE cashbook.transactions ADD COLUMN org_id UUID;
+  END IF;
+END $$;
 
-COMMENT ON VIEW reporting.v_general_ledger IS 'General ledger entries';
-COMMENT ON VIEW reporting.v_customers IS 'Customer master data';
-COMMENT ON VIEW reporting.v_suppliers IS 'Supplier master data';
-COMMENT ON VIEW reporting.v_product_catalogue IS 'Product catalogue view';
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='cashbook' AND table_name='bank_accounts' AND column_name='org_id') THEN
+    ALTER TABLE cashbook.bank_accounts ADD COLUMN org_id UUID;
+  END IF;
+END $$;
 
+-- FK constraints for new tables
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_stock_levels_product' AND table_schema = 'inventory'
+  ) THEN
+    ALTER TABLE inventory.stock_levels
+      ADD CONSTRAINT fk_stock_levels_product FOREIGN KEY (product_id) REFERENCES inventory.products(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_stock_levels_warehouse' AND table_schema = 'inventory'
+  ) THEN
+    ALTER TABLE inventory.stock_levels
+      ADD CONSTRAINT fk_stock_levels_warehouse FOREIGN KEY (warehouse_id) REFERENCES inventory.warehouses(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_stock_movements_product' AND table_schema = 'inventory'
+  ) THEN
+    ALTER TABLE inventory.stock_movements
+      ADD CONSTRAINT fk_stock_movements_product FOREIGN KEY (product_id) REFERENCES inventory.products(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_stock_movements_warehouse' AND table_schema = 'inventory'
+  ) THEN
+    ALTER TABLE inventory.stock_movements
+      ADD CONSTRAINT fk_stock_movements_warehouse FOREIGN KEY (warehouse_id) REFERENCES inventory.warehouses(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_sol_order' AND table_schema = 'sales'
+  ) THEN
+    ALTER TABLE sales.sales_order_lines
+      ADD CONSTRAINT fk_sol_order FOREIGN KEY (order_id) REFERENCES sales.sales_orders(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_sol_product' AND table_schema = 'sales'
+  ) THEN
+    ALTER TABLE sales.sales_order_lines
+      ADD CONSTRAINT fk_sol_product FOREIGN KEY (product_id) REFERENCES inventory.products(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_deliveries_order' AND table_schema = 'sales'
+  ) THEN
+    ALTER TABLE sales.deliveries
+      ADD CONSTRAINT fk_deliveries_order FOREIGN KEY (order_id) REFERENCES sales.sales_orders(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_gl_entries_account' AND table_schema = 'finance'
+  ) THEN
+    ALTER TABLE finance.gl_entries
+      ADD CONSTRAINT fk_gl_entries_account FOREIGN KEY (account_id) REFERENCES finance.chart_of_accounts(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_ap_supplier' AND table_schema = 'finance'
+  ) THEN
+    ALTER TABLE finance.accounts_payable
+      ADD CONSTRAINT fk_ap_supplier FOREIGN KEY (supplier_id) REFERENCES core.contacts(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_budgets_account' AND table_schema = 'finance'
+  ) THEN
+    ALTER TABLE finance.budgets
+      ADD CONSTRAINT fk_budgets_account FOREIGN KEY (account_id) REFERENCES finance.chart_of_accounts(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_pol_po' AND table_schema = 'procurement'
+  ) THEN
+    ALTER TABLE procurement.purchase_order_lines
+      ADD CONSTRAINT fk_pol_po FOREIGN KEY (po_id) REFERENCES procurement.purchase_orders(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_pol_product' AND table_schema = 'procurement'
+  ) THEN
+    ALTER TABLE procurement.purchase_order_lines
+      ADD CONSTRAINT fk_pol_product FOREIGN KEY (product_id) REFERENCES inventory.products(id);
+  END IF;
+END $$;
+
+-- Comments for new tables
+COMMENT ON TABLE inventory.products IS 'Product master catalogue';
+COMMENT ON COLUMN inventory.products.product_code IS 'Unique product SKU | display_column';
+COMMENT ON COLUMN inventory.products.product_name IS 'Product display name | display_column';
+
+COMMENT ON TABLE inventory.warehouses IS 'Warehouse locations';
+COMMENT ON COLUMN inventory.warehouses.warehouse_name IS 'Warehouse display name | display_column';
+
+COMMENT ON TABLE inventory.stock_movements IS 'Stock movement history (receipts, issues, transfers, adjustments)';
+COMMENT ON TABLE sales.sales_order_lines IS 'Sales order line items';
+COMMENT ON TABLE sales.deliveries IS 'Delivery/fulfilment records for sales orders';
+COMMENT ON TABLE finance.chart_of_accounts IS 'Chart of accounts master';
+COMMENT ON COLUMN finance.chart_of_accounts.account_name IS 'Account display name | display_column';
+COMMENT ON TABLE finance.accounts_payable IS 'Supplier invoices/bills (accounts payable)';
+COMMENT ON TABLE finance.budgets IS 'Budget entries by account, year, and month';
+COMMENT ON TABLE procurement.purchase_order_lines IS 'Purchase order line items';
+
+-- ============================================================================
+-- Reporting views are now created by seed/create_reporting_views.sql
+-- (see that file for the comprehensive denormalized reporting view set)
+-- ============================================================================
+
+-- Comments for original base tables
 COMMENT ON TABLE core.organizations IS 'Organization entities';
 COMMENT ON TABLE core.branches IS 'Organization branches';
 COMMENT ON COLUMN core.branches.code IS 'Unique short code | display_column';
