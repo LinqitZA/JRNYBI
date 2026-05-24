@@ -2464,3 +2464,72 @@ Agent: Single agent handling feature #150
 - Features passing: 148 (172 total, ~86%)
 - Feature #150 verified and passing
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+
+## Session 34: 2026-05-24
+Agent: Batch agent handling features #151, #152, #153
+
+### Feature #151: Inventory Aging per Warehouse report (PASSING)
+- Seeded test data: 3 warehouses (JHB, CPT, DBN), 4 additional products, 17 stock_levels entries
+- Stock levels have varied last_received_date spanning all aging buckets (0-30, 31-60, 61-90, 91-180, 180+ days)
+- Used existing reporting.v_inventory_aging view (from feature #131)
+- Created 3 queries via API:
+  * Query 50: Summary (aging by warehouse, grouped by aging_bucket)
+  * Query 51: Detail (product-level aging with days_in_stock and months_of_supply)
+  * Query 52: KPI (total value of stock >90 days old with % of total)
+- Created 4 visualizations:
+  * Stacked bar chart: warehouses on X-axis, aging buckets as color-coded series
+  * Summary table: warehouse, bucket, items, qty, value
+  * Detail table: product code/name, warehouse, qty, cost, value, last received, days, bucket, supply
+  * KPI counter: Stock >90 Days Value with target showing total inventory value
+- Dashboard 37 "Inventory Aging per Warehouse" (slug: inventory-aging-per-warehouse)
+  * Tagged: [inventory, jrny-report, report:inventory]
+  * Warehouse filter parameter
+- Verified: 12 rows across all buckets and warehouses
+- Verified: persists across server restart
+- Committed as 898c74a4
+
+### Feature #152: Stock Movement History report (PASSING)
+- Seeded 18 additional stock movements with reference_type/reference_id (PO, SO, cycle_count, transfer)
+- Created 2 queries:
+  * Query 53: Detail with running balance (window SUM OVER PARTITION BY product/warehouse ORDER BY date)
+  * Query 54: Summary by movement type per period (monthly aggregation)
+- Created 3 visualizations:
+  * Detail table: date, code, product, warehouse, type, qty, cost, value, running balance, ref type, ref id
+  * Stacked column chart: movement types (receipt green, issue red, adjustment yellow, transfer blue) per period
+  * Summary table: period, type, count, qty, value
+- Dashboard 38 "Stock Movement History" (slug: stock-movement-history)
+  * Tagged: [inventory, jrny-report, report:inventory]
+  * Parameters: start_date, end_date, product, warehouse, movement_type
+- Committed as 0a5de70d
+
+### Feature #153: Slow-Moving and Dead Stock report (PASSING)
+- CTE-based query calculates last outbound movement date per product/warehouse
+- Categories: Slow (60-90 days), Very Slow (90-180 days), Dead (180+ days), Dead (Never Sold)
+- Created 3 queries:
+  * Query 56: Detail (product, warehouse, qty, holding cost, days inactive, category)
+  * Query 57: KPIs (dead stock value, slow+dead value, % of total, item counts)
+  * Query 58: By Warehouse (stacked bar chart of categories per warehouse)
+- Created 4 visualizations:
+  * Detail table with 10 columns
+  * Dead Stock Value KPI counter with total inventory as target
+  * % Inventory at Risk KPI counter
+  * Stacked bar chart: warehouses on X, categories as color-coded series (yellow->red gradient)
+- Dashboard 40 "Slow-Moving and Dead Stock" (slug: slow-moving-and-dead-stock)
+  * Tagged: [inventory, jrny-report, report:inventory]
+  * Warehouse filter parameter
+- Verified: 8 Dead (Never Sold) items correctly identified
+- Committed as be790ccc
+
+## Files Modified
+- seed/create_inventory_aging_report.py - NEW: Inventory Aging report creation script
+- seed/seed_inventory_aging_data.sql - NEW: Warehouses, stock levels, stock movements test data
+- seed/create_stock_movement_report.py - NEW: Stock Movement History report creation script
+- seed/seed_stock_movement_data.sql - NEW: Additional movements with references (18 rows)
+- seed/create_slow_moving_stock_report.py - NEW: Slow-Moving and Dead Stock report creation script
+
+## Current Status
+- Features passing: 152 (172 total, ~88.4%)
+- All 3 assigned features (#151, #152, #153) implemented and verified
+- Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+- Reports created via API (stored in PostgreSQL metadata DB)
+- Test data seeded into inventory tables for report verification
