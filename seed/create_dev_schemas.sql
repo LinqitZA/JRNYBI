@@ -3703,3 +3703,83 @@ BEGIN
 
   RAISE NOTICE 'Buying group seed data inserted: 3 groups, 4 customer assignments';
 END $$;
+
+-- ============================================================================
+-- Sales Pipeline / Opportunity seed data
+-- ============================================================================
+-- Add assigned_to column if not exists
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'crm' AND table_name = 'opportunities' AND column_name = 'assigned_to'
+  ) THEN
+    ALTER TABLE crm.opportunities ADD COLUMN assigned_to UUID;
+  END IF;
+END $$;
+
+DO $$
+DECLARE
+  org UUID := '11111111-2222-3333-4444-555555555555';
+  c1 UUID; c2 UUID; c3 UUID; c4 UUID; c5 UUID;
+  rep1 UUID; rep2 UUID;
+BEGIN
+  IF EXISTS (SELECT 1 FROM crm.opportunities LIMIT 1) THEN
+    RAISE NOTICE 'Opportunities already seeded, skipping';
+    RETURN;
+  END IF;
+
+  -- Get existing customer contacts
+  SELECT id INTO c1 FROM core.contacts WHERE first_name = 'Alice' AND last_name = 'Johnson' LIMIT 1;
+  SELECT id INTO c2 FROM core.contacts WHERE first_name = 'Bob' AND last_name = 'Smith' LIMIT 1;
+  SELECT id INTO c3 FROM core.contacts WHERE first_name = 'Carol' AND last_name = 'Davis' LIMIT 1;
+  SELECT id INTO c4 FROM core.contacts WHERE first_name = 'David' AND last_name = 'Wilson' LIMIT 1;
+  SELECT id INTO c5 FROM core.contacts WHERE first_name = 'Emma' AND last_name = 'Taylor' LIMIT 1;
+
+  -- Create sales rep contacts
+  SELECT id INTO rep1 FROM core.contacts WHERE email = 'rep1@jrny.co.za' LIMIT 1;
+  IF rep1 IS NULL THEN
+    INSERT INTO core.contacts (first_name, last_name, email, org_id) VALUES ('John', 'Sales', 'rep1@jrny.co.za', org) RETURNING id INTO rep1;
+  END IF;
+  SELECT id INTO rep2 FROM core.contacts WHERE email = 'rep2@jrny.co.za' LIMIT 1;
+  IF rep2 IS NULL THEN
+    INSERT INTO core.contacts (first_name, last_name, email, org_id) VALUES ('Jane', 'Closer', 'rep2@jrny.co.za', org) RETURNING id INTO rep2;
+  END IF;
+
+  -- Prospecting stage (10% probability)
+  INSERT INTO crm.opportunities (opportunity_name, contact_id, stage, amount, close_date, org_id, created_at, assigned_to) VALUES
+    ('New ERP Implementation - Acme Corp', c1, 'prospecting', 250000.00, '2025-06-30', org, '2024-11-01', rep1),
+    ('CRM Expansion - Beta Inc', c2, 'prospecting', 80000.00, '2025-07-15', org, '2024-11-15', rep2),
+    ('Cloud Migration - Gamma Ltd', c3, 'prospecting', 150000.00, '2025-08-01', org, '2024-12-01', rep1);
+
+  -- Qualification stage (25% probability)
+  INSERT INTO crm.opportunities (opportunity_name, contact_id, stage, amount, close_date, org_id, created_at, assigned_to) VALUES
+    ('Inventory Module Upgrade', c4, 'qualification', 120000.00, '2025-05-30', org, '2024-10-01', rep2),
+    ('Finance Suite Implementation', c1, 'qualification', 350000.00, '2025-06-15', org, '2024-09-15', rep1),
+    ('Warehouse Management System', c5, 'qualification', 95000.00, '2025-05-15', org, '2024-10-20', rep2);
+
+  -- Proposal stage (50% probability)
+  INSERT INTO crm.opportunities (opportunity_name, contact_id, stage, amount, close_date, org_id, created_at, assigned_to) VALUES
+    ('Multi-branch Deployment', c2, 'proposal', 420000.00, '2025-04-30', org, '2024-08-01', rep1),
+    ('Procurement Automation', c4, 'proposal', 180000.00, '2025-04-15', org, '2024-08-15', rep2),
+    ('Analytics Dashboard Package', c3, 'proposal', 65000.00, '2025-03-30', org, '2024-09-01', rep1);
+
+  -- Negotiation stage (75% probability)
+  INSERT INTO crm.opportunities (opportunity_name, contact_id, stage, amount, close_date, org_id, created_at, assigned_to) VALUES
+    ('Enterprise License Renewal', c1, 'negotiation', 500000.00, '2025-03-15', org, '2024-06-01', rep1),
+    ('Custom Reporting Module', c5, 'negotiation', 95000.00, '2025-03-01', org, '2024-07-01', rep2);
+
+  -- Won (100% - closed won)
+  INSERT INTO crm.opportunities (opportunity_name, contact_id, stage, amount, close_date, org_id, created_at, assigned_to) VALUES
+    ('Basic ERP Package', c3, 'won', 75000.00, '2024-12-15', org, '2024-04-01', rep1),
+    ('Support Contract Renewal', c2, 'won', 45000.00, '2024-11-30', org, '2024-08-01', rep2),
+    ('Training Program', c4, 'won', 28000.00, '2024-10-20', org, '2024-06-15', rep1),
+    ('Data Migration Service', c1, 'won', 120000.00, '2024-09-30', org, '2024-03-01', rep2);
+
+  -- Lost (0% - closed lost)
+  INSERT INTO crm.opportunities (opportunity_name, contact_id, stage, amount, close_date, org_id, created_at, assigned_to) VALUES
+    ('Legacy System Replacement', c5, 'lost', 200000.00, '2024-11-01', org, '2024-05-01', rep1),
+    ('International Rollout', c2, 'lost', 350000.00, '2024-12-01', org, '2024-04-15', rep2),
+    ('Mobile App Development', c4, 'lost', 90000.00, '2024-10-15', org, '2024-06-01', rep1);
+
+  RAISE NOTICE 'Opportunities seeded: 18 opportunities across 6 stages, 2 sales reps';
+END $$;

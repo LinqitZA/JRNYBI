@@ -24,6 +24,7 @@ Reports created:
     - Supplier Spend Analysis (bar chart + detail table)
     - Procurement OTIF (supplier delivery on-time in-full metrics)
     - Purchase Price Variance (PPV KPI, by supplier/product, line detail)
+    - Open PO Aging (overdue PO backlog, aging buckets, supplier breakdown)
 
 All reports use parameterized queries with:
     - {{start_date}} / {{end_date}} for date range filtering
@@ -834,6 +835,107 @@ ORDER BY ABS(ppv_amount) DESC
         "options": {"parameters": DATE_PARAMS + [
             {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
             {"name": "product_code", "title": "Product Code", "type": "text", "value": ""},
+        ]},
+        "tags": ["procurement", "jrny-report"],
+    },
+    # ---- Procurement: Open PO Aging ----
+    "open_po_kpi": {
+        "name": "Open PO - KPI Summary",
+        "description": "Key metrics for outstanding purchase orders: count, value, overdue percentage.",
+        "query": """
+SELECT
+    COUNT(*) AS open_po_count,
+    SUM(total_amount)::numeric(12,2) AS total_open_value,
+    SUM(CASE WHEN days_overdue > 0 THEN 1 ELSE 0 END) AS overdue_count,
+    SUM(CASE WHEN days_overdue > 0 THEN total_amount ELSE 0 END)::numeric(12,2) AS overdue_value,
+    ROUND(100.0 * SUM(CASE WHEN days_overdue > 0 THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS overdue_pct,
+    ROUND(AVG(days_open), 0) AS avg_days_open
+FROM reporting.v_open_po_aging
+WHERE order_date >= '{{ start_date }}'
+  AND order_date <= '{{ end_date }}'
+  AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%')
+""".strip(),
+        "options": {"parameters": DATE_PARAMS + [
+            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
+        ]},
+        "tags": ["procurement", "jrny-report"],
+    },
+    "open_po_aging": {
+        "name": "Open PO - Aging Buckets",
+        "description": "Outstanding PO value and count by overdue aging bucket.",
+        "query": """
+SELECT
+    aging_bucket,
+    COUNT(*) AS po_count,
+    SUM(total_amount)::numeric(12,2) AS total_value
+FROM reporting.v_open_po_aging
+WHERE order_date >= '{{ start_date }}'
+  AND order_date <= '{{ end_date }}'
+  AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%')
+GROUP BY aging_bucket
+ORDER BY
+  CASE aging_bucket
+    WHEN 'Not Due' THEN 1
+    WHEN '0-14 Days Overdue' THEN 2
+    WHEN '15-30 Days Overdue' THEN 3
+    WHEN '31-60 Days Overdue' THEN 4
+    WHEN '60+ Days Overdue' THEN 5
+  END
+""".strip(),
+        "options": {"parameters": DATE_PARAMS + [
+            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
+        ]},
+        "tags": ["procurement", "jrny-report"],
+    },
+    "open_po_detail": {
+        "name": "Open PO - Detail",
+        "description": "Detailed list of all open purchase orders with supplier, value, aging, and delivery status.",
+        "query": """
+SELECT
+    po_number,
+    supplier_name,
+    status,
+    order_date,
+    expected_date,
+    total_amount,
+    line_count,
+    total_ordered_qty,
+    total_received_qty,
+    days_open,
+    days_overdue,
+    aging_bucket,
+    delivery_status
+FROM reporting.v_open_po_aging
+WHERE order_date >= '{{ start_date }}'
+  AND order_date <= '{{ end_date }}'
+  AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%')
+ORDER BY days_overdue DESC, total_amount DESC
+""".strip(),
+        "options": {"parameters": DATE_PARAMS + [
+            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
+        ]},
+        "tags": ["procurement", "jrny-report"],
+    },
+    "open_po_by_supplier": {
+        "name": "Open PO - By Supplier",
+        "description": "Open PO summary by supplier showing total value, overdue value, and average days open.",
+        "query": """
+SELECT
+    supplier_name,
+    COUNT(*) AS po_count,
+    SUM(total_amount)::numeric(12,2) AS total_value,
+    SUM(CASE WHEN days_overdue > 0 THEN total_amount ELSE 0 END)::numeric(12,2) AS overdue_value,
+    ROUND(AVG(days_open), 0) AS avg_days_open,
+    MAX(days_overdue) AS max_days_overdue
+FROM reporting.v_open_po_aging
+WHERE order_date >= '{{ start_date }}'
+  AND order_date <= '{{ end_date }}'
+  AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%')
+GROUP BY supplier_name
+ORDER BY SUM(total_amount) DESC
+""".strip(),
+        "options": {"parameters": DATE_PARAMS + [
+            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
         ]},
         "tags": ["procurement", "jrny-report"],
     },
@@ -1926,6 +2028,154 @@ ORDER BY total_outstanding DESC NULLS LAST;
         },
         "tags": ["sales", "jrny-report", "report:sales"],
     },
+    # ---- Sales Pipeline / Opportunity Funnel ----
+    "pipeline_funnel": {
+        "name": "Sales Pipeline - Funnel by Stage",
+        "description": "Opportunity funnel showing count and total value per pipeline stage, ordered from prospecting to negotiation (excludes closed).",
+        "query": """
+SELECT
+    stage,
+    COUNT(*) AS opportunity_count,
+    SUM(amount) AS total_value,
+    ROUND(AVG(amount), 2) AS avg_deal_size,
+    ROUND(SUM(amount) * CASE stage
+        WHEN 'prospecting' THEN 0.10
+        WHEN 'qualification' THEN 0.25
+        WHEN 'proposal' THEN 0.50
+        WHEN 'negotiation' THEN 0.75
+    END, 2) AS weighted_value
+FROM crm.opportunities
+WHERE stage NOT IN ('won', 'lost')
+  AND (NULLIF('{{ start_date }}', '') IS NULL OR close_date >= NULLIF('{{ start_date }}', '')::date)
+  AND (NULLIF('{{ end_date }}', '') IS NULL OR close_date <= NULLIF('{{ end_date }}', '')::date)
+  AND (NULLIF('{{ assigned_to }}', '') IS NULL OR assigned_to::text = '{{ assigned_to }}')
+GROUP BY stage
+ORDER BY CASE stage
+    WHEN 'prospecting' THEN 1
+    WHEN 'qualification' THEN 2
+    WHEN 'proposal' THEN 3
+    WHEN 'negotiation' THEN 4
+END;
+""".strip(),
+        "options": {
+            "parameters": [
+                {
+                    "name": "start_date",
+                    "title": "Close Date From",
+                    "type": "text",
+                    "value": "",
+                },
+                {
+                    "name": "end_date",
+                    "title": "Close Date To",
+                    "type": "text",
+                    "value": "",
+                },
+                {
+                    "name": "assigned_to",
+                    "title": "Assigned Rep (UUID)",
+                    "type": "text",
+                    "value": "",
+                },
+            ]
+        },
+        "tags": ["sales", "jrny-report", "report:sales"],
+    },
+    "pipeline_detail": {
+        "name": "Sales Pipeline - Opportunity Detail",
+        "description": "Full detail of all open opportunities with stage, amount, close date, and assigned rep.",
+        "query": """
+SELECT
+    o.opportunity_name,
+    o.stage,
+    o.amount,
+    o.close_date,
+    o.created_at::date AS created_date,
+    (o.close_date - CURRENT_DATE) AS days_to_close,
+    c.first_name || ' ' || c.last_name AS contact_name,
+    rep.first_name || ' ' || rep.last_name AS assigned_rep
+FROM crm.opportunities o
+LEFT JOIN core.contacts c ON c.id = o.contact_id
+LEFT JOIN core.contacts rep ON rep.id = o.assigned_to
+WHERE stage NOT IN ('won', 'lost')
+  AND (NULLIF('{{ start_date }}', '') IS NULL OR o.close_date >= NULLIF('{{ start_date }}', '')::date)
+  AND (NULLIF('{{ end_date }}', '') IS NULL OR o.close_date <= NULLIF('{{ end_date }}', '')::date)
+  AND (NULLIF('{{ assigned_to }}', '') IS NULL OR o.assigned_to::text = '{{ assigned_to }}')
+ORDER BY
+    CASE o.stage
+        WHEN 'negotiation' THEN 1
+        WHEN 'proposal' THEN 2
+        WHEN 'qualification' THEN 3
+        WHEN 'prospecting' THEN 4
+    END,
+    o.amount DESC;
+""".strip(),
+        "options": {
+            "parameters": [
+                {
+                    "name": "start_date",
+                    "title": "Close Date From",
+                    "type": "text",
+                    "value": "",
+                },
+                {
+                    "name": "end_date",
+                    "title": "Close Date To",
+                    "type": "text",
+                    "value": "",
+                },
+                {
+                    "name": "assigned_to",
+                    "title": "Assigned Rep (UUID)",
+                    "type": "text",
+                    "value": "",
+                },
+            ]
+        },
+        "tags": ["sales", "jrny-report", "report:sales"],
+    },
+    "pipeline_win_loss": {
+        "name": "Sales Pipeline - Win/Loss Summary",
+        "description": "Summary of closed opportunities showing win rate, total won/lost value, and average deal size.",
+        "query": """
+SELECT
+    stage AS outcome,
+    COUNT(*) AS deal_count,
+    SUM(amount) AS total_value,
+    ROUND(AVG(amount), 2) AS avg_deal_size,
+    ROUND(AVG(close_date - created_at::date), 0) AS avg_days_to_close
+FROM crm.opportunities
+WHERE stage IN ('won', 'lost')
+  AND (NULLIF('{{ start_date }}', '') IS NULL OR close_date >= NULLIF('{{ start_date }}', '')::date)
+  AND (NULLIF('{{ end_date }}', '') IS NULL OR close_date <= NULLIF('{{ end_date }}', '')::date)
+  AND (NULLIF('{{ assigned_to }}', '') IS NULL OR assigned_to::text = '{{ assigned_to }}')
+GROUP BY stage
+ORDER BY stage DESC;
+""".strip(),
+        "options": {
+            "parameters": [
+                {
+                    "name": "start_date",
+                    "title": "Close Date From",
+                    "type": "text",
+                    "value": "",
+                },
+                {
+                    "name": "end_date",
+                    "title": "Close Date To",
+                    "type": "text",
+                    "value": "",
+                },
+                {
+                    "name": "assigned_to",
+                    "title": "Assigned Rep (UUID)",
+                    "type": "text",
+                    "value": "",
+                },
+            ]
+        },
+        "tags": ["sales", "jrny-report", "report:sales"],
+    },
     "customer_master_health_summary": {
         "name": "Customer Master Summary - Health Distribution",
         "description": "Aggregated customer count by health status for pie chart visualization.",
@@ -2796,6 +3046,118 @@ VISUALIZATIONS = {
                     {"name": "ppv_pct", "title": "PPV %", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                     {"name": "variance_type", "title": "Type", "visible": True},
                 ],
+            },
+        },
+    ],
+    "open_po_kpi": [
+        {
+            "name": "Open PO Count",
+            "type": "COUNTER",
+            "options": {
+                "counterLabel": "Open Purchase Orders",
+                "counterColName": "open_po_count",
+                "rowNumber": 1, "targetRowNumber": 1,
+                "stringDecimal": 0, "stringDecChar": ".", "stringThouSep": ",",
+                "tooltipFormat": "0,0",
+            },
+        },
+        {
+            "name": "Open PO Value",
+            "type": "COUNTER",
+            "options": {
+                "counterLabel": "Total Open Value",
+                "counterColName": "total_open_value",
+                "rowNumber": 1, "targetRowNumber": 1,
+                "stringDecimal": 2, "stringDecChar": ".", "stringThouSep": ",",
+                "tooltipFormat": "0,0.00",
+                "stringPrefix": "R ",
+            },
+        },
+        {
+            "name": "Overdue %",
+            "type": "COUNTER",
+            "options": {
+                "counterLabel": "% Overdue",
+                "counterColName": "overdue_pct",
+                "rowNumber": 1, "targetRowNumber": 1,
+                "stringDecimal": 1, "stringDecChar": ".", "stringThouSep": ",",
+                "tooltipFormat": "0,0.0",
+                "stringSuffix": "%",
+            },
+        },
+    ],
+    "open_po_aging": [
+        {
+            "name": "Overdue PO Value by Bucket (Pie)",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "pie",
+                "columnMapping": {
+                    "aging_bucket": "x",
+                    "total_value": "y",
+                },
+                "seriesOptions": {},
+                "legend": {"enabled": True, "placement": "auto"},
+                "numberFormat": "0,0.00",
+                "percentFormat": "0.0",
+                "missingValuesAsZero": True,
+            },
+        },
+        {
+            "name": "Aging Bucket Summary Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "aging_bucket", "title": "Aging Bucket", "visible": True},
+                    {"name": "po_count", "title": "PO Count", "visible": True, "alignContent": "right"},
+                    {"name": "total_value", "title": "Total Value (R)", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                ],
+            },
+        },
+    ],
+    "open_po_detail": [
+        {
+            "name": "Open PO Detail Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "po_number", "title": "PO #", "visible": True},
+                    {"name": "supplier_name", "title": "Supplier", "visible": True},
+                    {"name": "status", "title": "Status", "visible": True},
+                    {"name": "order_date", "title": "Order Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "expected_date", "title": "Expected Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "total_amount", "title": "Value (R)", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "line_count", "title": "Lines", "visible": True, "alignContent": "right"},
+                    {"name": "days_open", "title": "Days Open", "visible": True, "alignContent": "right"},
+                    {"name": "days_overdue", "title": "Days Overdue", "visible": True, "alignContent": "right"},
+                    {"name": "aging_bucket", "title": "Aging Bucket", "visible": True},
+                    {"name": "delivery_status", "title": "Status", "visible": True},
+                ],
+            },
+        },
+    ],
+    "open_po_by_supplier": [
+        {
+            "name": "Open PO Value by Supplier (Bar)",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "bar",
+                "columnMapping": {
+                    "supplier_name": "x",
+                    "total_value": "y",
+                    "overdue_value": "y",
+                },
+                "seriesOptions": {
+                    "total_value": {"type": "bar", "yAxis": 0, "name": "Total Value", "color": "#2563eb"},
+                    "overdue_value": {"type": "bar", "yAxis": 0, "name": "Overdue Value", "color": "#dc2626"},
+                },
+                "sortX": True,
+                "legend": {"enabled": True},
+                "xAxis": {"type": "category"},
+                "yAxis": [{"type": "linear", "title": {"text": "Value (R)"}}],
+                "series": {"stacking": None},
             },
         },
     ],
@@ -3833,6 +4195,121 @@ VISUALIZATIONS = {
             },
         },
     ],
+    # ---- Sales Pipeline / Opportunity Funnel Visualizations ----
+    "pipeline_funnel": [
+        {
+            "name": "Pipeline Funnel Chart",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "column",
+                "columnMapping": {
+                    "stage": "x",
+                    "total_value": "y",
+                    "weighted_value": "y",
+                },
+                "legend": {"enabled": True},
+                "series": {"stacking": None},
+                "seriesOptions": {
+                    "total_value": {
+                        "type": "column",
+                        "name": "Total Value",
+                        "yAxis": 0,
+                        "color": "#1890ff",
+                    },
+                    "weighted_value": {
+                        "type": "column",
+                        "name": "Weighted Value",
+                        "yAxis": 0,
+                        "color": "#52c41a",
+                    },
+                },
+                "xAxis": {"type": "-", "labels": {"enabled": True}},
+                "yAxis": [
+                    {"type": "linear", "title": {"text": "Value (R)"}},
+                ],
+                "numberFormat": "0,0",
+                "sortX": False,
+            },
+        },
+        {
+            "name": "Pipeline Summary Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 10,
+                "columns": [
+                    {"name": "stage", "title": "Stage", "visible": True},
+                    {"name": "opportunity_count", "title": "Deals", "visible": True, "alignContent": "right"},
+                    {"name": "total_value", "title": "Total Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "avg_deal_size", "title": "Avg Deal Size", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "weighted_value", "title": "Weighted Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                ],
+            },
+        },
+    ],
+    "pipeline_detail": [
+        {
+            "name": "Opportunity Detail Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "opportunity_name", "title": "Opportunity", "visible": True},
+                    {"name": "stage", "title": "Stage", "visible": True},
+                    {"name": "amount", "title": "Amount", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "close_date", "title": "Close Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "days_to_close", "title": "Days to Close", "visible": True, "alignContent": "right"},
+                    {"name": "contact_name", "title": "Contact", "visible": True},
+                    {"name": "assigned_rep", "title": "Assigned Rep", "visible": True},
+                ],
+            },
+        },
+    ],
+    "pipeline_win_loss": [
+        {
+            "name": "Win/Loss Chart",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "column",
+                "columnMapping": {
+                    "outcome": "x",
+                    "total_value": "y",
+                },
+                "legend": {"enabled": True},
+                "series": {"stacking": None},
+                "seriesOptions": {
+                    "total_value": {
+                        "type": "column",
+                        "name": "Total Value",
+                        "color": "#1890ff",
+                    },
+                },
+                "xAxis": {"type": "-", "labels": {"enabled": True}},
+                "yAxis": [
+                    {"type": "linear", "title": {"text": "Value (R)"}},
+                ],
+                "numberFormat": "0,0",
+                "sortX": False,
+                "valuesOptions": {
+                    "won": {"color": "#52c41a"},
+                    "lost": {"color": "#ff4d4f"},
+                },
+            },
+        },
+        {
+            "name": "Win/Loss Summary Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 10,
+                "columns": [
+                    {"name": "outcome", "title": "Outcome", "visible": True},
+                    {"name": "deal_count", "title": "Deals", "visible": True, "alignContent": "right"},
+                    {"name": "total_value", "title": "Total Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "avg_deal_size", "title": "Avg Deal Size", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "avg_days_to_close", "title": "Avg Days to Close", "visible": True, "alignContent": "right"},
+                ],
+            },
+        },
+    ],
     "customer_master_health_summary": [
         {
             "name": "Health Distribution (Pie)",
@@ -4001,6 +4478,18 @@ DASHBOARDS = {
             {"query_key": "ppv_detail", "vis_index": 0, "width": 6},           # Line detail table
         ],
     },
+    "open_po_aging_dashboard": {
+        "name": "Open PO Aging",
+        "tags": ["procurement", "jrny-report", "report:procurement"],
+        "widgets": [
+            {"query_key": "open_po_kpi", "vis_index": 0, "width": 2},              # Open PO Count KPI
+            {"query_key": "open_po_kpi", "vis_index": 1, "width": 2},              # Open PO Value KPI
+            {"query_key": "open_po_kpi", "vis_index": 2, "width": 2},              # Overdue % KPI
+            {"query_key": "open_po_aging", "vis_index": 0, "width": 3},            # Aging bucket pie chart
+            {"query_key": "open_po_by_supplier", "vis_index": 0, "width": 3},      # Supplier bar chart
+            {"query_key": "open_po_detail", "vis_index": 0, "width": 6},           # Detail table
+        ],
+    },
     "vendor_scorecard_dashboard": {
         "name": "Vendor Scorecard",
         "tags": ["procurement", "jrny-report", "report:procurement"],
@@ -4140,6 +4629,18 @@ DASHBOARDS = {
         "widgets": [
             {"query_key": "customer_master_health_summary", "vis_index": 0, "width": 3},  # Health pie chart
             {"query_key": "customer_master_summary", "vis_index": 0, "width": 6},          # Customer detail table
+        ],
+    },
+    # ---- Sales Pipeline Dashboard ----
+    "sales_pipeline_dashboard": {
+        "name": "Sales Pipeline / Opportunity Funnel",
+        "tags": ["sales", "jrny-report", "report:sales"],
+        "widgets": [
+            {"query_key": "pipeline_funnel", "vis_index": 0, "width": 6},       # Funnel bar chart
+            {"query_key": "pipeline_funnel", "vis_index": 1, "width": 6},       # Pipeline summary table
+            {"query_key": "pipeline_detail", "vis_index": 0, "width": 6},       # Opportunity detail table
+            {"query_key": "pipeline_win_loss", "vis_index": 0, "width": 3},     # Win/Loss chart
+            {"query_key": "pipeline_win_loss", "vis_index": 1, "width": 3},     # Win/Loss summary table
         ],
     },
 }

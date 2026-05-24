@@ -1769,5 +1769,5 @@ COMMENT ON COLUMN reporting.v_cash_position.org_id IS 'Organization ID for RLS f
 
 
 -- ============================================================================
--- Done — all 37 reporting views created successfully
+-- Done — all 38 reporting views created successfully
 -- ============================================================================
