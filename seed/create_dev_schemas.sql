@@ -2422,6 +2422,38 @@ BEGIN
   INSERT INTO procurement.purchase_orders (po_number, supplier_id, total_amount, status, order_date, expected_date, org_id, branch_id)
     VALUES ('PO-GRN-006', s3, 16000.00, 'received', '2024-06-01', '2024-06-18', org, br) RETURNING id INTO po6;
 
+  -- Purchase Order Lines (PO prices for PPV calculation)
+  -- PO-GRN-001: Acme Supplies
+  INSERT INTO procurement.purchase_order_lines (po_id, product_id, quantity, unit_cost, line_total, received_qty, org_id)
+    VALUES (po1, p1, 50, 75.00, 3750.00, 50, org);
+  INSERT INTO procurement.purchase_order_lines (po_id, product_id, quantity, unit_cost, line_total, received_qty, org_id)
+    VALUES (po1, p2, 30, 125.00, 3750.00, 30, org);
+  -- PO-GRN-002: Global Parts
+  INSERT INTO procurement.purchase_order_lines (po_id, product_id, quantity, unit_cost, line_total, received_qty, org_id)
+    VALUES (po2, p3, 100, 24.00, 2400.00, 80, org);
+  INSERT INTO procurement.purchase_order_lines (po_id, product_id, quantity, unit_cost, line_total, received_qty, org_id)
+    VALUES (po2, p4, 50, 13.50, 675.00, 40, org);
+  -- PO-GRN-003: Acme Supplies
+  INSERT INTO procurement.purchase_order_lines (po_id, product_id, quantity, unit_cost, line_total, received_qty, org_id)
+    VALUES (po3, p1, 48, 82.00, 3936.00, 48, org);
+  INSERT INTO procurement.purchase_order_lines (po_id, product_id, quantity, unit_cost, line_total, received_qty, org_id)
+    VALUES (po3, p3, 85, 26.00, 2210.00, 83, org);
+  -- PO-GRN-004: Premier Materials
+  INSERT INTO procurement.purchase_order_lines (po_id, product_id, quantity, unit_cost, line_total, received_qty, org_id)
+    VALUES (po4, p2, 110, 128.00, 14080.00, 78, org);
+  INSERT INTO procurement.purchase_order_lines (po_id, product_id, quantity, unit_cost, line_total, received_qty, org_id)
+    VALUES (po4, p4, 280, 11.00, 3080.00, 200, org);
+  -- PO-GRN-005: Global Parts
+  INSERT INTO procurement.purchase_order_lines (po_id, product_id, quantity, unit_cost, line_total, received_qty, org_id)
+    VALUES (po5, p1, 60, 78.00, 4680.00, 60, org);
+  INSERT INTO procurement.purchase_order_lines (po_id, product_id, quantity, unit_cost, line_total, received_qty, org_id)
+    VALUES (po5, p3, 150, 24.50, 3675.00, 150, org);
+  -- PO-GRN-006: Premier Materials
+  INSERT INTO procurement.purchase_order_lines (po_id, product_id, quantity, unit_cost, line_total, received_qty, org_id)
+    VALUES (po6, p2, 45, 135.00, 6075.00, 42, org);
+  INSERT INTO procurement.purchase_order_lines (po_id, product_id, quantity, unit_cost, line_total, received_qty, org_id)
+    VALUES (po6, p1, 35, 79.00, 2765.00, 35, org);
+
   -- GRN 1: Acme Supplies — full receipt, on time (lead 13 days)
   INSERT INTO inventory.goods_receipts (grn_number, po_id, supplier_id, receipt_date, status, received_by, org_id, branch_id)
     VALUES ('GRN-2024-001', po1, s1, '2024-01-18', 'completed', 'John Warehouse', org, br) RETURNING id INTO grn1;
@@ -2933,4 +2965,378 @@ BEGIN
   END LOOP;
 
   RAISE NOTICE 'Warehouse bin seed data inserted: 7 zones, 123 bins, 90 stock allocations';
+END $$;
+
+-- ============================================================================
+-- Vendor Scorecard reporting view (for procurement analytics)
+-- ============================================================================
+-- This table stores pre-computed vendor scorecard metrics per period.
+-- In production, this would be a materialized view refreshed periodically.
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='reporting' AND table_name='v_vendor_scorecards') THEN
+    EXECUTE '
+      CREATE TABLE reporting.v_vendor_scorecards (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        supplier_id UUID,
+        supplier_name TEXT,
+        supplier_code TEXT,
+        period DATE,
+        period_label TEXT,
+        vendor_group TEXT DEFAULT ''General'',
+        total_pos INTEGER DEFAULT 0,
+        total_lines INTEGER DEFAULT 0,
+        on_time_deliveries INTEGER DEFAULT 0,
+        in_full_deliveries INTEGER DEFAULT 0,
+        otif_deliveries INTEGER DEFAULT 0,
+        otif_pct NUMERIC(5,2) DEFAULT 0,
+        inspection_pass_count INTEGER DEFAULT 0,
+        inspection_total_count INTEGER DEFAULT 0,
+        quality_pct NUMERIC(5,2) DEFAULT 0,
+        expected_spend NUMERIC(14,2) DEFAULT 0,
+        actual_spend NUMERIC(14,2) DEFAULT 0,
+        price_variance_pct NUMERIC(5,2) DEFAULT 0,
+        avg_lead_time_days NUMERIC(6,1) DEFAULT 0,
+        target_lead_time_days NUMERIC(6,1) DEFAULT 14,
+        delivery_score NUMERIC(5,2) DEFAULT 0,
+        composite_score NUMERIC(5,2) DEFAULT 0,
+        composite_rank INTEGER DEFAULT 0,
+        prior_composite_score NUMERIC(5,2),
+        score_trend NUMERIC(5,2),
+        org_id UUID
+      )';
+  END IF;
+END $$;
+
+COMMENT ON TABLE reporting.v_vendor_scorecards IS 'Pre-computed vendor performance scorecards with OTIF, quality, price, and delivery metrics';
+COMMENT ON COLUMN reporting.v_vendor_scorecards.otif_pct IS 'On-Time In-Full delivery percentage (0-100)';
+COMMENT ON COLUMN reporting.v_vendor_scorecards.quality_pct IS 'Inspection pass rate percentage (0-100)';
+COMMENT ON COLUMN reporting.v_vendor_scorecards.price_variance_pct IS 'Price variance vs expected spend (negative = under budget)';
+COMMENT ON COLUMN reporting.v_vendor_scorecards.delivery_score IS 'Delivery timeliness score (100 = on time, lower = late)';
+COMMENT ON COLUMN reporting.v_vendor_scorecards.composite_score IS 'Weighted composite: OTIF 30% + Quality 25% + Price 20% + Delivery 25%';
+COMMENT ON COLUMN reporting.v_vendor_scorecards.score_trend IS 'Change in composite score vs prior period (positive = improving)';
+
+-- ============================================================================
+-- Seed vendor scorecard data (computed from GRN/PO/inspection data)
+-- ============================================================================
+DO $$
+DECLARE
+  org UUID := '11111111-2222-3333-4444-555555555555';
+  s1 UUID; s2 UUID; s3 UUID;
+BEGIN
+  -- Only seed if v_vendor_scorecards is empty
+  IF EXISTS (SELECT 1 FROM reporting.v_vendor_scorecards LIMIT 1) THEN
+    RETURN;
+  END IF;
+
+  -- Get supplier IDs
+  SELECT id INTO s1 FROM core.contacts WHERE email = 'supplier1@example.com' LIMIT 1;
+  SELECT id INTO s2 FROM core.contacts WHERE email = 'supplier2@example.com' LIMIT 1;
+  SELECT id INTO s3 FROM core.contacts WHERE email = 'supplier3@example.com' LIMIT 1;
+
+  IF s1 IS NULL OR s2 IS NULL OR s3 IS NULL THEN
+    RAISE NOTICE 'Skipping vendor scorecard seed: supplier contacts not found';
+    RETURN;
+  END IF;
+
+  -- ===== Q1 2024 (Jan-Mar) =====
+  -- Acme Supplies (s1): 2 POs, on-time, 1 quality issue (8 rejected)
+  INSERT INTO reporting.v_vendor_scorecards (
+    supplier_id, supplier_name, supplier_code, period, period_label, vendor_group,
+    total_pos, total_lines, on_time_deliveries, in_full_deliveries, otif_deliveries, otif_pct,
+    inspection_pass_count, inspection_total_count, quality_pct,
+    expected_spend, actual_spend, price_variance_pct,
+    avg_lead_time_days, target_lead_time_days, delivery_score,
+    composite_score, composite_rank, prior_composite_score, score_trend, org_id
+  ) VALUES (
+    s1, 'Acme Supplies', 'SUP-001', '2024-01-01', 'Q1 2024', 'Manufacturing',
+    2, 4, 2, 2, 2, 100.00,
+    3, 4, 75.00,
+    27000.00, 27000.00, 0.00,
+    12.5, 14, 100.00,
+    73.75, 2, NULL, NULL, org
+  );
+  -- composite = 100*0.30 + 75*0.25 + 100*0.20 + 100*0.25 = 30 + 18.75 + 20 + 25 = 93.75
+  -- Actually let's recalculate: price_score = 100 - ABS(price_variance_pct) = 100-0 = 100
+  -- delivery_score = 100 (on time)
+  -- composite = 100*0.30 + 75*0.25 + 100*0.20 + 100*0.25 = 93.75
+  UPDATE reporting.v_vendor_scorecards SET composite_score = 93.75 WHERE supplier_id = s1 AND period = '2024-01-01';
+
+  -- Global Parts (s2): 1 PO, late, short delivery
+  INSERT INTO reporting.v_vendor_scorecards (
+    supplier_id, supplier_name, supplier_code, period, period_label, vendor_group,
+    total_pos, total_lines, on_time_deliveries, in_full_deliveries, otif_deliveries, otif_pct,
+    inspection_pass_count, inspection_total_count, quality_pct,
+    expected_spend, actual_spend, price_variance_pct,
+    avg_lead_time_days, target_lead_time_days, delivery_score,
+    composite_score, composite_rank, prior_composite_score, score_trend, org_id
+  ) VALUES (
+    s2, 'Global Parts', 'SUP-002', '2024-01-01', 'Q1 2024', 'Components',
+    1, 2, 0, 0, 0, 0.00,
+    1, 2, 50.00,
+    8500.00, 2480.00, -70.82,
+    17.0, 14, 78.57,
+    33.39, 3, NULL, NULL, org
+  );
+  -- price_score = 100 - 70.82 = 29.18
+  -- delivery_score = max(0, 100 - (17-14)/14*100) = 100 - 21.43 = 78.57
+  -- composite = 0*0.30 + 50*0.25 + 29.18*0.20 + 78.57*0.25 = 0 + 12.5 + 5.836 + 19.64 = 37.98
+  UPDATE reporting.v_vendor_scorecards SET composite_score = 37.98 WHERE supplier_id = s2 AND period = '2024-01-01';
+
+  -- Premier Materials (s3): no POs in Q1
+  -- (not inserted for Q1 since no data)
+
+  -- ===== Q2 2024 (Apr-Jun) =====
+  -- Acme Supplies (s1): 1 PO (replacement batch), perfect quality, late delivery
+  INSERT INTO reporting.v_vendor_scorecards (
+    supplier_id, supplier_name, supplier_code, period, period_label, vendor_group,
+    total_pos, total_lines, on_time_deliveries, in_full_deliveries, otif_deliveries, otif_pct,
+    inspection_pass_count, inspection_total_count, quality_pct,
+    expected_spend, actual_spend, price_variance_pct,
+    avg_lead_time_days, target_lead_time_days, delivery_score,
+    composite_score, composite_rank, prior_composite_score, score_trend, org_id
+  ) VALUES (
+    s1, 'Acme Supplies', 'SUP-001', '2024-04-01', 'Q2 2024', 'Manufacturing',
+    1, 2, 0, 1, 0, 0.00,
+    2, 2, 100.00,
+    940.00, 940.00, 0.00,
+    110.0, 14, 0.00,
+    45.00, 2, 93.75, -48.75, org
+  );
+  -- This was a late replacement; delivery_score = max(0, 100-(110-14)/14*100) = clamped to 0
+  -- composite = 0*0.30 + 100*0.25 + 100*0.20 + 0*0.25 = 0 + 25 + 20 + 0 = 45.00
+
+  -- Global Parts (s2): 1 PO, on time, perfect quality
+  INSERT INTO reporting.v_vendor_scorecards (
+    supplier_id, supplier_name, supplier_code, period, period_label, vendor_group,
+    total_pos, total_lines, on_time_deliveries, in_full_deliveries, otif_deliveries, otif_pct,
+    inspection_pass_count, inspection_total_count, quality_pct,
+    expected_spend, actual_spend, price_variance_pct,
+    avg_lead_time_days, target_lead_time_days, delivery_score,
+    composite_score, composite_rank, prior_composite_score, score_trend, org_id
+  ) VALUES (
+    s2, 'Global Parts', 'SUP-002', '2024-04-01', 'Q2 2024', 'Components',
+    1, 2, 1, 1, 1, 100.00,
+    2, 2, 100.00,
+    9500.00, 8550.00, -10.00,
+    14.0, 14, 100.00,
+    92.50, 1, 37.98, 54.52, org
+  );
+  -- price_score = 100 - 10 = 90
+  -- composite = 100*0.30 + 100*0.25 + 90*0.20 + 100*0.25 = 30+25+18+25 = 98.00
+  UPDATE reporting.v_vendor_scorecards SET composite_score = 98.00, score_trend = 60.02 WHERE supplier_id = s2 AND period = '2024-04-01';
+
+  -- Premier Materials (s3): 2 POs, partial/late, quality issues
+  INSERT INTO reporting.v_vendor_scorecards (
+    supplier_id, supplier_name, supplier_code, period, period_label, vendor_group,
+    total_pos, total_lines, on_time_deliveries, in_full_deliveries, otif_deliveries, otif_pct,
+    inspection_pass_count, inspection_total_count, quality_pct,
+    expected_spend, actual_spend, price_variance_pct,
+    avg_lead_time_days, target_lead_time_days, delivery_score,
+    composite_score, composite_rank, prior_composite_score, score_trend, org_id
+  ) VALUES (
+    s3, 'Premier Materials', 'SUP-003', '2024-04-01', 'Q2 2024', 'Raw Materials',
+    2, 6, 0, 0, 0, 0.00,
+    2, 6, 33.33,
+    36000.00, 20800.00, -42.22,
+    22.0, 14, 42.86,
+    29.29, 3, NULL, NULL, org
+  );
+  -- price_score = 100 - 42.22 = 57.78
+  -- delivery_score = max(0, 100-(22-14)/14*100) = 100-57.14 = 42.86
+  -- composite = 0*0.30 + 33.33*0.25 + 57.78*0.20 + 42.86*0.25 = 0+8.33+11.56+10.72 = 30.61
+  UPDATE reporting.v_vendor_scorecards SET composite_score = 30.61 WHERE supplier_id = s3 AND period = '2024-04-01';
+
+  -- Update composite ranks
+  UPDATE reporting.v_vendor_scorecards SET composite_rank = 1 WHERE period = '2024-01-01' AND supplier_id = s1;
+  UPDATE reporting.v_vendor_scorecards SET composite_rank = 2 WHERE period = '2024-01-01' AND supplier_id = s2;
+  UPDATE reporting.v_vendor_scorecards SET composite_rank = 1 WHERE period = '2024-04-01' AND supplier_id = s2;
+  UPDATE reporting.v_vendor_scorecards SET composite_rank = 2 WHERE period = '2024-04-01' AND supplier_id = s1;
+  UPDATE reporting.v_vendor_scorecards SET composite_rank = 3 WHERE period = '2024-04-01' AND supplier_id = s3;
+
+  RAISE NOTICE 'Vendor scorecard seed data inserted: 5 records for 3 suppliers across 2 periods';
+END $$;
+
+
+-- ============================================================================
+-- Cashbook: Bank reconciliation and statement line tables
+-- ============================================================================
+
+-- Statement lines (imported bank statements)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='cashbook' AND table_name='statement_lines') THEN
+    EXECUTE '
+      CREATE TABLE cashbook.statement_lines (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        bank_account_id UUID,
+        statement_date DATE NOT NULL,
+        description TEXT,
+        amount NUMERIC(12,2) NOT NULL,
+        reference TEXT,
+        match_status TEXT DEFAULT ''unmatched'',
+        matched_transaction_id UUID,
+        matched_at TIMESTAMP,
+        org_id UUID,
+        created_at TIMESTAMP DEFAULT now()
+      )';
+  END IF;
+END $$;
+
+-- Bank reconciliations (reconciliation sessions)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='cashbook' AND table_name='bank_reconciliations') THEN
+    EXECUTE '
+      CREATE TABLE cashbook.bank_reconciliations (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        bank_account_id UUID,
+        reconciliation_date DATE NOT NULL,
+        statement_balance NUMERIC(12,2),
+        book_balance NUMERIC(12,2),
+        difference NUMERIC(12,2) DEFAULT 0,
+        status TEXT DEFAULT ''in_progress'',
+        completed_at TIMESTAMP,
+        org_id UUID,
+        created_at TIMESTAMP DEFAULT now()
+      )';
+  END IF;
+END $$;
+
+-- FK constraints
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_statement_lines_bank_account' AND table_schema = 'cashbook'
+  ) THEN
+    ALTER TABLE cashbook.statement_lines
+      ADD CONSTRAINT fk_statement_lines_bank_account FOREIGN KEY (bank_account_id) REFERENCES cashbook.bank_accounts(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_reconciliations_bank_account' AND table_schema = 'cashbook'
+  ) THEN
+    ALTER TABLE cashbook.bank_reconciliations
+      ADD CONSTRAINT fk_reconciliations_bank_account FOREIGN KEY (bank_account_id) REFERENCES cashbook.bank_accounts(id);
+  END IF;
+END $$;
+
+COMMENT ON TABLE cashbook.statement_lines IS 'Imported bank statement lines for reconciliation';
+COMMENT ON TABLE cashbook.bank_reconciliations IS 'Bank reconciliation sessions tracking matched/unmatched items';
+COMMENT ON COLUMN cashbook.statement_lines.match_status IS 'Reconciliation status: matched, unmatched, partially_matched';
+COMMENT ON COLUMN cashbook.statement_lines.matched_transaction_id IS 'fk:cashbook.transactions.id Matched transaction';
+COMMENT ON COLUMN cashbook.bank_reconciliations.status IS 'Reconciliation session status: in_progress, completed';
+
+-- ============================================================================
+-- Cashbook: Seed sample data for bank accounts, statement lines, reconciliations
+-- ============================================================================
+DO $$
+DECLARE
+  org UUID := '11111111-2222-3333-4444-555555555555';
+  br UUID := 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  ba1 UUID; ba2 UUID; ba3 UUID;
+  t1 UUID; t2 UUID; t3 UUID; t4 UUID; t5 UUID;
+BEGIN
+  -- Only seed if bank_accounts table is empty
+  IF EXISTS (SELECT 1 FROM cashbook.bank_accounts LIMIT 1) THEN
+    RAISE NOTICE 'Cashbook bank accounts already seeded, skipping';
+    RETURN;
+  END IF;
+
+  -- Create bank accounts
+  INSERT INTO cashbook.bank_accounts (id, account_name, account_number, bank_name, balance, org_id)
+    VALUES (gen_random_uuid(), 'Main Operating Account', '1234567890', 'First National Bank', 285000.00, org) RETURNING id INTO ba1;
+  INSERT INTO cashbook.bank_accounts (id, account_name, account_number, bank_name, balance, org_id)
+    VALUES (gen_random_uuid(), 'Savings Account', '9876543210', 'Standard Bank', 150000.00, org) RETURNING id INTO ba2;
+  INSERT INTO cashbook.bank_accounts (id, account_name, account_number, bank_name, balance, org_id)
+    VALUES (gen_random_uuid(), 'Petty Cash Account', '5555666677', 'Nedbank', 12500.00, org) RETURNING id INTO ba3;
+
+  -- Create transactions for Main Operating Account
+  INSERT INTO cashbook.transactions (bank_account_id, transaction_date, description, amount, transaction_type, org_id)
+    VALUES (ba1, '2024-01-15', 'Customer Payment - INV-001', 15000.00, 'receipt', org) RETURNING id INTO t1;
+  INSERT INTO cashbook.transactions (bank_account_id, transaction_date, description, amount, transaction_type, org_id)
+    VALUES (ba1, '2024-01-20', 'Supplier Payment - PO-001', -8500.00, 'payment', org) RETURNING id INTO t2;
+  INSERT INTO cashbook.transactions (bank_account_id, transaction_date, description, amount, transaction_type, org_id)
+    VALUES (ba1, '2024-02-10', 'Customer Payment - INV-002', 22000.00, 'receipt', org) RETURNING id INTO t3;
+  INSERT INTO cashbook.transactions (bank_account_id, transaction_date, description, amount, transaction_type, org_id)
+    VALUES (ba1, '2024-02-15', 'Rent Payment', -12000.00, 'payment', org);
+  INSERT INTO cashbook.transactions (bank_account_id, transaction_date, description, amount, transaction_type, org_id)
+    VALUES (ba1, '2024-03-05', 'Customer Payment - INV-003', 9500.00, 'receipt', org);
+  INSERT INTO cashbook.transactions (bank_account_id, transaction_date, description, amount, transaction_type, org_id)
+    VALUES (ba1, '2024-03-10', 'Insurance Premium', -3500.00, 'payment', org);
+  INSERT INTO cashbook.transactions (bank_account_id, transaction_date, description, amount, transaction_type, org_id)
+    VALUES (ba1, '2024-04-01', 'Salary Payments', -45000.00, 'payment', org);
+  INSERT INTO cashbook.transactions (bank_account_id, transaction_date, description, amount, transaction_type, org_id)
+    VALUES (ba1, '2024-04-15', 'Customer Payment - INV-004', 31000.00, 'receipt', org);
+
+  -- Transactions for Savings Account
+  INSERT INTO cashbook.transactions (bank_account_id, transaction_date, description, amount, transaction_type, org_id)
+    VALUES (ba2, '2024-01-31', 'Interest Earned', 1250.00, 'receipt', org);
+  INSERT INTO cashbook.transactions (bank_account_id, transaction_date, description, amount, transaction_type, org_id)
+    VALUES (ba2, '2024-02-28', 'Interest Earned', 1300.00, 'receipt', org);
+  INSERT INTO cashbook.transactions (bank_account_id, transaction_date, description, amount, transaction_type, org_id)
+    VALUES (ba2, '2024-03-15', 'Transfer to Operating', -25000.00, 'transfer', org);
+
+  -- Transactions for Petty Cash
+  INSERT INTO cashbook.transactions (bank_account_id, transaction_date, description, amount, transaction_type, org_id)
+    VALUES (ba3, '2024-01-10', 'Office Supplies', -450.00, 'payment', org);
+  INSERT INTO cashbook.transactions (bank_account_id, transaction_date, description, amount, transaction_type, org_id)
+    VALUES (ba3, '2024-02-05', 'Courier Fees', -320.00, 'payment', org);
+  INSERT INTO cashbook.transactions (bank_account_id, transaction_date, description, amount, transaction_type, org_id)
+    VALUES (ba3, '2024-03-01', 'Cash Float Top-up', 5000.00, 'receipt', org);
+
+  -- Statement lines for Main Operating Account (mix of matched and unmatched)
+  INSERT INTO cashbook.statement_lines (bank_account_id, statement_date, description, amount, reference, match_status, matched_transaction_id, matched_at, org_id)
+    VALUES (ba1, '2024-01-15', 'DEPOSIT REF INV-001', 15000.00, 'DEP-001', 'matched', t1, '2024-01-16 09:00:00', org);
+  INSERT INTO cashbook.statement_lines (bank_account_id, statement_date, description, amount, reference, match_status, matched_transaction_id, matched_at, org_id)
+    VALUES (ba1, '2024-01-20', 'EFT PAYMENT PO-001', -8500.00, 'EFT-001', 'matched', t2, '2024-01-21 10:30:00', org);
+  INSERT INTO cashbook.statement_lines (bank_account_id, statement_date, description, amount, reference, match_status, matched_transaction_id, matched_at, org_id)
+    VALUES (ba1, '2024-02-10', 'DEPOSIT REF INV-002', 22000.00, 'DEP-002', 'matched', t3, '2024-02-11 08:45:00', org);
+  INSERT INTO cashbook.statement_lines (bank_account_id, statement_date, description, amount, reference, match_status, org_id)
+    VALUES (ba1, '2024-02-20', 'UNKNOWN DEPOSIT', 3500.00, 'DEP-003', 'unmatched', org);
+  INSERT INTO cashbook.statement_lines (bank_account_id, statement_date, description, amount, reference, match_status, org_id)
+    VALUES (ba1, '2024-03-01', 'BANK CHARGES FEB', -285.00, 'FEE-001', 'unmatched', org);
+  INSERT INTO cashbook.statement_lines (bank_account_id, statement_date, description, amount, reference, match_status, org_id)
+    VALUES (ba1, '2024-03-15', 'DEBIT ORDER - TELKOM', -1200.00, 'DO-001', 'unmatched', org);
+  INSERT INTO cashbook.statement_lines (bank_account_id, statement_date, description, amount, reference, match_status, org_id)
+    VALUES (ba1, '2024-04-02', 'UNKNOWN CREDIT', 7800.00, 'DEP-004', 'unmatched', org);
+  INSERT INTO cashbook.statement_lines (bank_account_id, statement_date, description, amount, reference, match_status, org_id)
+    VALUES (ba1, '2024-04-10', 'SERVICE FEE Q1', -950.00, 'FEE-002', 'unmatched', org);
+  INSERT INTO cashbook.statement_lines (bank_account_id, statement_date, description, amount, reference, match_status, org_id)
+    VALUES (ba1, '2024-05-01', 'BANK CHARGES APR', -310.00, 'FEE-003', 'unmatched', org);
+
+  -- Statement lines for Savings Account
+  INSERT INTO cashbook.statement_lines (bank_account_id, statement_date, description, amount, reference, match_status, org_id)
+    VALUES (ba2, '2024-01-31', 'INTEREST CREDIT', 1250.00, 'INT-001', 'matched', org);
+  INSERT INTO cashbook.statement_lines (bank_account_id, statement_date, description, amount, reference, match_status, org_id)
+    VALUES (ba2, '2024-02-28', 'INTEREST CREDIT', 1300.00, 'INT-002', 'matched', org);
+  INSERT INTO cashbook.statement_lines (bank_account_id, statement_date, description, amount, reference, match_status, org_id)
+    VALUES (ba2, '2024-03-15', 'TRANSFER OUT - OPERATING', -25000.00, 'TRF-001', 'matched', org);
+  INSERT INTO cashbook.statement_lines (bank_account_id, statement_date, description, amount, reference, match_status, org_id)
+    VALUES (ba2, '2024-04-01', 'MONTHLY ADMIN FEE', -75.00, 'FEE-004', 'unmatched', org);
+
+  -- Statement lines for Petty Cash Account
+  INSERT INTO cashbook.statement_lines (bank_account_id, statement_date, description, amount, reference, match_status, org_id)
+    VALUES (ba3, '2024-01-10', 'CARD PURCHASE - OFFICE DEPOT', -450.00, 'POS-001', 'matched', org);
+  INSERT INTO cashbook.statement_lines (bank_account_id, statement_date, description, amount, reference, match_status, org_id)
+    VALUES (ba3, '2024-02-05', 'CARD PURCHASE - POSTNET', -320.00, 'POS-002', 'matched', org);
+  INSERT INTO cashbook.statement_lines (bank_account_id, statement_date, description, amount, reference, match_status, org_id)
+    VALUES (ba3, '2024-03-01', 'CASH DEPOSIT', 5000.00, 'DEP-005', 'matched', org);
+  INSERT INTO cashbook.statement_lines (bank_account_id, statement_date, description, amount, reference, match_status, org_id)
+    VALUES (ba3, '2024-03-20', 'UNKNOWN DEBIT', -180.00, 'UNK-001', 'unmatched', org);
+
+  -- Bank reconciliations
+  INSERT INTO cashbook.bank_reconciliations (bank_account_id, reconciliation_date, statement_balance, book_balance, difference, status, completed_at, org_id)
+    VALUES (ba1, '2024-01-31', 291500.00, 291500.00, 0.00, 'completed', '2024-02-02 14:00:00', org);
+  INSERT INTO cashbook.bank_reconciliations (bank_account_id, reconciliation_date, statement_balance, book_balance, difference, status, completed_at, org_id)
+    VALUES (ba1, '2024-02-29', 306215.00, 303500.00, 2715.00, 'completed', '2024-03-03 10:00:00', org);
+  INSERT INTO cashbook.bank_reconciliations (bank_account_id, reconciliation_date, statement_balance, book_balance, difference, status, org_id)
+    VALUES (ba1, '2024-03-31', 312850.00, 305850.00, 7000.00, 'in_progress', org);
+  INSERT INTO cashbook.bank_reconciliations (bank_account_id, reconciliation_date, statement_balance, book_balance, difference, status, org_id)
+    VALUES (ba2, '2024-03-31', 127475.00, 127550.00, -75.00, 'in_progress', org);
+  INSERT INTO cashbook.bank_reconciliations (bank_account_id, reconciliation_date, statement_balance, book_balance, difference, status, org_id)
+    VALUES (ba3, '2024-03-31', 16550.00, 16730.00, -180.00, 'in_progress', org);
+
+  RAISE NOTICE 'Cashbook seed data inserted: 3 bank accounts, 15 transactions, 17 statement lines, 5 reconciliations';
 END $$;
