@@ -35,6 +35,7 @@ DROP VIEW IF EXISTS reporting.v_pick_pack_performance CASCADE;
 DROP VIEW IF EXISTS reporting.v_otif CASCADE;
 DROP VIEW IF EXISTS reporting.v_procurement_otif CASCADE;
 DROP VIEW IF EXISTS reporting.v_purchase_price_variance CASCADE;
+DROP VIEW IF EXISTS reporting.v_open_po_aging CASCADE;
 DROP VIEW IF EXISTS reporting.v_ap_aging CASCADE;
 DROP VIEW IF EXISTS reporting.v_budget_variance CASCADE;
 DROP VIEW IF EXISTS reporting.v_pnl CASCADE;
@@ -1550,7 +1551,65 @@ COMMENT ON COLUMN reporting.v_purchase_price_variance.branch_id IS 'Branch ID fo
 
 
 -- ============================================================================
--- 35. v_bank_reconciliation_status — Reconciliation progress per bank account
+-- 35. v_open_po_aging — Open/outstanding PO aging analysis
+-- ============================================================================
+CREATE VIEW reporting.v_open_po_aging AS
+SELECT
+  po.id                                                       AS po_id,
+  po.po_number,
+  po.order_date,
+  po.expected_date,
+  po.total_amount,
+  po.status,
+  s.id                                                        AS supplier_id,
+  s.first_name || ' ' || s.last_name                         AS supplier_name,
+  COALESCE(pol_agg.line_count, 0)                             AS line_count,
+  COALESCE(pol_agg.total_ordered_qty, 0)                      AS total_ordered_qty,
+  COALESCE(pol_agg.total_received_qty, 0)                     AS total_received_qty,
+  CURRENT_DATE - po.order_date                                AS days_open,
+  CASE
+    WHEN po.expected_date < CURRENT_DATE
+      THEN CURRENT_DATE - po.expected_date
+    ELSE 0
+  END                                                         AS days_overdue,
+  CASE
+    WHEN po.expected_date >= CURRENT_DATE THEN 'Not Due'
+    WHEN CURRENT_DATE - po.expected_date <= 14 THEN '0-14 Days Overdue'
+    WHEN CURRENT_DATE - po.expected_date <= 30 THEN '15-30 Days Overdue'
+    WHEN CURRENT_DATE - po.expected_date <= 60 THEN '31-60 Days Overdue'
+    ELSE '60+ Days Overdue'
+  END                                                         AS aging_bucket,
+  CASE
+    WHEN po.expected_date >= CURRENT_DATE THEN 'On Track'
+    ELSE 'Overdue'
+  END                                                         AS delivery_status,
+  po.org_id,
+  po.branch_id
+FROM procurement.purchase_orders po
+LEFT JOIN core.contacts s ON s.id = po.supplier_id
+LEFT JOIN LATERAL (
+  SELECT
+    COUNT(*)               AS line_count,
+    SUM(pol.quantity)       AS total_ordered_qty,
+    SUM(pol.received_qty)  AS total_received_qty
+  FROM procurement.purchase_order_lines pol
+  WHERE pol.po_id = po.id
+) pol_agg ON TRUE
+WHERE po.status IN ('sent', 'partial', 'approved');
+
+COMMENT ON VIEW  reporting.v_open_po_aging IS 'Open purchase orders aged by order date and expected delivery date for backlog and supply risk analysis';
+COMMENT ON COLUMN reporting.v_open_po_aging.days_open IS 'Days since PO was created';
+COMMENT ON COLUMN reporting.v_open_po_aging.days_overdue IS 'Days past expected delivery date (0 if not overdue)';
+COMMENT ON COLUMN reporting.v_open_po_aging.aging_bucket IS 'Overdue aging: Not Due, 0-14, 15-30, 31-60, 60+ Days Overdue';
+COMMENT ON COLUMN reporting.v_open_po_aging.delivery_status IS 'On Track or Overdue';
+COMMENT ON COLUMN reporting.v_open_po_aging.supplier_id IS 'fk:core.contacts.id Supplier FK';
+COMMENT ON COLUMN reporting.v_open_po_aging.po_id IS 'fk:procurement.purchase_orders.id Purchase order PK';
+COMMENT ON COLUMN reporting.v_open_po_aging.org_id IS 'Organization ID for RLS filtering';
+COMMENT ON COLUMN reporting.v_open_po_aging.branch_id IS 'Branch ID for RLS filtering';
+
+
+-- ============================================================================
+-- 36. v_bank_reconciliation_status — Reconciliation progress per bank account
 -- ============================================================================
 
 CREATE VIEW reporting.v_bank_reconciliation_status AS

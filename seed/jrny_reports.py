@@ -22,6 +22,8 @@ Reports created:
     - Stock Below Reorder Point (alert table)
     - Purchase Order Status (PO pipeline by status)
     - Supplier Spend Analysis (bar chart + detail table)
+    - Procurement OTIF (supplier delivery on-time in-full metrics)
+    - Purchase Price Variance (PPV KPI, by supplier/product, line detail)
 
 All reports use parameterized queries with:
     - {{start_date}} / {{end_date}} for date range filtering
@@ -727,6 +729,114 @@ ORDER BY month;
         ]},
         "tags": ["procurement", "jrny-report"],
     },
+    # ---- Procurement: Purchase Price Variance (PPV) ----
+    "ppv_kpi": {
+        "name": "PPV - KPI Summary",
+        "description": "Purchase Price Variance KPI summary: total PPV, average %, favourable vs unfavourable breakdown.",
+        "query": """
+SELECT
+    COUNT(*) AS total_lines,
+    ROUND(SUM(ppv_amount), 2) AS total_ppv,
+    ROUND(AVG(ppv_pct), 2) AS avg_ppv_pct,
+    SUM(CASE WHEN ppv_amount > 0 THEN ppv_amount ELSE 0 END)::numeric(12,2) AS unfavourable_total,
+    SUM(CASE WHEN ppv_amount < 0 THEN ABS(ppv_amount) ELSE 0 END)::numeric(12,2) AS favourable_total,
+    SUM(po_line_value)::numeric(12,2) AS total_po_value,
+    SUM(grn_line_value)::numeric(12,2) AS total_grn_value
+FROM reporting.v_purchase_price_variance
+WHERE receipt_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%')
+  AND ('{{ product_code }}' = '' OR product_code ILIKE '%' || '{{ product_code }}' || '%')
+""".strip(),
+        "options": {"parameters": DATE_PARAMS + [
+            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
+            {"name": "product_code", "title": "Product Code", "type": "text", "value": ""},
+        ]},
+        "tags": ["procurement", "jrny-report"],
+    },
+    "ppv_by_supplier": {
+        "name": "PPV - By Supplier",
+        "description": "Purchase Price Variance breakdown by supplier showing favourable and unfavourable variances.",
+        "query": """
+SELECT
+    supplier_name,
+    COUNT(*) AS receipt_lines,
+    SUM(po_line_value)::numeric(12,2) AS total_po_value,
+    SUM(grn_line_value)::numeric(12,2) AS total_grn_value,
+    ROUND(SUM(ppv_amount), 2) AS total_ppv,
+    ROUND(AVG(ppv_pct), 2) AS avg_ppv_pct,
+    SUM(CASE WHEN ppv_amount > 0 THEN ppv_amount ELSE 0 END)::numeric(12,2) AS unfavourable,
+    SUM(CASE WHEN ppv_amount < 0 THEN ABS(ppv_amount) ELSE 0 END)::numeric(12,2) AS favourable
+FROM reporting.v_purchase_price_variance
+WHERE receipt_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%')
+  AND ('{{ product_code }}' = '' OR product_code ILIKE '%' || '{{ product_code }}' || '%')
+GROUP BY supplier_name
+ORDER BY ABS(SUM(ppv_amount)) DESC
+""".strip(),
+        "options": {"parameters": DATE_PARAMS + [
+            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
+            {"name": "product_code", "title": "Product Code", "type": "text", "value": ""},
+        ]},
+        "tags": ["procurement", "jrny-report"],
+    },
+    "ppv_by_product": {
+        "name": "PPV - By Product",
+        "description": "Purchase Price Variance breakdown by product showing average PO vs GRN prices and total variance.",
+        "query": """
+SELECT
+    product_code,
+    product_name,
+    COUNT(*) AS receipt_lines,
+    ROUND(AVG(po_unit_cost), 2) AS avg_po_price,
+    ROUND(AVG(grn_unit_cost), 2) AS avg_grn_price,
+    ROUND(AVG(ppv_per_unit), 2) AS avg_ppv_per_unit,
+    ROUND(SUM(ppv_amount), 2) AS total_ppv,
+    ROUND(AVG(ppv_pct), 2) AS avg_ppv_pct,
+    SUM(received_qty)::numeric(12,2) AS total_received_qty
+FROM reporting.v_purchase_price_variance
+WHERE receipt_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%')
+  AND ('{{ product_code }}' = '' OR product_code ILIKE '%' || '{{ product_code }}' || '%')
+GROUP BY product_code, product_name
+ORDER BY ABS(SUM(ppv_amount)) DESC
+""".strip(),
+        "options": {"parameters": DATE_PARAMS + [
+            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
+            {"name": "product_code", "title": "Product Code", "type": "text", "value": ""},
+        ]},
+        "tags": ["procurement", "jrny-report"],
+    },
+    "ppv_detail": {
+        "name": "PPV - Line Detail",
+        "description": "Purchase Price Variance at individual receipt line level showing PO vs GRN unit costs.",
+        "query": """
+SELECT
+    po_number,
+    grn_number,
+    supplier_name,
+    product_code,
+    product_name,
+    receipt_date,
+    ordered_qty,
+    received_qty,
+    po_unit_cost,
+    grn_unit_cost,
+    ppv_per_unit,
+    ppv_amount,
+    ppv_pct,
+    variance_type
+FROM reporting.v_purchase_price_variance
+WHERE receipt_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%')
+  AND ('{{ product_code }}' = '' OR product_code ILIKE '%' || '{{ product_code }}' || '%')
+ORDER BY ABS(ppv_amount) DESC
+""".strip(),
+        "options": {"parameters": DATE_PARAMS + [
+            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
+            {"name": "product_code", "title": "Product Code", "type": "text", "value": ""},
+        ]},
+        "tags": ["procurement", "jrny-report"],
+    },
     # ---- Procurement: Vendor Scorecard ----
     "vendor_scorecard": {
         "name": "Vendor Scorecard - Performance Rankings",
@@ -943,6 +1053,98 @@ SELECT
 FROM procurement.rfq_requests rfq
 LEFT JOIN procurement.rfq_responses r ON r.rfq_id = rfq.id
 WHERE rfq.rfq_date BETWEEN '{{ start_date }}' AND '{{ end_date }}';
+""".strip(),
+        "options": {"parameters": DATE_PARAMS},
+        "tags": ["procurement", "jrny-report", "report:procurement"],
+    },
+    # ---- Procurement: Lead Time Analysis ----
+    "procurement_lead_time_vendor": {
+        "name": "Procurement Lead Time - By Vendor",
+        "description": "Average, min, and max lead time (PO order date to goods receipt date) by vendor. Identifies slow suppliers and on-time delivery performance.",
+        "query": """
+SELECT
+    s.supplier_name,
+    s.supplier_code,
+    COUNT(gr.id) AS total_receipts,
+    ROUND(AVG(gr.receipt_date - po.order_date), 1) AS avg_lead_time_days,
+    MIN(gr.receipt_date - po.order_date) AS min_lead_time_days,
+    MAX(gr.receipt_date - po.order_date) AS max_lead_time_days,
+    ROUND(STDDEV(gr.receipt_date - po.order_date)::numeric, 1) AS stddev_lead_time,
+    SUM(CASE WHEN gr.receipt_date <= po.expected_date THEN 1 ELSE 0 END) AS on_time_count,
+    SUM(CASE WHEN gr.receipt_date > po.expected_date THEN 1 ELSE 0 END) AS late_count,
+    ROUND(100.0 * SUM(CASE WHEN gr.receipt_date <= po.expected_date THEN 1 ELSE 0 END)
+        / NULLIF(COUNT(gr.id), 0), 1) AS on_time_pct
+FROM inventory.goods_receipts gr
+JOIN procurement.purchase_orders po ON po.id = gr.po_id
+JOIN reporting.v_suppliers s ON s.id = gr.supplier_id
+WHERE po.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+GROUP BY s.supplier_name, s.supplier_code
+ORDER BY avg_lead_time_days DESC;
+""".strip(),
+        "options": {"parameters": DATE_PARAMS},
+        "tags": ["procurement", "jrny-report", "report:procurement"],
+    },
+    "procurement_lead_time_category": {
+        "name": "Procurement Lead Time - By Product Category",
+        "description": "Lead time statistics by product category to identify which categories take longest to receive and support safety stock calculations.",
+        "query": """
+SELECT
+    p.category AS product_category,
+    COUNT(DISTINCT gr.id) AS total_receipts,
+    COUNT(grl.id) AS total_lines,
+    ROUND(AVG(gr.receipt_date - po.order_date), 1) AS avg_lead_time_days,
+    MIN(gr.receipt_date - po.order_date) AS min_lead_time_days,
+    MAX(gr.receipt_date - po.order_date) AS max_lead_time_days,
+    ROUND(STDDEV(gr.receipt_date - po.order_date)::numeric, 1) AS stddev_lead_time,
+    ROUND(AVG(gr.receipt_date - po.order_date)
+        + 2 * COALESCE(STDDEV(gr.receipt_date - po.order_date), 0), 0) AS safety_lead_time_days
+FROM inventory.goods_receipt_lines grl
+JOIN inventory.goods_receipts gr ON gr.id = grl.grn_id
+JOIN procurement.purchase_orders po ON po.id = gr.po_id
+JOIN inventory.products p ON p.id = grl.product_id
+WHERE po.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+GROUP BY p.category
+ORDER BY avg_lead_time_days DESC;
+""".strip(),
+        "options": {"parameters": DATE_PARAMS},
+        "tags": ["procurement", "jrny-report", "report:procurement"],
+    },
+    "procurement_lead_time_trend": {
+        "name": "Procurement Lead Time - Monthly Trend",
+        "description": "Monthly trend of average lead time by vendor, showing how delivery performance changes over time.",
+        "query": """
+SELECT
+    TO_CHAR(DATE_TRUNC('month', po.order_date), 'YYYY-MM') AS order_month,
+    s.supplier_name,
+    COUNT(gr.id) AS receipts,
+    ROUND(AVG(gr.receipt_date - po.order_date), 1) AS avg_lead_time_days,
+    ROUND(AVG(po.expected_date - po.order_date), 1) AS avg_expected_days,
+    ROUND(AVG(gr.receipt_date - po.expected_date), 1) AS avg_days_variance
+FROM inventory.goods_receipts gr
+JOIN procurement.purchase_orders po ON po.id = gr.po_id
+JOIN reporting.v_suppliers s ON s.id = gr.supplier_id
+WHERE po.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+GROUP BY DATE_TRUNC('month', po.order_date), TO_CHAR(DATE_TRUNC('month', po.order_date), 'YYYY-MM'), s.supplier_name
+ORDER BY order_month, s.supplier_name;
+""".strip(),
+        "options": {"parameters": DATE_PARAMS},
+        "tags": ["procurement", "jrny-report", "report:procurement"],
+    },
+    "procurement_lead_time_kpi": {
+        "name": "Procurement Lead Time - KPIs",
+        "description": "Summary KPIs for procurement lead times: overall average, on-time delivery rate, total receipts.",
+        "query": """
+SELECT
+    COUNT(gr.id) AS total_receipts,
+    ROUND(AVG(gr.receipt_date - po.order_date), 1) AS avg_lead_time_days,
+    MIN(gr.receipt_date - po.order_date) AS fastest_lead_time,
+    MAX(gr.receipt_date - po.order_date) AS slowest_lead_time,
+    ROUND(100.0 * SUM(CASE WHEN gr.receipt_date <= po.expected_date THEN 1 ELSE 0 END)
+        / NULLIF(COUNT(gr.id), 0), 1) AS on_time_delivery_pct,
+    COUNT(DISTINCT gr.supplier_id) AS total_vendors
+FROM inventory.goods_receipts gr
+JOIN procurement.purchase_orders po ON po.id = gr.po_id
+WHERE po.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}';
 """.strip(),
         "options": {"parameters": DATE_PARAMS},
         "tags": ["procurement", "jrny-report", "report:procurement"],
@@ -1608,6 +1810,185 @@ ORDER BY total_unmatched_value DESC;
         "options": {"parameters": []},
         "tags": ["cashbook", "jrny-report"],
     },
+    # ---- CRM / Sales ----
+    "customer_master_summary": {
+        "name": "Customer Master Summary",
+        "description": "Active customers by group with credit limit utilization, payment behavior, and account health. CRM overview for account management and credit control teams.",
+        "query": """
+WITH customer_outstanding AS (
+    SELECT
+        inv.customer_id,
+        SUM(inv.balance_due) AS total_outstanding,
+        COUNT(*) FILTER (WHERE inv.status = 'overdue') AS overdue_invoice_count,
+        MAX(CASE WHEN inv.status = 'overdue' THEN CURRENT_DATE - inv.due_date ELSE 0 END) AS max_days_overdue
+    FROM finance.invoices inv
+    WHERE inv.balance_due > 0
+    GROUP BY inv.customer_id
+),
+customer_payments AS (
+    SELECT
+        cp.customer_id,
+        COUNT(*) AS payment_count,
+        MAX(cp.payment_date) AS last_payment_date
+    FROM finance.customer_payments cp
+    GROUP BY cp.customer_id
+),
+payment_behavior AS (
+    SELECT
+        inv.customer_id,
+        AVG(CASE WHEN inv.status = 'paid' THEN
+            GREATEST(0, (SELECT MIN(cp2.payment_date) FROM finance.customer_payments cp2
+                WHERE cp2.customer_id = inv.customer_id AND cp2.payment_date >= inv.invoice_date)
+                - inv.due_date)
+            ELSE NULL END
+        ) AS avg_days_to_pay
+    FROM finance.invoices inv
+    WHERE inv.status IN ('paid', 'overdue')
+    GROUP BY inv.customer_id
+),
+customer_orders AS (
+    SELECT
+        so.customer_id,
+        COUNT(*) AS order_count,
+        SUM(so.total_amount) AS total_order_value,
+        MAX(so.order_date) AS last_order_date
+    FROM sales.sales_orders so
+    GROUP BY so.customer_id
+)
+SELECT
+    c.first_name || ' ' || c.last_name AS customer_name,
+    COALESCE(bg.group_name, 'Ungrouped') AS customer_group,
+    COALESCE(c.credit_limit, 0) AS credit_limit,
+    COALESCE(co.total_outstanding, 0) AS total_outstanding,
+    CASE
+        WHEN COALESCE(c.credit_limit, 0) > 0
+        THEN ROUND(100.0 * COALESCE(co.total_outstanding, 0) / c.credit_limit, 1)
+        ELSE 0
+    END AS credit_utilization_pct,
+    COALESCE(cp.payment_count, 0) AS payment_count,
+    ROUND(COALESCE(pb.avg_days_to_pay, 0), 0) AS avg_days_to_pay,
+    cp.last_payment_date,
+    COALESCE(cor.order_count, 0) AS order_count,
+    COALESCE(cor.total_order_value, 0) AS total_order_value,
+    cor.last_order_date,
+    CASE
+        WHEN COALESCE(co.max_days_overdue, 0) > 60
+             OR (c.credit_limit > 0 AND COALESCE(co.total_outstanding, 0) > c.credit_limit)
+            THEN 'Risk'
+        WHEN COALESCE(co.max_days_overdue, 0) > 30
+             OR (c.credit_limit > 0 AND COALESCE(co.total_outstanding, 0) > c.credit_limit * 0.8)
+             OR COALESCE(pb.avg_days_to_pay, 0) > 45
+            THEN 'Watch'
+        ELSE 'Good'
+    END AS account_health
+FROM core.contacts c
+LEFT JOIN crm.customer_buying_groups cbg ON cbg.customer_id = c.id
+LEFT JOIN crm.buying_groups bg ON bg.id = cbg.buying_group_id
+LEFT JOIN customer_outstanding co ON co.customer_id = c.id
+LEFT JOIN customer_payments cp ON cp.customer_id = c.id
+LEFT JOIN payment_behavior pb ON pb.customer_id = c.id
+LEFT JOIN customer_orders cor ON cor.customer_id = c.id
+WHERE EXISTS (
+    SELECT 1 FROM sales.sales_orders so2 WHERE so2.customer_id = c.id
+    UNION ALL
+    SELECT 1 FROM finance.invoices inv2 WHERE inv2.customer_id = c.id
+)
+AND ('{{ customer_group }}' = '' OR COALESCE(bg.group_name, 'Ungrouped') = '{{ customer_group }}')
+AND ('{{ health_status }}' = '' OR
+    CASE
+        WHEN COALESCE(co.max_days_overdue, 0) > 60
+             OR (c.credit_limit > 0 AND COALESCE(co.total_outstanding, 0) > c.credit_limit)
+            THEN 'Risk'
+        WHEN COALESCE(co.max_days_overdue, 0) > 30
+             OR (c.credit_limit > 0 AND COALESCE(co.total_outstanding, 0) > c.credit_limit * 0.8)
+             OR COALESCE(pb.avg_days_to_pay, 0) > 45
+            THEN 'Watch'
+        ELSE 'Good'
+    END = '{{ health_status }}'
+)
+ORDER BY total_outstanding DESC NULLS LAST;
+""".strip(),
+        "options": {
+            "parameters": [
+                {
+                    "name": "customer_group",
+                    "title": "Customer Group",
+                    "type": "text",
+                    "value": "",
+                },
+                {
+                    "name": "health_status",
+                    "title": "Health Status",
+                    "type": "text",
+                    "value": "",
+                },
+            ]
+        },
+        "tags": ["sales", "jrny-report", "report:sales"],
+    },
+    "customer_master_health_summary": {
+        "name": "Customer Master Summary - Health Distribution",
+        "description": "Aggregated customer count by health status for pie chart visualization.",
+        "query": """
+WITH customer_outstanding AS (
+    SELECT
+        inv.customer_id,
+        SUM(inv.balance_due) AS total_outstanding,
+        MAX(CASE WHEN inv.status = 'overdue' THEN CURRENT_DATE - inv.due_date ELSE 0 END) AS max_days_overdue
+    FROM finance.invoices inv
+    WHERE inv.balance_due > 0
+    GROUP BY inv.customer_id
+),
+payment_behavior AS (
+    SELECT
+        inv.customer_id,
+        AVG(CASE WHEN inv.status = 'paid' THEN
+            GREATEST(0, (SELECT MIN(cp2.payment_date) FROM finance.customer_payments cp2
+                WHERE cp2.customer_id = inv.customer_id AND cp2.payment_date >= inv.invoice_date)
+                - inv.due_date)
+            ELSE NULL END
+        ) AS avg_days_to_pay
+    FROM finance.invoices inv
+    WHERE inv.status IN ('paid', 'overdue')
+    GROUP BY inv.customer_id
+),
+customer_health AS (
+    SELECT
+        c.id,
+        CASE
+            WHEN COALESCE(co.max_days_overdue, 0) > 60
+                 OR (c.credit_limit > 0 AND COALESCE(co.total_outstanding, 0) > c.credit_limit)
+                THEN 'Risk'
+            WHEN COALESCE(co.max_days_overdue, 0) > 30
+                 OR (c.credit_limit > 0 AND COALESCE(co.total_outstanding, 0) > c.credit_limit * 0.8)
+                 OR COALESCE(pb.avg_days_to_pay, 0) > 45
+                THEN 'Watch'
+            ELSE 'Good'
+        END AS account_health
+    FROM core.contacts c
+    LEFT JOIN customer_outstanding co ON co.customer_id = c.id
+    LEFT JOIN payment_behavior pb ON pb.customer_id = c.id
+    WHERE EXISTS (
+        SELECT 1 FROM sales.sales_orders so2 WHERE so2.customer_id = c.id
+        UNION ALL
+        SELECT 1 FROM finance.invoices inv2 WHERE inv2.customer_id = c.id
+    )
+)
+SELECT
+    account_health,
+    COUNT(*) AS customer_count
+FROM customer_health
+GROUP BY account_health
+ORDER BY
+    CASE account_health
+        WHEN 'Good' THEN 1
+        WHEN 'Watch' THEN 2
+        WHEN 'Risk' THEN 3
+    END;
+""".strip(),
+        "options": {"parameters": []},
+        "tags": ["sales", "jrny-report", "report:sales"],
+    },
 }
 
 
@@ -2269,6 +2650,155 @@ VISUALIZATIONS = {
             },
         },
     ],
+    "ppv_kpi": [
+        {
+            "name": "Total PPV",
+            "type": "COUNTER",
+            "options": {
+                "counterLabel": "Total Price Variance",
+                "counterColName": "total_ppv",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 2,
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0.00",
+                "stringPrefix": "R ",
+            },
+        },
+        {
+            "name": "Avg PPV %",
+            "type": "COUNTER",
+            "options": {
+                "counterLabel": "Average Variance %",
+                "counterColName": "avg_ppv_pct",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 2,
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0.00",
+                "stringSuffix": "%",
+            },
+        },
+        {
+            "name": "Unfavourable PPV",
+            "type": "COUNTER",
+            "options": {
+                "counterLabel": "Unfavourable (Cost Up)",
+                "counterColName": "unfavourable_total",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 2,
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0.00",
+                "stringPrefix": "R ",
+            },
+        },
+    ],
+    "ppv_by_supplier": [
+        {
+            "name": "PPV by Supplier (Bar)",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "bar",
+                "columnMapping": {
+                    "supplier_name": "x",
+                    "unfavourable": "y",
+                    "favourable": "y",
+                },
+                "seriesOptions": {
+                    "unfavourable": {"type": "bar", "yAxis": 0, "name": "Unfavourable", "color": "#dc2626"},
+                    "favourable": {"type": "bar", "yAxis": 0, "name": "Favourable", "color": "#16a34a"},
+                },
+                "sortX": True,
+                "legend": {"enabled": True},
+                "xAxis": {"type": "category"},
+                "yAxis": [{"type": "linear", "title": {"text": "Amount (R)"}}],
+                "series": {"stacking": None},
+            },
+        },
+        {
+            "name": "PPV Supplier Detail Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "supplier_name", "title": "Supplier", "visible": True},
+                    {"name": "receipt_lines", "title": "Lines", "visible": True, "alignContent": "right"},
+                    {"name": "total_po_value", "title": "PO Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "total_grn_value", "title": "GRN Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "total_ppv", "title": "Total PPV", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "avg_ppv_pct", "title": "Avg PPV %", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "unfavourable", "title": "Unfavourable", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "favourable", "title": "Favourable", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                ],
+            },
+        },
+    ],
+    "ppv_by_product": [
+        {
+            "name": "PPV by Product (Bar)",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "bar",
+                "columnMapping": {
+                    "product_code": "x",
+                    "total_ppv": "y",
+                },
+                "seriesOptions": {
+                    "total_ppv": {"type": "bar", "yAxis": 0, "name": "Total PPV (R)", "color": "#7c3aed"},
+                },
+                "sortX": True,
+                "legend": {"enabled": True},
+                "xAxis": {"type": "category"},
+                "yAxis": [{"type": "linear", "title": {"text": "PPV Amount (R)"}}],
+                "series": {"stacking": None},
+            },
+        },
+        {
+            "name": "PPV Product Detail Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "product_code", "title": "Product Code", "visible": True},
+                    {"name": "product_name", "title": "Product Name", "visible": True},
+                    {"name": "receipt_lines", "title": "Lines", "visible": True, "alignContent": "right"},
+                    {"name": "avg_po_price", "title": "Avg PO Price", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "avg_grn_price", "title": "Avg GRN Price", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "avg_ppv_per_unit", "title": "Avg PPV/Unit", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "total_ppv", "title": "Total PPV", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "avg_ppv_pct", "title": "Avg PPV %", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "total_received_qty", "title": "Total Qty", "visible": True, "displayAs": "number", "numberFormat": "0,0", "alignContent": "right"},
+                ],
+            },
+        },
+    ],
+    "ppv_detail": [
+        {
+            "name": "PPV Line Detail Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "po_number", "title": "PO #", "visible": True},
+                    {"name": "grn_number", "title": "GRN #", "visible": True},
+                    {"name": "supplier_name", "title": "Supplier", "visible": True},
+                    {"name": "product_code", "title": "Product", "visible": True},
+                    {"name": "receipt_date", "title": "Receipt Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "received_qty", "title": "Qty", "visible": True, "alignContent": "right"},
+                    {"name": "po_unit_cost", "title": "PO Price", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "grn_unit_cost", "title": "GRN Price", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "ppv_per_unit", "title": "PPV/Unit", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "ppv_amount", "title": "PPV Total", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "ppv_pct", "title": "PPV %", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "variance_type", "title": "Type", "visible": True},
+                ],
+            },
+        },
+    ],
     "vendor_scorecard": [
         {
             "name": "Vendor Performance Rankings (Table)",
@@ -2474,6 +3004,154 @@ VISUALIZATIONS = {
                 "targetRowNumber": 1,
                 "stringDecimal": 1,
                 "stringSuffix": " days",
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0.0",
+            },
+        },
+    ],
+    "procurement_lead_time_vendor": [
+        {
+            "name": "Lead Time by Vendor (Table)",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "supplier_name", "title": "Vendor", "visible": True},
+                    {"name": "supplier_code", "title": "Code", "visible": True},
+                    {"name": "total_receipts", "title": "Receipts", "visible": True, "alignContent": "right"},
+                    {"name": "avg_lead_time_days", "title": "Avg Lead Time (d)", "visible": True, "displayAs": "number", "numberFormat": "0,0.0", "alignContent": "right"},
+                    {"name": "min_lead_time_days", "title": "Min (d)", "visible": True, "alignContent": "right"},
+                    {"name": "max_lead_time_days", "title": "Max (d)", "visible": True, "alignContent": "right"},
+                    {"name": "stddev_lead_time", "title": "Std Dev", "visible": True, "displayAs": "number", "numberFormat": "0,0.0", "alignContent": "right"},
+                    {"name": "on_time_count", "title": "On Time", "visible": True, "alignContent": "right"},
+                    {"name": "late_count", "title": "Late", "visible": True, "alignContent": "right"},
+                    {"name": "on_time_pct", "title": "On-Time %", "visible": True, "displayAs": "number", "numberFormat": "0,0.0", "alignContent": "right"},
+                ],
+            },
+        },
+        {
+            "name": "Avg Lead Time by Vendor (Bar)",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "column",
+                "columnMapping": {
+                    "supplier_name": "x",
+                    "avg_lead_time_days": "y",
+                    "on_time_pct": "y",
+                },
+                "seriesOptions": {
+                    "avg_lead_time_days": {"type": "column", "yAxis": 0, "name": "Avg Lead Time (days)", "color": "#2563eb"},
+                    "on_time_pct": {"type": "line", "yAxis": 1, "name": "On-Time %", "color": "#16a34a"},
+                },
+                "xAxis": {"type": "category", "labels": {"enabled": True}},
+                "yAxis": [
+                    {"type": "linear", "title": {"text": "Days"}},
+                    {"type": "linear", "title": {"text": "On-Time %"}, "opposite": True},
+                ],
+                "series": {"stacking": None},
+                "sortX": True,
+                "legend": {"enabled": True},
+            },
+        },
+    ],
+    "procurement_lead_time_category": [
+        {
+            "name": "Lead Time by Category (Table)",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "product_category", "title": "Category", "visible": True},
+                    {"name": "total_receipts", "title": "Receipts", "visible": True, "alignContent": "right"},
+                    {"name": "total_lines", "title": "Lines", "visible": True, "alignContent": "right"},
+                    {"name": "avg_lead_time_days", "title": "Avg Lead Time (d)", "visible": True, "displayAs": "number", "numberFormat": "0,0.0", "alignContent": "right"},
+                    {"name": "min_lead_time_days", "title": "Min (d)", "visible": True, "alignContent": "right"},
+                    {"name": "max_lead_time_days", "title": "Max (d)", "visible": True, "alignContent": "right"},
+                    {"name": "stddev_lead_time", "title": "Std Dev", "visible": True, "displayAs": "number", "numberFormat": "0,0.0", "alignContent": "right"},
+                    {"name": "safety_lead_time_days", "title": "Safety Lead Time (d)", "visible": True, "alignContent": "right"},
+                ],
+            },
+        },
+        {
+            "name": "Lead Time by Category (Bar)",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "column",
+                "columnMapping": {
+                    "product_category": "x",
+                    "avg_lead_time_days": "y",
+                    "safety_lead_time_days": "y",
+                },
+                "seriesOptions": {
+                    "avg_lead_time_days": {"type": "column", "yAxis": 0, "name": "Avg Lead Time", "color": "#2563eb"},
+                    "safety_lead_time_days": {"type": "column", "yAxis": 0, "name": "Safety Lead Time", "color": "#dc2626"},
+                },
+                "xAxis": {"type": "category", "labels": {"enabled": True}},
+                "yAxis": [{"type": "linear", "title": {"text": "Days"}}],
+                "series": {"stacking": None},
+                "sortX": True,
+                "legend": {"enabled": True},
+            },
+        },
+    ],
+    "procurement_lead_time_trend": [
+        {
+            "name": "Lead Time Trend by Vendor (Line)",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "line",
+                "columnMapping": {
+                    "order_month": "x",
+                    "avg_lead_time_days": "y",
+                    "supplier_name": "series",
+                },
+                "seriesOptions": {},
+                "xAxis": {"type": "category", "labels": {"enabled": True}},
+                "yAxis": [{"type": "linear", "title": {"text": "Avg Lead Time (days)"}}],
+                "series": {"stacking": None},
+                "sortX": True,
+                "legend": {"enabled": True},
+            },
+        },
+    ],
+    "procurement_lead_time_kpi": [
+        {
+            "name": "Total Receipts",
+            "type": "COUNTER",
+            "options": {
+                "counterColName": "total_receipts",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 0,
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0",
+            },
+        },
+        {
+            "name": "Avg Lead Time",
+            "type": "COUNTER",
+            "options": {
+                "counterColName": "avg_lead_time_days",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 1,
+                "stringSuffix": " days",
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0.0",
+            },
+        },
+        {
+            "name": "On-Time Delivery Rate",
+            "type": "COUNTER",
+            "options": {
+                "counterColName": "on_time_delivery_pct",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 1,
+                "stringSuffix": "%",
                 "stringDecChar": ".",
                 "stringThouSep": ",",
                 "tooltipFormat": "0,0.0",
@@ -3133,6 +3811,54 @@ VISUALIZATIONS = {
             },
         },
     ],
+    "customer_master_summary": [
+        {
+            "name": "Customer Master Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "customer_name", "title": "Customer", "visible": True},
+                    {"name": "customer_group", "title": "Group", "visible": True},
+                    {"name": "credit_limit", "title": "Credit Limit", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "total_outstanding", "title": "Outstanding", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "credit_utilization_pct", "title": "Credit Util %", "visible": True, "displayAs": "number", "numberFormat": "0.0", "alignContent": "right"},
+                    {"name": "avg_days_to_pay", "title": "Avg Days to Pay", "visible": True, "displayAs": "number", "numberFormat": "0", "alignContent": "right"},
+                    {"name": "last_payment_date", "title": "Last Payment", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "order_count", "title": "Orders", "visible": True, "alignContent": "right"},
+                    {"name": "total_order_value", "title": "Total Order Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "last_order_date", "title": "Last Order", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "account_health", "title": "Health", "visible": True},
+                ],
+            },
+        },
+    ],
+    "customer_master_health_summary": [
+        {
+            "name": "Health Distribution (Pie)",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "pie",
+                "columnMapping": {
+                    "account_health": "x",
+                    "customer_count": "y",
+                },
+                "legend": {"enabled": True},
+                "series": {"stacking": None},
+                "seriesOptions": {
+                    "customer_count": {
+                        "type": "pie",
+                        "name": "Customers",
+                    },
+                },
+                "valuesOptions": {
+                    "Good": {"color": "#16a34a"},
+                    "Watch": {"color": "#d97706"},
+                    "Risk": {"color": "#dc2626"},
+                },
+            },
+        },
+    ],
 }
 
 
@@ -3261,6 +3987,20 @@ DASHBOARDS = {
             {"query_key": "otif_by_supplier", "vis_index": 1, "width": 6},  # Supplier detail table
         ],
     },
+    "ppv_dashboard": {
+        "name": "Purchase Price Variance (PPV)",
+        "tags": ["procurement", "jrny-report", "report:procurement"],
+        "widgets": [
+            {"query_key": "ppv_kpi", "vis_index": 0, "width": 2},              # Total PPV KPI
+            {"query_key": "ppv_kpi", "vis_index": 1, "width": 2},              # Avg PPV % KPI
+            {"query_key": "ppv_kpi", "vis_index": 2, "width": 2},              # Unfavourable PPV KPI
+            {"query_key": "ppv_by_supplier", "vis_index": 0, "width": 3},      # Supplier PPV bar chart
+            {"query_key": "ppv_by_product", "vis_index": 0, "width": 3},       # Product PPV bar chart
+            {"query_key": "ppv_by_supplier", "vis_index": 1, "width": 6},      # Supplier detail table
+            {"query_key": "ppv_by_product", "vis_index": 1, "width": 6},       # Product detail table
+            {"query_key": "ppv_detail", "vis_index": 0, "width": 6},           # Line detail table
+        ],
+    },
     "vendor_scorecard_dashboard": {
         "name": "Vendor Scorecard",
         "tags": ["procurement", "jrny-report", "report:procurement"],
@@ -3283,6 +4023,20 @@ DASHBOARDS = {
             {"query_key": "rfq_price_comparison", "vis_index": 1, "width": 6},       # Price comparison grouped bar
             {"query_key": "rfq_response_analysis", "vis_index": 0, "width": 6},      # Vendor metrics table
             {"query_key": "rfq_price_comparison", "vis_index": 0, "width": 6},       # Price comparison table
+        ],
+    },
+    "procurement_lead_time_dashboard": {
+        "name": "Procurement Lead Time Analysis",
+        "tags": ["procurement", "jrny-report", "report:procurement"],
+        "widgets": [
+            {"query_key": "procurement_lead_time_kpi", "vis_index": 0, "width": 2},              # Total Receipts KPI
+            {"query_key": "procurement_lead_time_kpi", "vis_index": 1, "width": 2},              # Avg Lead Time KPI
+            {"query_key": "procurement_lead_time_kpi", "vis_index": 2, "width": 2},              # On-Time Delivery Rate KPI
+            {"query_key": "procurement_lead_time_vendor", "vis_index": 1, "width": 6},           # Lead time by vendor bar chart
+            {"query_key": "procurement_lead_time_category", "vis_index": 1, "width": 6},         # Lead time by category bar chart
+            {"query_key": "procurement_lead_time_trend", "vis_index": 0, "width": 6},            # Monthly trend line chart
+            {"query_key": "procurement_lead_time_vendor", "vis_index": 0, "width": 6},           # Vendor table
+            {"query_key": "procurement_lead_time_category", "vis_index": 0, "width": 6},         # Category table
         ],
     },
     "gl_account_activity_dashboard": {
@@ -3378,6 +4132,14 @@ DASHBOARDS = {
             {"query_key": "unmatched_by_account_summary", "vis_index": 2, "width": 3},  # KPI: Oldest Item Age
             {"query_key": "unmatched_by_account_summary", "vis_index": 0, "width": 6},  # Chart by account
             {"query_key": "unmatched_transactions", "vis_index": 0, "width": 6},         # Detail table
+        ],
+    },
+    "customer_master_dashboard": {
+        "name": "Customer Master Summary",
+        "tags": ["sales", "jrny-report", "report:sales"],
+        "widgets": [
+            {"query_key": "customer_master_health_summary", "vis_index": 0, "width": 3},  # Health pie chart
+            {"query_key": "customer_master_summary", "vis_index": 0, "width": 6},          # Customer detail table
         ],
     },
 }

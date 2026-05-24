@@ -2561,6 +2561,51 @@ BEGIN
 END $$;
 
 -- ============================================================================
+-- Seed open Purchase Orders for Open PO Aging report
+-- ============================================================================
+DO $$
+DECLARE
+  org UUID := '11111111-2222-3333-4444-555555555555';
+  br  UUID := 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  s1 UUID := 'f2319ae6-951f-4351-9c9f-45d56ecf29d2';
+  s2 UUID := '787a34df-b041-47ce-9669-528059c7dc11';
+  s3 UUID := 'eb098e14-4172-4ddf-a815-f75e61c550e4';
+  v_po7 UUID; v_po8 UUID; v_po9 UUID; v_po10 UUID; v_po11 UUID;
+BEGIN
+  IF EXISTS (SELECT 1 FROM procurement.purchase_orders WHERE po_number = 'PO-OPEN-001') THEN
+    RETURN;
+  END IF;
+
+  v_po7 := gen_random_uuid();
+  v_po8 := gen_random_uuid();
+  v_po9 := gen_random_uuid();
+  v_po10 := gen_random_uuid();
+  v_po11 := gen_random_uuid();
+
+  INSERT INTO procurement.purchase_orders (id, po_number, supplier_id, order_date, expected_date, total_amount, status, org_id, branch_id) VALUES
+    (v_po7,  'PO-OPEN-001', s1, '2024-08-15', '2024-09-01',  7500.00, 'sent',    org, br),
+    (v_po8,  'PO-OPEN-002', s2, '2024-09-01', '2024-09-20', 12300.00, 'sent',    org, br),
+    (v_po9,  'PO-OPEN-003', s3, '2024-10-10', '2024-10-25', 18750.00, 'sent',    org, br),
+    (v_po10, 'PO-OPEN-004', s1, '2024-11-01', '2024-11-15',  5200.00, 'partial', org, br),
+    (v_po11, 'PO-OPEN-005', s2, '2024-12-01', '2024-12-20',  9800.00, 'sent',    org, br);
+
+  INSERT INTO procurement.purchase_order_lines (po_id, product_id, quantity, unit_cost, line_total, org_id) VALUES
+    (v_po7,  '6f0ae0db-846f-486b-b043-f2dc135848d5',  50, 80.00,  4000.00, org),
+    (v_po7,  '1583c46a-36d7-436d-8c1e-8614fa0ef366', 140, 25.00,  3500.00, org),
+    (v_po8,  'fea0bc3b-4fa8-412f-9e2b-4146d155e7ff',  60, 130.00, 7800.00, org),
+    (v_po8,  'ee369915-353d-4f5f-b359-56816fbf2814', 375, 12.00,  4500.00, org),
+    (v_po9,  '6f0ae0db-846f-486b-b043-f2dc135848d5', 100, 80.00,  8000.00, org),
+    (v_po9,  'fea0bc3b-4fa8-412f-9e2b-4146d155e7ff',  50, 130.00, 6500.00, org),
+    (v_po9,  '1583c46a-36d7-436d-8c1e-8614fa0ef366', 170, 25.00,  4250.00, org),
+    (v_po10, '6f0ae0db-846f-486b-b043-f2dc135848d5',  30, 80.00,  2400.00, org),
+    (v_po10, 'ee369915-353d-4f5f-b359-56816fbf2814', 200, 14.00,  2800.00, org),
+    (v_po11, 'fea0bc3b-4fa8-412f-9e2b-4146d155e7ff',  40, 130.00, 5200.00, org),
+    (v_po11, '1583c46a-36d7-436d-8c1e-8614fa0ef366', 184, 25.00,  4600.00, org);
+
+  RAISE NOTICE 'Open PO seed data inserted: 5 open POs, 11 PO lines';
+END $$;
+
+-- ============================================================================
 -- Stock Count / Stock Take tables for variance reporting
 -- ============================================================================
 
@@ -3610,4 +3655,51 @@ BEGIN
     VALUES (ba3, '2024-03-31', 16550.00, 16730.00, -180.00, 'in_progress', org);
 
   RAISE NOTICE 'Cashbook seed data inserted: 3 bank accounts, 15 transactions, 17 statement lines, 5 reconciliations';
+END $$;
+
+-- ============================================================================
+-- Buying Group seed data for Customer Master Summary report
+-- ============================================================================
+DO $$
+DECLARE
+  bg1 UUID; bg2 UUID; bg3 UUID;
+  c1 UUID; c2 UUID; c3 UUID; c4 UUID; c5 UUID;
+BEGIN
+  -- Only seed if buying_groups table is empty
+  IF EXISTS (SELECT 1 FROM crm.buying_groups LIMIT 1) THEN
+    RAISE NOTICE 'Buying groups already seeded, skipping';
+    RETURN;
+  END IF;
+
+  -- Create buying groups
+  INSERT INTO crm.buying_groups (group_name, discount_rate)
+    VALUES ('Gold', 10.00) RETURNING id INTO bg1;
+  INSERT INTO crm.buying_groups (group_name, discount_rate)
+    VALUES ('Silver', 5.00) RETURNING id INTO bg2;
+  INSERT INTO crm.buying_groups (group_name, discount_rate)
+    VALUES ('Bronze', 2.50) RETURNING id INTO bg3;
+
+  -- Look up existing customer contacts (seeded by AR Aging block)
+  SELECT id INTO c1 FROM core.contacts WHERE first_name = 'Alice' AND last_name = 'Johnson' LIMIT 1;
+  SELECT id INTO c2 FROM core.contacts WHERE first_name = 'Bob' AND last_name = 'Smith' LIMIT 1;
+  SELECT id INTO c3 FROM core.contacts WHERE first_name = 'Carol' AND last_name = 'Davis' LIMIT 1;
+  SELECT id INTO c4 FROM core.contacts WHERE first_name = 'David' AND last_name = 'Wilson' LIMIT 1;
+  SELECT id INTO c5 FROM core.contacts WHERE first_name = 'Emma' AND last_name = 'Taylor' LIMIT 1;
+
+  -- Assign customers to buying groups
+  IF c1 IS NOT NULL THEN
+    INSERT INTO crm.customer_buying_groups (customer_id, buying_group_id) VALUES (c1, bg1);
+  END IF;
+  IF c2 IS NOT NULL THEN
+    INSERT INTO crm.customer_buying_groups (customer_id, buying_group_id) VALUES (c2, bg2);
+  END IF;
+  IF c3 IS NOT NULL THEN
+    INSERT INTO crm.customer_buying_groups (customer_id, buying_group_id) VALUES (c3, bg3);
+  END IF;
+  IF c4 IS NOT NULL THEN
+    INSERT INTO crm.customer_buying_groups (customer_id, buying_group_id) VALUES (c4, bg1);
+  END IF;
+  -- c5 (Emma Taylor) deliberately left without a group to test 'Ungrouped'
+
+  RAISE NOTICE 'Buying group seed data inserted: 3 groups, 4 customer assignments';
 END $$;
