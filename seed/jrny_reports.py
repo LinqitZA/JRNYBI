@@ -15,6 +15,7 @@ Reports created:
     - Outstanding Invoices Aging (aging buckets table + pie chart)
     - Cash Flow Summary (inflows/outflows line chart + transaction table)
     - Trial Balance (debit/credit columns grouped by account)
+    - Credit Note Summary (trend chart, CN rate %, reason pie, customer detail table)
 
   Inventory & Procurement:
     - Inventory Valuation (table + KPI widgets: total value, item count)
@@ -344,6 +345,219 @@ LIMIT 50;
         "options": {"parameters": DATE_PARAMS},
         "tags": ["procurement", "jrny-report"],
     },
+    # ---- Finance: Accounts Payable Aging ----
+    "ap_aging": {
+        "name": "Accounts Payable Aging",
+        "description": "Vendor-level aging showing amounts owed, payment terms, overdue amounts, and upcoming payments. Critical for cash flow planning and vendor relationship management.",
+        "query": """
+SELECT
+    ap.supplier_name,
+    ap.bill_number,
+    ap.bill_date,
+    ap.due_date,
+    ap.total_amount,
+    ap.amount_paid,
+    ap.balance_due,
+    ap.status,
+    ap.aging_bucket,
+    ap.days_overdue
+FROM reporting.v_ap_aging ap
+WHERE ap.due_date <= '{{ as_at_date }}'
+   OR ap.status = 'open'
+ORDER BY ap.days_overdue DESC, ap.balance_due DESC;
+""".strip(),
+        "options": {
+            "parameters": [
+                {
+                    "name": "as_at_date",
+                    "title": "As-At Date",
+                    "type": "date",
+                    "value": "2024-12-31",
+                },
+            ]
+        },
+        "tags": ["finance", "jrny-report"],
+    },
+    # ---- Finance: Credit Note Summary ----
+    "credit_note_trend": {
+        "name": "Credit Note Summary - Trend",
+        "description": "Credit notes aggregated by period and reason, with credit note rate as percentage of gross revenue.",
+        "query": """
+SELECT
+    cn.credit_note_month                             AS month,
+    cn.reason,
+    COUNT(DISTINCT cn.id)                            AS credit_note_count,
+    SUM(cn.line_total)                               AS credit_note_value,
+    COALESCE(rev.gross_revenue, 0)                   AS gross_revenue,
+    CASE
+        WHEN COALESCE(rev.gross_revenue, 0) > 0
+        THEN ROUND(100.0 * SUM(cn.line_total) / rev.gross_revenue, 2)
+        ELSE 0
+    END                                              AS cn_rate_pct
+FROM reporting.v_credit_note_summary cn
+LEFT JOIN (
+    SELECT
+        DATE_TRUNC('month', order_date)::DATE AS month,
+        SUM(total_amount)                     AS gross_revenue
+    FROM reporting.v_sales_orders
+    WHERE order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    GROUP BY DATE_TRUNC('month', order_date)
+) rev ON rev.month = cn.credit_note_month
+WHERE cn.credit_note_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+GROUP BY cn.credit_note_month, cn.reason, rev.gross_revenue
+ORDER BY cn.credit_note_month, cn.reason;
+""".strip(),
+        "options": {"parameters": DATE_PARAMS},
+        "tags": ["finance", "jrny-report"],
+    },
+    "credit_note_detail": {
+        "name": "Credit Note Summary - Customer Detail",
+        "description": "Credit notes grouped by customer, reason, and product category with line-level detail.",
+        "query": """
+SELECT
+    cn.customer_name,
+    cn.credit_note_number,
+    cn.credit_note_date,
+    cn.reason,
+    cn.product_category,
+    cn.product_name,
+    cn.quantity,
+    cn.unit_price,
+    cn.line_total,
+    cn.original_invoice_number,
+    cn.status
+FROM reporting.v_credit_note_summary cn
+WHERE cn.credit_note_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+ORDER BY cn.credit_note_date DESC, cn.customer_name;
+""".strip(),
+        "options": {"parameters": DATE_PARAMS},
+        "tags": ["finance", "jrny-report"],
+    },
+    # ---- Finance: Budget vs Actual Variance ----
+    "budget_variance": {
+        "name": "Budget vs Actual Variance",
+        "description": "Period-by-period comparison of budgeted amounts vs actual GL postings with variance calculation. Supports cost control and financial planning.",
+        "query": """
+SELECT
+    bv.account_code,
+    bv.account_name,
+    bv.account_type,
+    bv.account_category,
+    bv.fiscal_year,
+    bv.fiscal_month,
+    bv.budget_amount,
+    bv.actual_amount,
+    bv.variance_amount,
+    bv.variance_pct,
+    bv.budget_status
+FROM reporting.v_budget_variance bv
+WHERE bv.fiscal_year = {{ fiscal_year }}
+  AND ('{{ department }}' = '' OR bv.account_category = '{{ department }}')
+  AND ({{ fiscal_period }} = 0 OR bv.fiscal_month = {{ fiscal_period }})
+ORDER BY bv.account_type, bv.account_code, bv.fiscal_month;
+""".strip(),
+        "options": {
+            "parameters": [
+                {
+                    "name": "fiscal_year",
+                    "title": "Fiscal Year",
+                    "type": "number",
+                    "value": "2024",
+                },
+                {
+                    "name": "fiscal_period",
+                    "title": "Period (0=All)",
+                    "type": "number",
+                    "value": "0",
+                },
+                {
+                    "name": "department",
+                    "title": "Department/Category",
+                    "type": "text",
+                    "value": "",
+                },
+            ]
+        },
+        "tags": ["finance", "jrny-report"],
+    },
+    "budget_variance_summary": {
+        "name": "Budget vs Actual Variance - Summary",
+        "description": "Summary of budget vs actual variance grouped by account type/category.",
+        "query": """
+SELECT
+    bv.account_type,
+    bv.account_category,
+    SUM(bv.budget_amount) AS total_budget,
+    SUM(bv.actual_amount) AS total_actual,
+    SUM(bv.variance_amount) AS total_variance,
+    CASE
+        WHEN SUM(bv.budget_amount) <> 0
+            THEN ROUND(((SUM(bv.actual_amount) - SUM(bv.budget_amount)) / ABS(SUM(bv.budget_amount))) * 100, 2)
+        ELSE 0
+    END AS variance_pct,
+    COUNT(*) FILTER (WHERE bv.budget_status = 'Over Budget') AS over_budget_count,
+    COUNT(*) FILTER (WHERE bv.budget_status = 'Under Budget') AS under_budget_count,
+    COUNT(*) FILTER (WHERE ABS(bv.variance_pct) > 10) AS significant_variances
+FROM reporting.v_budget_variance bv
+WHERE bv.fiscal_year = {{ fiscal_year }}
+  AND ({{ fiscal_period }} = 0 OR bv.fiscal_month = {{ fiscal_period }})
+GROUP BY bv.account_type, bv.account_category
+ORDER BY bv.account_type, bv.account_category;
+""".strip(),
+        "options": {
+            "parameters": [
+                {
+                    "name": "fiscal_year",
+                    "title": "Fiscal Year",
+                    "type": "number",
+                    "value": "2024",
+                },
+                {
+                    "name": "fiscal_period",
+                    "title": "Period (0=All)",
+                    "type": "number",
+                    "value": "0",
+                },
+            ]
+        },
+        "tags": ["finance", "jrny-report"],
+    },
+    "ap_aging_summary": {
+        "name": "Accounts Payable Aging - Summary",
+        "description": "Aging bucket summary for accounts payable with total outstanding per bucket.",
+        "query": """
+SELECT
+    ap.aging_bucket,
+    COUNT(*) AS bill_count,
+    SUM(ap.balance_due) AS total_balance_due,
+    SUM(ap.total_amount) AS total_invoiced,
+    SUM(ap.amount_paid) AS total_paid,
+    ROUND(AVG(ap.days_overdue), 0) AS avg_days_overdue
+FROM reporting.v_ap_aging ap
+WHERE ap.due_date <= '{{ as_at_date }}'
+   OR ap.status = 'open'
+GROUP BY ap.aging_bucket
+ORDER BY
+    CASE ap.aging_bucket
+        WHEN 'Current' THEN 1
+        WHEN '1-30 Days' THEN 2
+        WHEN '31-60 Days' THEN 3
+        WHEN '61-90 Days' THEN 4
+        WHEN '90+ Days' THEN 5
+    END;
+""".strip(),
+        "options": {
+            "parameters": [
+                {
+                    "name": "as_at_date",
+                    "title": "As-At Date",
+                    "type": "date",
+                    "value": "2024-12-31",
+                },
+            ]
+        },
+        "tags": ["finance", "jrny-report"],
+    },
 }
 
 
@@ -637,6 +851,223 @@ VISUALIZATIONS = {
             },
         },
     ],
+    "credit_note_trend": [
+        {
+            "name": "Credit Notes Over Time",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "column",
+                "columnMapping": {
+                    "month": "x",
+                    "credit_note_value": "y",
+                    "credit_note_count": "y",
+                },
+                "seriesOptions": {
+                    "credit_note_value": {"type": "column", "yAxis": 0, "name": "Credit Note Value"},
+                    "credit_note_count": {"type": "line", "yAxis": 1, "name": "Count"},
+                },
+                "xAxis": {"type": "datetime", "labels": {"enabled": True}},
+                "yAxis": [
+                    {"type": "linear", "title": {"text": "Value"}},
+                    {"type": "linear", "title": {"text": "Count"}, "opposite": True},
+                ],
+                "sortX": True,
+                "legend": {"enabled": True},
+                "series": {"stacking": None},
+            },
+        },
+        {
+            "name": "CN Rate % (Credit Note Value / Revenue)",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "line",
+                "columnMapping": {
+                    "month": "x",
+                    "cn_rate_pct": "y",
+                },
+                "seriesOptions": {
+                    "cn_rate_pct": {"type": "line", "yAxis": 0, "name": "CN Rate %", "color": "#e74c3c"},
+                },
+                "xAxis": {"type": "datetime", "labels": {"enabled": True}},
+                "yAxis": [{"type": "linear", "title": {"text": "CN Rate %"}}],
+                "sortX": True,
+                "legend": {"enabled": True},
+                "series": {"stacking": None},
+            },
+        },
+        {
+            "name": "Credit Notes by Reason (Pie)",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "pie",
+                "columnMapping": {
+                    "reason": "x",
+                    "credit_note_value": "y",
+                },
+                "legend": {"enabled": True},
+                "series": {"stacking": None},
+            },
+        },
+    ],
+    "credit_note_detail": [
+        {
+            "name": "Credit Note Detail Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "customer_name", "title": "Customer", "visible": True},
+                    {"name": "credit_note_number", "title": "CN #", "visible": True},
+                    {"name": "credit_note_date", "title": "Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "reason", "title": "Reason", "visible": True},
+                    {"name": "product_category", "title": "Category", "visible": True},
+                    {"name": "product_name", "title": "Product", "visible": True},
+                    {"name": "quantity", "title": "Qty", "visible": True, "alignContent": "right"},
+                    {"name": "unit_price", "title": "Unit Price", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "line_total", "title": "Line Total", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "original_invoice_number", "title": "Invoice #", "visible": True},
+                    {"name": "status", "title": "Status", "visible": True},
+                ],
+            },
+        },
+    ],
+    "budget_variance": [
+        {
+            "name": "Budget vs Actual Detail Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "account_code", "title": "Account Code", "visible": True},
+                    {"name": "account_name", "title": "Account Name", "visible": True},
+                    {"name": "account_type", "title": "Type", "visible": True},
+                    {"name": "account_category", "title": "Category", "visible": True},
+                    {"name": "fiscal_month", "title": "Month", "visible": True, "alignContent": "right"},
+                    {"name": "budget_amount", "title": "Budget", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "actual_amount", "title": "Actual", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "variance_amount", "title": "Variance", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "variance_pct", "title": "Variance %", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "budget_status", "title": "Status", "visible": True},
+                ],
+            },
+        },
+    ],
+    "budget_variance_summary": [
+        {
+            "name": "Budget vs Actual by Category (Bar)",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "column",
+                "columnMapping": {
+                    "account_category": "x",
+                    "total_budget": "y",
+                    "total_actual": "y",
+                },
+                "seriesOptions": {
+                    "total_budget": {"type": "column", "yAxis": 0, "name": "Budget", "color": "#94a3b8"},
+                    "total_actual": {"type": "column", "yAxis": 0, "name": "Actual", "color": "#2563eb"},
+                },
+                "xAxis": {"type": "category"},
+                "yAxis": [{"type": "linear", "title": {"text": "Amount"}}],
+                "sortX": True,
+                "legend": {"enabled": True},
+                "series": {"stacking": None},
+            },
+        },
+        {
+            "name": "Budget Variance Summary Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 10,
+                "columns": [
+                    {"name": "account_type", "title": "Account Type", "visible": True},
+                    {"name": "account_category", "title": "Category", "visible": True},
+                    {"name": "total_budget", "title": "Budget", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "total_actual", "title": "Actual", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "total_variance", "title": "Variance", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "variance_pct", "title": "Variance %", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "over_budget_count", "title": "Over Budget", "visible": True, "alignContent": "right"},
+                    {"name": "under_budget_count", "title": "Under Budget", "visible": True, "alignContent": "right"},
+                    {"name": "significant_variances", "title": ">10% Variances", "visible": True, "alignContent": "right"},
+                ],
+            },
+        },
+    ],
+    "ap_aging": [
+        {
+            "name": "AP Aging Detail Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "supplier_name", "title": "Supplier", "visible": True},
+                    {"name": "bill_number", "title": "Bill #", "visible": True},
+                    {"name": "bill_date", "title": "Bill Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "due_date", "title": "Due Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "total_amount", "title": "Total Amount", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "amount_paid", "title": "Paid", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "balance_due", "title": "Balance Due", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "status", "title": "Status", "visible": True},
+                    {"name": "aging_bucket", "title": "Aging", "visible": True},
+                    {"name": "days_overdue", "title": "Days Overdue", "visible": True, "alignContent": "right"},
+                ],
+            },
+        },
+    ],
+    "ap_aging_summary": [
+        {
+            "name": "AP Aging Buckets (Pie)",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "pie",
+                "columnMapping": {
+                    "aging_bucket": "x",
+                    "total_balance_due": "y",
+                },
+                "legend": {"enabled": True},
+                "series": {"stacking": None},
+            },
+        },
+        {
+            "name": "AP Aging Buckets (Bar)",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "column",
+                "columnMapping": {
+                    "aging_bucket": "x",
+                    "total_balance_due": "y",
+                    "bill_count": "y",
+                },
+                "seriesOptions": {
+                    "total_balance_due": {"type": "column", "yAxis": 0, "name": "Balance Due"},
+                    "bill_count": {"type": "line", "yAxis": 1, "name": "Bill Count"},
+                },
+                "xAxis": {"type": "category"},
+                "yAxis": [
+                    {"type": "linear", "title": {"text": "Amount"}},
+                    {"type": "linear", "title": {"text": "Count"}, "opposite": True},
+                ],
+                "sortX": True,
+                "legend": {"enabled": True},
+                "series": {"stacking": None},
+            },
+        },
+        {
+            "name": "AP Aging Summary Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 10,
+                "columns": [
+                    {"name": "aging_bucket", "title": "Aging Bucket", "visible": True},
+                    {"name": "bill_count", "title": "Bills", "visible": True, "alignContent": "right"},
+                    {"name": "total_balance_due", "title": "Balance Due", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "total_invoiced", "title": "Total Invoiced", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "total_paid", "title": "Total Paid", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "avg_days_overdue", "title": "Avg Days Overdue", "visible": True, "alignContent": "right"},
+                ],
+            },
+        },
+    ],
 }
 
 
@@ -714,6 +1145,35 @@ DASHBOARDS = {
         "widgets": [
             {"query_key": "supplier_spend_analysis", "vis_index": 0, "width": 6},
             {"query_key": "supplier_spend_analysis", "vis_index": 1, "width": 6},
+        ],
+    },
+    "budget_variance_dashboard": {
+        "name": "Budget vs Actual Variance",
+        "tags": ["finance", "jrny-report", "report:finance"],
+        "widgets": [
+            {"query_key": "budget_variance_summary", "vis_index": 0, "width": 6},   # Bar chart
+            {"query_key": "budget_variance_summary", "vis_index": 1, "width": 6},   # Summary table
+            {"query_key": "budget_variance", "vis_index": 0, "width": 6},            # Detail table
+        ],
+    },
+    "ap_aging_dashboard": {
+        "name": "Accounts Payable Aging",
+        "tags": ["finance", "jrny-report", "report:finance"],
+        "widgets": [
+            {"query_key": "ap_aging_summary", "vis_index": 0, "width": 3},   # Pie chart
+            {"query_key": "ap_aging_summary", "vis_index": 1, "width": 3},   # Bar chart
+            {"query_key": "ap_aging_summary", "vis_index": 2, "width": 6},   # Summary table
+            {"query_key": "ap_aging", "vis_index": 0, "width": 6},           # Detail table
+        ],
+    },
+    "credit_note_summary_dashboard": {
+        "name": "Credit Note Summary",
+        "tags": ["finance", "jrny-report", "report:finance"],
+        "widgets": [
+            {"query_key": "credit_note_trend", "vis_index": 0, "width": 6},  # Trend chart
+            {"query_key": "credit_note_trend", "vis_index": 1, "width": 3},  # CN Rate % line
+            {"query_key": "credit_note_trend", "vis_index": 2, "width": 3},  # Reason pie
+            {"query_key": "credit_note_detail", "vis_index": 0, "width": 6}, # Detail table
         ],
     },
 }
@@ -795,12 +1255,15 @@ def add_widget(client, dashboard_id, visualization_id, width=6, options=None):
     return result
 
 
-def publish_dashboard(client, dashboard_id):
-    """Publish a dashboard (set is_draft=False)."""
+def publish_dashboard(client, dashboard_id, tags=None):
+    """Publish a dashboard (set is_draft=False) and optionally apply tags."""
     try:
+        payload = {"is_draft": False}
+        if tags:
+            payload["tags"] = tags
         # Redash uses POST to update dashboard with is_draft flag
-        result = client.post(f"/api/dashboards/{dashboard_id}", {"is_draft": False})
-        logger.info("  Published dashboard (id=%s)", dashboard_id)
+        result = client.post(f"/api/dashboards/{dashboard_id}", payload)
+        logger.info("  Published dashboard (id=%s, tags=%s)", dashboard_id, tags)
         return result
     except Exception as e:
         logger.warning("  Could not publish dashboard %s: %s", dashboard_id, e)
@@ -949,8 +1412,8 @@ def seed_reports(base_url=None, api_key=None, data_source_id=None):
             visualization_id = vis_ids[vis_index]
             add_widget(client, dashboard_id, visualization_id, width=width)
 
-        # Publish the dashboard
-        publish_dashboard(client, dashboard_id)
+        # Publish the dashboard (with tags if defined)
+        publish_dashboard(client, dashboard_id, tags=dash_def.get("tags"))
 
     # ---- Summary ----
     total_queries = len(created["queries"])

@@ -281,6 +281,39 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='finance' AND table_name='credit_notes') THEN
+    EXECUTE '
+      CREATE TABLE finance.credit_notes (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        credit_note_number TEXT,
+        customer_id UUID,
+        invoice_id UUID,
+        credit_note_date DATE DEFAULT CURRENT_DATE,
+        reason TEXT,
+        status TEXT DEFAULT ''issued'',
+        total_amount NUMERIC(12,2) DEFAULT 0,
+        org_id UUID,
+        branch_id UUID
+      )';
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='finance' AND table_name='credit_note_lines') THEN
+    EXECUTE '
+      CREATE TABLE finance.credit_note_lines (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        credit_note_id UUID,
+        product_id UUID,
+        description TEXT,
+        quantity NUMERIC(12,2) DEFAULT 1,
+        unit_price NUMERIC(12,2) DEFAULT 0,
+        line_total NUMERIC(12,2) DEFAULT 0
+      )';
+  END IF;
+END $$;
+
 -- Inventory schema
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='inventory' AND table_name='stock_levels') THEN
@@ -987,6 +1020,46 @@ END $$;
 DO $$ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_cn_customer' AND table_schema = 'finance'
+  ) THEN
+    ALTER TABLE finance.credit_notes
+      ADD CONSTRAINT fk_cn_customer FOREIGN KEY (customer_id) REFERENCES core.contacts(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_cn_invoice' AND table_schema = 'finance'
+  ) THEN
+    ALTER TABLE finance.credit_notes
+      ADD CONSTRAINT fk_cn_invoice FOREIGN KEY (invoice_id) REFERENCES finance.invoices(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_cnl_credit_note' AND table_schema = 'finance'
+  ) THEN
+    ALTER TABLE finance.credit_note_lines
+      ADD CONSTRAINT fk_cnl_credit_note FOREIGN KEY (credit_note_id) REFERENCES finance.credit_notes(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_cnl_product' AND table_schema = 'finance'
+  ) THEN
+    ALTER TABLE finance.credit_note_lines
+      ADD CONSTRAINT fk_cnl_product FOREIGN KEY (product_id) REFERENCES inventory.products(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
     WHERE constraint_name = 'fk_pol_po' AND table_schema = 'procurement'
   ) THEN
     ALTER TABLE procurement.purchase_order_lines
@@ -1369,6 +1442,14 @@ COMMENT ON COLUMN sales.sales_return_lines.product_id IS 'fk:inventory.products.
 
 COMMENT ON TABLE finance.invoices IS 'Customer invoices';
 COMMENT ON TABLE finance.gl_entries IS 'General ledger journal entries';
+COMMENT ON TABLE finance.credit_notes IS 'Credit notes issued against customer invoices';
+COMMENT ON COLUMN finance.credit_notes.credit_note_number IS 'Unique credit note reference number | display_column';
+COMMENT ON COLUMN finance.credit_notes.customer_id IS 'fk:core.contacts.id Customer receiving the credit';
+COMMENT ON COLUMN finance.credit_notes.invoice_id IS 'fk:finance.invoices.id Original invoice being credited';
+COMMENT ON COLUMN finance.credit_notes.reason IS 'Credit note reason: Quality Issue, Pricing Dispute, Short Delivery, Damaged Goods, Other';
+COMMENT ON TABLE finance.credit_note_lines IS 'Line items on a credit note';
+COMMENT ON COLUMN finance.credit_note_lines.credit_note_id IS 'fk:finance.credit_notes.id Parent credit note';
+COMMENT ON COLUMN finance.credit_note_lines.product_id IS 'fk:inventory.products.id Product being credited';
 
 COMMENT ON TABLE inventory.stock_levels IS 'Current stock levels by warehouse';
 
@@ -1393,3 +1474,422 @@ COMMENT ON COLUMN core.user_preferences.user_id IS 'One-to-one FK to contacts';
 
 COMMENT ON TABLE crm.buying_groups IS 'Customer buying groups for discount tiers';
 COMMENT ON TABLE crm.customer_buying_groups IS 'Junction table linking customers to buying groups (M:M)';
+
+
+-- ============================================================================
+-- FINANCE SEED DATA: Chart of Accounts + GL Entries for P&L / Balance Sheet
+-- ============================================================================
+DO $$
+DECLARE
+  org UUID := '11111111-2222-3333-4444-555555555555';
+  -- Revenue accounts
+  rev_sales UUID;
+  rev_services UUID;
+  rev_other UUID;
+  -- COGS accounts
+  cogs_materials UUID;
+  cogs_labor UUID;
+  cogs_freight UUID;
+  -- Operating expense accounts
+  opex_salaries UUID;
+  opex_rent UUID;
+  opex_utilities UUID;
+  opex_marketing UUID;
+  opex_depreciation UUID;
+  opex_insurance UUID;
+  opex_office UUID;
+  opex_professional UUID;
+  -- Other expense accounts
+  oex_interest UUID;
+  oex_bank_charges UUID;
+BEGIN
+  -- Only seed if chart_of_accounts is empty
+  IF EXISTS (SELECT 1 FROM finance.chart_of_accounts LIMIT 1) THEN
+    RETURN;
+  END IF;
+
+  -- ==========================================
+  -- Chart of Accounts
+  -- ==========================================
+
+  -- Revenue accounts
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '4000', 'Product Sales', 'revenue', 'sales', true, org) RETURNING id INTO rev_sales;
+
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '4100', 'Service Revenue', 'revenue', 'services', true, org) RETURNING id INTO rev_services;
+
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '4200', 'Other Income', 'revenue', 'other_income', true, org) RETURNING id INTO rev_other;
+
+  -- Cost of Goods Sold
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '5000', 'Raw Materials', 'expense', 'cost_of_sales', true, org) RETURNING id INTO cogs_materials;
+
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '5100', 'Direct Labour', 'expense', 'cost_of_sales', true, org) RETURNING id INTO cogs_labor;
+
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '5200', 'Freight & Delivery', 'expense', 'cost_of_sales', true, org) RETURNING id INTO cogs_freight;
+
+  -- Operating Expenses
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '6000', 'Salaries & Wages', 'expense', 'operating_expense', true, org) RETURNING id INTO opex_salaries;
+
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '6100', 'Rent & Rates', 'expense', 'operating_expense', true, org) RETURNING id INTO opex_rent;
+
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '6200', 'Utilities', 'expense', 'operating_expense', true, org) RETURNING id INTO opex_utilities;
+
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '6300', 'Marketing & Advertising', 'expense', 'operating_expense', true, org) RETURNING id INTO opex_marketing;
+
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '6400', 'Depreciation', 'expense', 'operating_expense', true, org) RETURNING id INTO opex_depreciation;
+
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '6500', 'Insurance', 'expense', 'operating_expense', true, org) RETURNING id INTO opex_insurance;
+
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '6600', 'Office Supplies', 'expense', 'operating_expense', true, org) RETURNING id INTO opex_office;
+
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '6700', 'Professional Fees', 'expense', 'operating_expense', true, org) RETURNING id INTO opex_professional;
+
+  -- Other Expenses
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '7000', 'Interest Expense', 'expense', 'other_expense', true, org) RETURNING id INTO oex_interest;
+
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '7100', 'Bank Charges', 'expense', 'other_expense', true, org) RETURNING id INTO oex_bank_charges;
+
+  -- ==========================================
+  -- GL Entries — 12 months of P&L data (2024)
+  -- ==========================================
+
+  -- January 2024
+  INSERT INTO finance.gl_entries (account_code, debit, credit, posting_date, org_id, account_id) VALUES
+    ('4000', 0, 185000.00, '2024-01-15', org, rev_sales),
+    ('4100', 0, 42000.00, '2024-01-15', org, rev_services),
+    ('4200', 0, 3500.00, '2024-01-15', org, rev_other),
+    ('5000', 78000.00, 0, '2024-01-20', org, cogs_materials),
+    ('5100', 32000.00, 0, '2024-01-20', org, cogs_labor),
+    ('5200', 8500.00, 0, '2024-01-20', org, cogs_freight),
+    ('6000', 45000.00, 0, '2024-01-25', org, opex_salaries),
+    ('6100', 12000.00, 0, '2024-01-25', org, opex_rent),
+    ('6200', 3200.00, 0, '2024-01-25', org, opex_utilities),
+    ('6300', 8000.00, 0, '2024-01-25', org, opex_marketing),
+    ('6400', 4500.00, 0, '2024-01-25', org, opex_depreciation),
+    ('6500', 2800.00, 0, '2024-01-25', org, opex_insurance),
+    ('6600', 1200.00, 0, '2024-01-25', org, opex_office),
+    ('6700', 5000.00, 0, '2024-01-25', org, opex_professional),
+    ('7000', 2100.00, 0, '2024-01-30', org, oex_interest),
+    ('7100', 450.00, 0, '2024-01-30', org, oex_bank_charges);
+
+  -- February 2024
+  INSERT INTO finance.gl_entries (account_code, debit, credit, posting_date, org_id, account_id) VALUES
+    ('4000', 0, 192000.00, '2024-02-15', org, rev_sales),
+    ('4100', 0, 38000.00, '2024-02-15', org, rev_services),
+    ('4200', 0, 2800.00, '2024-02-15', org, rev_other),
+    ('5000', 82000.00, 0, '2024-02-20', org, cogs_materials),
+    ('5100', 34000.00, 0, '2024-02-20', org, cogs_labor),
+    ('5200', 9200.00, 0, '2024-02-20', org, cogs_freight),
+    ('6000', 45000.00, 0, '2024-02-25', org, opex_salaries),
+    ('6100', 12000.00, 0, '2024-02-25', org, opex_rent),
+    ('6200', 3400.00, 0, '2024-02-25', org, opex_utilities),
+    ('6300', 7500.00, 0, '2024-02-25', org, opex_marketing),
+    ('6400', 4500.00, 0, '2024-02-25', org, opex_depreciation),
+    ('6500', 2800.00, 0, '2024-02-25', org, opex_insurance),
+    ('6600', 1100.00, 0, '2024-02-25', org, opex_office),
+    ('6700', 3500.00, 0, '2024-02-25', org, opex_professional),
+    ('7000', 2100.00, 0, '2024-02-28', org, oex_interest),
+    ('7100', 420.00, 0, '2024-02-28', org, oex_bank_charges);
+
+  -- March 2024
+  INSERT INTO finance.gl_entries (account_code, debit, credit, posting_date, org_id, account_id) VALUES
+    ('4000', 0, 210000.00, '2024-03-15', org, rev_sales),
+    ('4100', 0, 45000.00, '2024-03-15', org, rev_services),
+    ('4200', 0, 4200.00, '2024-03-15', org, rev_other),
+    ('5000', 88000.00, 0, '2024-03-20', org, cogs_materials),
+    ('5100', 36000.00, 0, '2024-03-20', org, cogs_labor),
+    ('5200', 9800.00, 0, '2024-03-20', org, cogs_freight),
+    ('6000', 46000.00, 0, '2024-03-25', org, opex_salaries),
+    ('6100', 12000.00, 0, '2024-03-25', org, opex_rent),
+    ('6200', 2900.00, 0, '2024-03-25', org, opex_utilities),
+    ('6300', 9500.00, 0, '2024-03-25', org, opex_marketing),
+    ('6400', 4500.00, 0, '2024-03-25', org, opex_depreciation),
+    ('6500', 2800.00, 0, '2024-03-25', org, opex_insurance),
+    ('6600', 1350.00, 0, '2024-03-25', org, opex_office),
+    ('6700', 4200.00, 0, '2024-03-25', org, opex_professional),
+    ('7000', 2100.00, 0, '2024-03-30', org, oex_interest),
+    ('7100', 480.00, 0, '2024-03-30', org, oex_bank_charges);
+
+  -- April 2024
+  INSERT INTO finance.gl_entries (account_code, debit, credit, posting_date, org_id, account_id) VALUES
+    ('4000', 0, 198000.00, '2024-04-15', org, rev_sales),
+    ('4100', 0, 50000.00, '2024-04-15', org, rev_services),
+    ('4200', 0, 3800.00, '2024-04-15', org, rev_other),
+    ('5000', 85000.00, 0, '2024-04-20', org, cogs_materials),
+    ('5100', 35000.00, 0, '2024-04-20', org, cogs_labor),
+    ('5200', 9100.00, 0, '2024-04-20', org, cogs_freight),
+    ('6000', 46000.00, 0, '2024-04-25', org, opex_salaries),
+    ('6100', 12000.00, 0, '2024-04-25', org, opex_rent),
+    ('6200', 2700.00, 0, '2024-04-25', org, opex_utilities),
+    ('6300', 8200.00, 0, '2024-04-25', org, opex_marketing),
+    ('6400', 4500.00, 0, '2024-04-25', org, opex_depreciation),
+    ('6500', 2800.00, 0, '2024-04-25', org, opex_insurance),
+    ('6600', 1250.00, 0, '2024-04-25', org, opex_office),
+    ('6700', 4800.00, 0, '2024-04-25', org, opex_professional),
+    ('7000', 2100.00, 0, '2024-04-30', org, oex_interest),
+    ('7100', 460.00, 0, '2024-04-30', org, oex_bank_charges);
+
+  -- May 2024
+  INSERT INTO finance.gl_entries (account_code, debit, credit, posting_date, org_id, account_id) VALUES
+    ('4000', 0, 220000.00, '2024-05-15', org, rev_sales),
+    ('4100', 0, 48000.00, '2024-05-15', org, rev_services),
+    ('4200', 0, 5100.00, '2024-05-15', org, rev_other),
+    ('5000', 92000.00, 0, '2024-05-20', org, cogs_materials),
+    ('5100', 38000.00, 0, '2024-05-20', org, cogs_labor),
+    ('5200', 10200.00, 0, '2024-05-20', org, cogs_freight),
+    ('6000', 47000.00, 0, '2024-05-25', org, opex_salaries),
+    ('6100', 12000.00, 0, '2024-05-25', org, opex_rent),
+    ('6200', 2500.00, 0, '2024-05-25', org, opex_utilities),
+    ('6300', 11000.00, 0, '2024-05-25', org, opex_marketing),
+    ('6400', 4500.00, 0, '2024-05-25', org, opex_depreciation),
+    ('6500', 2800.00, 0, '2024-05-25', org, opex_insurance),
+    ('6600', 1400.00, 0, '2024-05-25', org, opex_office),
+    ('6700', 5500.00, 0, '2024-05-25', org, opex_professional),
+    ('7000', 2100.00, 0, '2024-05-30', org, oex_interest),
+    ('7100', 490.00, 0, '2024-05-30', org, oex_bank_charges);
+
+  -- June 2024
+  INSERT INTO finance.gl_entries (account_code, debit, credit, posting_date, org_id, account_id) VALUES
+    ('4000', 0, 235000.00, '2024-06-15', org, rev_sales),
+    ('4100', 0, 52000.00, '2024-06-15', org, rev_services),
+    ('4200', 0, 4600.00, '2024-06-15', org, rev_other),
+    ('5000', 98000.00, 0, '2024-06-20', org, cogs_materials),
+    ('5100', 40000.00, 0, '2024-06-20', org, cogs_labor),
+    ('5200', 10800.00, 0, '2024-06-20', org, cogs_freight),
+    ('6000', 47000.00, 0, '2024-06-25', org, opex_salaries),
+    ('6100', 12000.00, 0, '2024-06-25', org, opex_rent),
+    ('6200', 2800.00, 0, '2024-06-25', org, opex_utilities),
+    ('6300', 12000.00, 0, '2024-06-25', org, opex_marketing),
+    ('6400', 4500.00, 0, '2024-06-25', org, opex_depreciation),
+    ('6500', 2800.00, 0, '2024-06-25', org, opex_insurance),
+    ('6600', 1500.00, 0, '2024-06-25', org, opex_office),
+    ('6700', 6000.00, 0, '2024-06-25', org, opex_professional),
+    ('7000', 2100.00, 0, '2024-06-30', org, oex_interest),
+    ('7100', 510.00, 0, '2024-06-30', org, oex_bank_charges);
+
+  -- July 2024
+  INSERT INTO finance.gl_entries (account_code, debit, credit, posting_date, org_id, account_id) VALUES
+    ('4000', 0, 205000.00, '2024-07-15', org, rev_sales),
+    ('4100', 0, 46000.00, '2024-07-15', org, rev_services),
+    ('4200', 0, 3900.00, '2024-07-15', org, rev_other),
+    ('5000', 86000.00, 0, '2024-07-20', org, cogs_materials),
+    ('5100', 35000.00, 0, '2024-07-20', org, cogs_labor),
+    ('5200', 9500.00, 0, '2024-07-20', org, cogs_freight),
+    ('6000', 47000.00, 0, '2024-07-25', org, opex_salaries),
+    ('6100', 12000.00, 0, '2024-07-25', org, opex_rent),
+    ('6200', 3100.00, 0, '2024-07-25', org, opex_utilities),
+    ('6300', 9000.00, 0, '2024-07-25', org, opex_marketing),
+    ('6400', 4500.00, 0, '2024-07-25', org, opex_depreciation),
+    ('6500', 2800.00, 0, '2024-07-25', org, opex_insurance),
+    ('6600', 1300.00, 0, '2024-07-25', org, opex_office),
+    ('6700', 4500.00, 0, '2024-07-25', org, opex_professional),
+    ('7000', 2100.00, 0, '2024-07-30', org, oex_interest),
+    ('7100', 470.00, 0, '2024-07-30', org, oex_bank_charges);
+
+  -- August 2024
+  INSERT INTO finance.gl_entries (account_code, debit, credit, posting_date, org_id, account_id) VALUES
+    ('4000', 0, 228000.00, '2024-08-15', org, rev_sales),
+    ('4100', 0, 55000.00, '2024-08-15', org, rev_services),
+    ('4200', 0, 4800.00, '2024-08-15', org, rev_other),
+    ('5000', 95000.00, 0, '2024-08-20', org, cogs_materials),
+    ('5100', 39000.00, 0, '2024-08-20', org, cogs_labor),
+    ('5200', 10500.00, 0, '2024-08-20', org, cogs_freight),
+    ('6000', 48000.00, 0, '2024-08-25', org, opex_salaries),
+    ('6100', 12000.00, 0, '2024-08-25', org, opex_rent),
+    ('6200', 3300.00, 0, '2024-08-25', org, opex_utilities),
+    ('6300', 10500.00, 0, '2024-08-25', org, opex_marketing),
+    ('6400', 4500.00, 0, '2024-08-25', org, opex_depreciation),
+    ('6500', 2800.00, 0, '2024-08-25', org, opex_insurance),
+    ('6600', 1450.00, 0, '2024-08-25', org, opex_office),
+    ('6700', 5200.00, 0, '2024-08-25', org, opex_professional),
+    ('7000', 2100.00, 0, '2024-08-30', org, oex_interest),
+    ('7100', 500.00, 0, '2024-08-30', org, oex_bank_charges);
+
+  -- September 2024
+  INSERT INTO finance.gl_entries (account_code, debit, credit, posting_date, org_id, account_id) VALUES
+    ('4000', 0, 215000.00, '2024-09-15', org, rev_sales),
+    ('4100', 0, 49000.00, '2024-09-15', org, rev_services),
+    ('4200', 0, 4100.00, '2024-09-15', org, rev_other),
+    ('5000', 90000.00, 0, '2024-09-20', org, cogs_materials),
+    ('5100', 37000.00, 0, '2024-09-20', org, cogs_labor),
+    ('5200', 9900.00, 0, '2024-09-20', org, cogs_freight),
+    ('6000', 48000.00, 0, '2024-09-25', org, opex_salaries),
+    ('6100', 12000.00, 0, '2024-09-25', org, opex_rent),
+    ('6200', 2900.00, 0, '2024-09-25', org, opex_utilities),
+    ('6300', 8800.00, 0, '2024-09-25', org, opex_marketing),
+    ('6400', 4500.00, 0, '2024-09-25', org, opex_depreciation),
+    ('6500', 2800.00, 0, '2024-09-25', org, opex_insurance),
+    ('6600', 1350.00, 0, '2024-09-25', org, opex_office),
+    ('6700', 4800.00, 0, '2024-09-25', org, opex_professional),
+    ('7000', 2100.00, 0, '2024-09-30', org, oex_interest),
+    ('7100', 480.00, 0, '2024-09-30', org, oex_bank_charges);
+
+  -- October 2024
+  INSERT INTO finance.gl_entries (account_code, debit, credit, posting_date, org_id, account_id) VALUES
+    ('4000', 0, 240000.00, '2024-10-15', org, rev_sales),
+    ('4100', 0, 58000.00, '2024-10-15', org, rev_services),
+    ('4200', 0, 5500.00, '2024-10-15', org, rev_other),
+    ('5000', 100000.00, 0, '2024-10-20', org, cogs_materials),
+    ('5100', 41000.00, 0, '2024-10-20', org, cogs_labor),
+    ('5200', 11200.00, 0, '2024-10-20', org, cogs_freight),
+    ('6000', 49000.00, 0, '2024-10-25', org, opex_salaries),
+    ('6100', 12000.00, 0, '2024-10-25', org, opex_rent),
+    ('6200', 3000.00, 0, '2024-10-25', org, opex_utilities),
+    ('6300', 11500.00, 0, '2024-10-25', org, opex_marketing),
+    ('6400', 4500.00, 0, '2024-10-25', org, opex_depreciation),
+    ('6500', 2800.00, 0, '2024-10-25', org, opex_insurance),
+    ('6600', 1500.00, 0, '2024-10-25', org, opex_office),
+    ('6700', 5800.00, 0, '2024-10-25', org, opex_professional),
+    ('7000', 2100.00, 0, '2024-10-30', org, oex_interest),
+    ('7100', 520.00, 0, '2024-10-30', org, oex_bank_charges);
+
+  -- November 2024
+  INSERT INTO finance.gl_entries (account_code, debit, credit, posting_date, org_id, account_id) VALUES
+    ('4000', 0, 250000.00, '2024-11-15', org, rev_sales),
+    ('4100', 0, 60000.00, '2024-11-15', org, rev_services),
+    ('4200', 0, 6200.00, '2024-11-15', org, rev_other),
+    ('5000', 104000.00, 0, '2024-11-20', org, cogs_materials),
+    ('5100', 43000.00, 0, '2024-11-20', org, cogs_labor),
+    ('5200', 11800.00, 0, '2024-11-20', org, cogs_freight),
+    ('6000', 50000.00, 0, '2024-11-25', org, opex_salaries),
+    ('6100', 12000.00, 0, '2024-11-25', org, opex_rent),
+    ('6200', 3200.00, 0, '2024-11-25', org, opex_utilities),
+    ('6300', 12500.00, 0, '2024-11-25', org, opex_marketing),
+    ('6400', 4500.00, 0, '2024-11-25', org, opex_depreciation),
+    ('6500', 2800.00, 0, '2024-11-25', org, opex_insurance),
+    ('6600', 1550.00, 0, '2024-11-25', org, opex_office),
+    ('6700', 6200.00, 0, '2024-11-25', org, opex_professional),
+    ('7000', 2100.00, 0, '2024-11-30', org, oex_interest),
+    ('7100', 540.00, 0, '2024-11-30', org, oex_bank_charges);
+
+  -- December 2024
+  INSERT INTO finance.gl_entries (account_code, debit, credit, posting_date, org_id, account_id) VALUES
+    ('4000', 0, 260000.00, '2024-12-15', org, rev_sales),
+    ('4100', 0, 62000.00, '2024-12-15', org, rev_services),
+    ('4200', 0, 7000.00, '2024-12-15', org, rev_other),
+    ('5000', 108000.00, 0, '2024-12-20', org, cogs_materials),
+    ('5100', 45000.00, 0, '2024-12-20', org, cogs_labor),
+    ('5200', 12200.00, 0, '2024-12-20', org, cogs_freight),
+    ('6000', 52000.00, 0, '2024-12-25', org, opex_salaries),
+    ('6100', 12000.00, 0, '2024-12-25', org, opex_rent),
+    ('6200', 3500.00, 0, '2024-12-25', org, opex_utilities),
+    ('6300', 14000.00, 0, '2024-12-25', org, opex_marketing),
+    ('6400', 4500.00, 0, '2024-12-25', org, opex_depreciation),
+    ('6500', 2800.00, 0, '2024-12-25', org, opex_insurance),
+    ('6600', 1700.00, 0, '2024-12-25', org, opex_office),
+    ('6700', 7000.00, 0, '2024-12-25', org, opex_professional),
+    ('7000', 2100.00, 0, '2024-12-30', org, oex_interest),
+    ('7100', 560.00, 0, '2024-12-30', org, oex_bank_charges);
+
+  -- ==========================================
+  -- Balance Sheet Accounts + GL Entries
+  -- ==========================================
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '1000', 'Cash and Cash Equivalents', 'asset', 'current_asset', true, org) RETURNING id INTO rev_sales;
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '1100', 'Accounts Receivable', 'asset', 'current_asset', true, org) RETURNING id INTO rev_services;
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '1200', 'Inventory', 'asset', 'current_asset', true, org) RETURNING id INTO rev_other;
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '1300', 'Prepaid Expenses', 'asset', 'current_asset', true, org) RETURNING id INTO cogs_materials;
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '1500', 'Property, Plant & Equipment', 'asset', 'non_current_asset', true, org) RETURNING id INTO cogs_labor;
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '1600', 'Accumulated Depreciation', 'asset', 'non_current_asset', true, org) RETURNING id INTO cogs_freight;
+
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '2000', 'Accounts Payable', 'liability', 'current_liability', true, org) RETURNING id INTO opex_salaries;
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '2100', 'Accrued Expenses', 'liability', 'current_liability', true, org) RETURNING id INTO opex_rent;
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '2200', 'Long-term Loan', 'liability', 'non_current_liability', true, org) RETURNING id INTO opex_utilities;
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '2300', 'VAT Payable', 'liability', 'current_liability', true, org) RETURNING id INTO opex_marketing;
+
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '3000', 'Share Capital', 'equity', 'equity', true, org) RETURNING id INTO opex_depreciation;
+  INSERT INTO finance.chart_of_accounts (id, account_code, account_name, account_type, account_category, is_active, org_id)
+  VALUES (gen_random_uuid(), '3100', 'Retained Earnings', 'equity', 'equity', true, org) RETURNING id INTO opex_insurance;
+
+  -- Opening balances (Jan 1, 2024)
+  -- Reusing existing variable names (rev_sales=cash, rev_services=receivables, etc.)
+  INSERT INTO finance.gl_entries (account_code, debit, credit, posting_date, org_id, account_id) VALUES
+    ('1000', 450000.00, 0, '2024-01-01', org, rev_sales),
+    ('1100', 320000.00, 0, '2024-01-01', org, rev_services),
+    ('1200', 280000.00, 0, '2024-01-01', org, rev_other),
+    ('1300', 24000.00, 0, '2024-01-01', org, cogs_materials),
+    ('1500', 850000.00, 0, '2024-01-01', org, cogs_labor),
+    ('1600', 0, 180000.00, '2024-01-01', org, cogs_freight),
+    ('2000', 0, 195000.00, '2024-01-01', org, opex_salaries),
+    ('2100', 0, 45000.00, '2024-01-01', org, opex_rent),
+    ('2200', 0, 400000.00, '2024-01-01', org, opex_utilities),
+    ('2300', 0, 34000.00, '2024-01-01', org, opex_marketing),
+    ('3000', 0, 500000.00, '2024-01-01', org, opex_depreciation),
+    ('3100', 0, 570000.00, '2024-01-01', org, opex_insurance);
+
+  -- Q1 movements (Mar 31)
+  INSERT INTO finance.gl_entries (account_code, debit, credit, posting_date, org_id, account_id) VALUES
+    ('1000', 85000.00, 0, '2024-03-31', org, rev_sales),
+    ('1100', 42000.00, 0, '2024-03-31', org, rev_services),
+    ('1200', 0, 15000.00, '2024-03-31', org, rev_other),
+    ('1600', 0, 13500.00, '2024-03-31', org, cogs_freight),
+    ('2000', 0, 28000.00, '2024-03-31', org, opex_salaries),
+    ('2100', 0, 8000.00, '2024-03-31', org, opex_rent),
+    ('2300', 0, 12500.00, '2024-03-31', org, opex_marketing),
+    ('3100', 0, 50000.00, '2024-03-31', org, opex_insurance);
+
+  -- Q2 movements (Jun 30)
+  INSERT INTO finance.gl_entries (account_code, debit, credit, posting_date, org_id, account_id) VALUES
+    ('1000', 92000.00, 0, '2024-06-30', org, rev_sales),
+    ('1100', 55000.00, 0, '2024-06-30', org, rev_services),
+    ('1200', 0, 8000.00, '2024-06-30', org, rev_other),
+    ('1300', 0, 6000.00, '2024-06-30', org, cogs_materials),
+    ('1500', 120000.00, 0, '2024-06-30', org, cogs_labor),
+    ('1600', 0, 13500.00, '2024-06-30', org, cogs_freight),
+    ('2000', 0, 35000.00, '2024-06-30', org, opex_salaries),
+    ('2100', 0, 5000.00, '2024-06-30', org, opex_rent),
+    ('2300', 0, 15000.00, '2024-06-30', org, opex_marketing),
+    ('3100', 0, 60000.00, '2024-06-30', org, opex_insurance);
+
+  -- Q3 movements (Sep 30)
+  INSERT INTO finance.gl_entries (account_code, debit, credit, posting_date, org_id, account_id) VALUES
+    ('1000', 78000.00, 0, '2024-09-30', org, rev_sales),
+    ('1100', 38000.00, 0, '2024-09-30', org, rev_services),
+    ('1200', 12000.00, 0, '2024-09-30', org, rev_other),
+    ('1300', 0, 6000.00, '2024-09-30', org, cogs_materials),
+    ('1600', 0, 13500.00, '2024-09-30', org, cogs_freight),
+    ('2000', 0, 22000.00, '2024-09-30', org, opex_salaries),
+    ('2100', 0, 3000.00, '2024-09-30', org, opex_rent),
+    ('2300', 0, 14000.00, '2024-09-30', org, opex_marketing),
+    ('3100', 0, 55000.00, '2024-09-30', org, opex_insurance);
+
+  -- Q4 movements (Dec 31)
+  INSERT INTO finance.gl_entries (account_code, debit, credit, posting_date, org_id, account_id) VALUES
+    ('1000', 110000.00, 0, '2024-12-31', org, rev_sales),
+    ('1100', 65000.00, 0, '2024-12-31', org, rev_services),
+    ('1200', 18000.00, 0, '2024-12-31', org, rev_other),
+    ('1300', 0, 6000.00, '2024-12-31', org, cogs_materials),
+    ('1500', 80000.00, 0, '2024-12-31', org, cogs_labor),
+    ('1600', 0, 13500.00, '2024-12-31', org, cogs_freight),
+    ('2000', 0, 40000.00, '2024-12-31', org, opex_salaries),
+    ('2100', 0, 7000.00, '2024-12-31', org, opex_rent),
+    ('2300', 0, 18000.00, '2024-12-31', org, opex_marketing),
+    ('3100', 0, 65000.00, '2024-12-31', org, opex_insurance);
+
+  RAISE NOTICE 'Finance seed data inserted: 28 accounts (P&L + BS), GL entries seeded';
+END $$;

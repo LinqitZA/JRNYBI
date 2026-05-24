@@ -40,6 +40,7 @@ DROP VIEW IF EXISTS reporting.v_balance_sheet CASCADE;
 DROP VIEW IF EXISTS reporting.v_quote_to_order_conversion CASCADE;
 DROP VIEW IF EXISTS reporting.v_sales_returns_analysis CASCADE;
 DROP VIEW IF EXISTS reporting.v_revenue_by_category CASCADE;
+DROP VIEW IF EXISTS reporting.v_credit_note_summary CASCADE;
 
 -- Also drop any legacy reporting tables (dev migration path)
 DROP TABLE IF EXISTS reporting.v_sales_orders CASCADE;
@@ -930,6 +931,48 @@ COMMENT ON COLUMN reporting.v_revenue_by_category.branch_id IS 'Branch ID for RL
 
 
 -- ============================================================================
+-- 25. v_credit_note_summary — Credit notes with customer, reason, and line details
+-- ============================================================================
+CREATE VIEW reporting.v_credit_note_summary AS
+SELECT
+  cn.id,
+  cn.credit_note_number,
+  cn.credit_note_date,
+  cn.reason,
+  cn.status,
+  cn.total_amount                                AS credit_note_value,
+  c.first_name || ' ' || c.last_name            AS customer_name,
+  cn.customer_id,
+  cn.invoice_id,
+  inv.invoice_number                             AS original_invoice_number,
+  cnl.id                                         AS line_id,
+  p.product_code,
+  p.product_name,
+  COALESCE(p.category, 'Uncategorized')          AS product_category,
+  cnl.description                                AS line_description,
+  cnl.quantity,
+  cnl.unit_price,
+  cnl.line_total,
+  DATE_TRUNC('month', cn.credit_note_date)::DATE AS credit_note_month,
+  cn.org_id,
+  cn.branch_id
+FROM finance.credit_notes cn
+LEFT JOIN core.contacts c ON c.id = cn.customer_id
+LEFT JOIN finance.invoices inv ON inv.id = cn.invoice_id
+LEFT JOIN finance.credit_note_lines cnl ON cnl.credit_note_id = cn.id
+LEFT JOIN inventory.products p ON p.id = cnl.product_id;
+
+COMMENT ON VIEW  reporting.v_credit_note_summary IS 'Credit notes issued with customer, reason, product, and line-level detail';
+COMMENT ON COLUMN reporting.v_credit_note_summary.customer_id IS 'fk:core.contacts.id Customer receiving the credit';
+COMMENT ON COLUMN reporting.v_credit_note_summary.invoice_id IS 'fk:finance.invoices.id Original invoice being credited';
+COMMENT ON COLUMN reporting.v_credit_note_summary.credit_note_value IS 'Total credit note amount';
+COMMENT ON COLUMN reporting.v_credit_note_summary.product_category IS 'Product category for analysis grouping';
+COMMENT ON COLUMN reporting.v_credit_note_summary.credit_note_month IS 'Month of credit note for trend analysis';
+COMMENT ON COLUMN reporting.v_credit_note_summary.org_id IS 'Organization ID for RLS filtering';
+COMMENT ON COLUMN reporting.v_credit_note_summary.branch_id IS 'Branch ID for RLS filtering';
+
+
+-- ============================================================================
 -- COMMENT ON annotations for base tables (idempotent)
 -- ============================================================================
 COMMENT ON VIEW reporting.v_sales_orders IS 'Denormalized sales order view with customer name and line aggregates';
@@ -944,5 +987,5 @@ COMMENT ON VIEW reporting.v_product_catalogue IS 'Product catalogue with pricing
 
 
 -- ============================================================================
--- Done — all 24 reporting views created successfully
+-- Done — all 25 reporting views created successfully
 -- ============================================================================
