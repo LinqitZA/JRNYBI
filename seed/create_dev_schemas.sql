@@ -3157,6 +3157,277 @@ BEGIN
   RAISE NOTICE 'Vendor scorecard seed data inserted: 5 records for 3 suppliers across 2 periods';
 END $$;
 
+-- ============================================================================
+-- RFQ (Request for Quote) tables for procurement analytics
+-- ============================================================================
+
+-- RFQ header: a request for quotation sent to multiple suppliers
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='procurement' AND table_name='rfq_requests') THEN
+    EXECUTE '
+      CREATE TABLE procurement.rfq_requests (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        rfq_number TEXT NOT NULL,
+        title TEXT,
+        rfq_date DATE DEFAULT CURRENT_DATE,
+        deadline DATE,
+        status TEXT DEFAULT ''open'',
+        created_by TEXT,
+        notes TEXT,
+        org_id UUID,
+        branch_id UUID
+      )';
+  END IF;
+END $$;
+
+-- RFQ line items: specific items/quantities requested
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='procurement' AND table_name='rfq_lines') THEN
+    EXECUTE '
+      CREATE TABLE procurement.rfq_lines (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        rfq_id UUID,
+        product_id UUID,
+        description TEXT,
+        quantity NUMERIC(12,2) DEFAULT 0,
+        unit TEXT DEFAULT ''each'',
+        target_price NUMERIC(12,2),
+        org_id UUID
+      )';
+  END IF;
+END $$;
+
+-- RFQ responses: one per supplier per RFQ
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='procurement' AND table_name='rfq_responses') THEN
+    EXECUTE '
+      CREATE TABLE procurement.rfq_responses (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        rfq_id UUID,
+        supplier_id UUID,
+        response_date DATE,
+        status TEXT DEFAULT ''received'',
+        notes TEXT,
+        org_id UUID
+      )';
+  END IF;
+END $$;
+
+-- RFQ response line items: quoted prices per item
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='procurement' AND table_name='rfq_response_lines') THEN
+    EXECUTE '
+      CREATE TABLE procurement.rfq_response_lines (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        response_id UUID,
+        rfq_line_id UUID,
+        quoted_price NUMERIC(12,2) DEFAULT 0,
+        lead_time_days INTEGER DEFAULT 0,
+        notes TEXT,
+        org_id UUID
+      )';
+  END IF;
+END $$;
+
+-- FK constraints for RFQ tables
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_rfq_line_rfq' AND table_schema = 'procurement'
+  ) THEN
+    ALTER TABLE procurement.rfq_lines
+      ADD CONSTRAINT fk_rfq_line_rfq FOREIGN KEY (rfq_id) REFERENCES procurement.rfq_requests(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_rfq_response_rfq' AND table_schema = 'procurement'
+  ) THEN
+    ALTER TABLE procurement.rfq_responses
+      ADD CONSTRAINT fk_rfq_response_rfq FOREIGN KEY (rfq_id) REFERENCES procurement.rfq_requests(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_rfq_response_supplier' AND table_schema = 'procurement'
+  ) THEN
+    ALTER TABLE procurement.rfq_responses
+      ADD CONSTRAINT fk_rfq_response_supplier FOREIGN KEY (supplier_id) REFERENCES core.contacts(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_rfq_resp_line_response' AND table_schema = 'procurement'
+  ) THEN
+    ALTER TABLE procurement.rfq_response_lines
+      ADD CONSTRAINT fk_rfq_resp_line_response FOREIGN KEY (response_id) REFERENCES procurement.rfq_responses(id);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_rfq_resp_line_rfqline' AND table_schema = 'procurement'
+  ) THEN
+    ALTER TABLE procurement.rfq_response_lines
+      ADD CONSTRAINT fk_rfq_resp_line_rfqline FOREIGN KEY (rfq_line_id) REFERENCES procurement.rfq_lines(id);
+  END IF;
+END $$;
+
+COMMENT ON TABLE procurement.rfq_requests IS 'Request for Quotation headers sent to suppliers';
+COMMENT ON COLUMN procurement.rfq_requests.rfq_number IS 'Unique RFQ reference number | display_column';
+COMMENT ON COLUMN procurement.rfq_requests.status IS 'RFQ status: open, closed, cancelled';
+COMMENT ON TABLE procurement.rfq_lines IS 'Line items within an RFQ specifying products and quantities';
+COMMENT ON TABLE procurement.rfq_responses IS 'Supplier responses to RFQs with quoted pricing';
+COMMENT ON COLUMN procurement.rfq_responses.status IS 'Response status: received, declined, expired';
+COMMENT ON TABLE procurement.rfq_response_lines IS 'Per-item pricing from supplier RFQ responses';
+
+-- ============================================================================
+-- Seed RFQ test data
+-- ============================================================================
+DO $$
+DECLARE
+  org UUID := '11111111-2222-3333-4444-555555555555';
+  br  UUID := 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  s1 UUID; s2 UUID; s3 UUID;
+  p1 UUID; p2 UUID; p3 UUID; p4 UUID;
+  rfq1 UUID; rfq2 UUID; rfq3 UUID; rfq4 UUID;
+  rl1 UUID; rl2 UUID; rl3 UUID; rl4 UUID; rl5 UUID; rl6 UUID; rl7 UUID; rl8 UUID;
+  resp1 UUID; resp2 UUID; resp3 UUID; resp4 UUID; resp5 UUID;
+  resp6 UUID; resp7 UUID; resp8 UUID; resp9 UUID;
+BEGIN
+  -- Only seed if rfq_requests table is empty
+  IF EXISTS (SELECT 1 FROM procurement.rfq_requests LIMIT 1) THEN
+    RETURN;
+  END IF;
+
+  -- Get suppliers
+  SELECT id INTO s1 FROM core.contacts WHERE email = 'supplier1@example.com' LIMIT 1;
+  SELECT id INTO s2 FROM core.contacts WHERE email = 'supplier2@example.com' LIMIT 1;
+  SELECT id INTO s3 FROM core.contacts WHERE email = 'supplier3@example.com' LIMIT 1;
+
+  -- Get products
+  SELECT id INTO p1 FROM inventory.products WHERE product_code = 'WIDGET-A' LIMIT 1;
+  SELECT id INTO p2 FROM inventory.products WHERE product_code = 'GADGET-B' LIMIT 1;
+  SELECT id INTO p3 FROM inventory.products WHERE product_code = 'PART-C' LIMIT 1;
+  SELECT id INTO p4 FROM inventory.products WHERE product_code = 'SUPPLY-D' LIMIT 1;
+
+  IF s1 IS NULL OR s2 IS NULL OR s3 IS NULL THEN
+    RAISE NOTICE 'Skipping RFQ seed: supplier contacts not found';
+    RETURN;
+  END IF;
+
+  -- ===== RFQ 1: Q1 2024 - Widgets and Gadgets (3 suppliers invited, all respond) =====
+  INSERT INTO procurement.rfq_requests (rfq_number, title, rfq_date, deadline, status, created_by, org_id, branch_id)
+    VALUES ('RFQ-2024-001', 'Widgets and Gadgets Q1 Supply', '2024-01-10', '2024-01-25', 'closed', 'Procurement Team', org, br) RETURNING id INTO rfq1;
+  INSERT INTO procurement.rfq_lines (rfq_id, product_id, description, quantity, unit, target_price, org_id)
+    VALUES (rfq1, p1, 'Widget-A units', 100, 'each', 75.00, org) RETURNING id INTO rl1;
+  INSERT INTO procurement.rfq_lines (rfq_id, product_id, description, quantity, unit, target_price, org_id)
+    VALUES (rfq1, p2, 'Gadget-B units', 50, 'each', 120.00, org) RETURNING id INTO rl2;
+
+  -- Acme Supplies responds (2 days later, competitive pricing)
+  INSERT INTO procurement.rfq_responses (rfq_id, supplier_id, response_date, status, org_id)
+    VALUES (rfq1, s1, '2024-01-12', 'received', org) RETURNING id INTO resp1;
+  INSERT INTO procurement.rfq_response_lines (response_id, rfq_line_id, quoted_price, lead_time_days, org_id)
+    VALUES (resp1, rl1, 78.00, 12, org);
+  INSERT INTO procurement.rfq_response_lines (response_id, rfq_line_id, quoted_price, lead_time_days, org_id)
+    VALUES (resp1, rl2, 125.00, 14, org);
+
+  -- Global Parts responds (5 days later, slightly cheaper)
+  INSERT INTO procurement.rfq_responses (rfq_id, supplier_id, response_date, status, org_id)
+    VALUES (rfq1, s2, '2024-01-15', 'received', org) RETURNING id INTO resp2;
+  INSERT INTO procurement.rfq_response_lines (response_id, rfq_line_id, quoted_price, lead_time_days, org_id)
+    VALUES (resp2, rl1, 72.00, 18, org);
+  INSERT INTO procurement.rfq_response_lines (response_id, rfq_line_id, quoted_price, lead_time_days, org_id)
+    VALUES (resp2, rl2, 118.00, 20, org);
+
+  -- Premier Materials responds (8 days later, most expensive)
+  INSERT INTO procurement.rfq_responses (rfq_id, supplier_id, response_date, status, org_id)
+    VALUES (rfq1, s3, '2024-01-18', 'received', org) RETURNING id INTO resp3;
+  INSERT INTO procurement.rfq_response_lines (response_id, rfq_line_id, quoted_price, lead_time_days, org_id)
+    VALUES (resp3, rl1, 85.00, 10, org);
+  INSERT INTO procurement.rfq_response_lines (response_id, rfq_line_id, quoted_price, lead_time_days, org_id)
+    VALUES (resp3, rl2, 135.00, 8, org);
+
+  -- ===== RFQ 2: Q1 2024 - Parts and Supplies (3 invited, 2 respond, 1 declines) =====
+  INSERT INTO procurement.rfq_requests (rfq_number, title, rfq_date, deadline, status, created_by, org_id, branch_id)
+    VALUES ('RFQ-2024-002', 'Parts and Supplies Restock', '2024-02-05', '2024-02-20', 'closed', 'Procurement Team', org, br) RETURNING id INTO rfq2;
+  INSERT INTO procurement.rfq_lines (rfq_id, product_id, description, quantity, unit, target_price, org_id)
+    VALUES (rfq2, p3, 'Part-C units', 200, 'each', 22.00, org) RETURNING id INTO rl3;
+  INSERT INTO procurement.rfq_lines (rfq_id, product_id, description, quantity, unit, target_price, org_id)
+    VALUES (rfq2, p4, 'Supply-D units', 500, 'each', 10.00, org) RETURNING id INTO rl4;
+
+  -- Global Parts responds (3 days, good pricing)
+  INSERT INTO procurement.rfq_responses (rfq_id, supplier_id, response_date, status, org_id)
+    VALUES (rfq2, s2, '2024-02-08', 'received', org) RETURNING id INTO resp4;
+  INSERT INTO procurement.rfq_response_lines (response_id, rfq_line_id, quoted_price, lead_time_days, org_id)
+    VALUES (resp4, rl3, 24.00, 14, org);
+  INSERT INTO procurement.rfq_response_lines (response_id, rfq_line_id, quoted_price, lead_time_days, org_id)
+    VALUES (resp4, rl4, 11.50, 14, org);
+
+  -- Premier Materials responds (10 days, premium pricing)
+  INSERT INTO procurement.rfq_responses (rfq_id, supplier_id, response_date, status, org_id)
+    VALUES (rfq2, s3, '2024-02-15', 'received', org) RETURNING id INTO resp5;
+  INSERT INTO procurement.rfq_response_lines (response_id, rfq_line_id, quoted_price, lead_time_days, org_id)
+    VALUES (resp5, rl3, 26.00, 8, org);
+  INSERT INTO procurement.rfq_response_lines (response_id, rfq_line_id, quoted_price, lead_time_days, org_id)
+    VALUES (resp5, rl4, 13.00, 8, org);
+
+  -- Acme Supplies declines
+  INSERT INTO procurement.rfq_responses (rfq_id, supplier_id, response_date, status, notes, org_id)
+    VALUES (rfq2, s1, '2024-02-12', 'declined', 'Unable to supply these items at this time', org) RETURNING id INTO resp6;
+
+  -- ===== RFQ 3: Q2 2024 - Large Widget Order (3 invited, 2 respond) =====
+  INSERT INTO procurement.rfq_requests (rfq_number, title, rfq_date, deadline, status, created_by, org_id, branch_id)
+    VALUES ('RFQ-2024-003', 'Widget Bulk Order Q2', '2024-04-01', '2024-04-15', 'closed', 'Procurement Team', org, br) RETURNING id INTO rfq3;
+  INSERT INTO procurement.rfq_lines (rfq_id, product_id, description, quantity, unit, target_price, org_id)
+    VALUES (rfq3, p1, 'Widget-A bulk', 500, 'each', 70.00, org) RETURNING id INTO rl5;
+  INSERT INTO procurement.rfq_lines (rfq_id, product_id, description, quantity, unit, target_price, org_id)
+    VALUES (rfq3, p3, 'Part-C bulk', 1000, 'each', 20.00, org) RETURNING id INTO rl6;
+
+  -- Acme Supplies responds (1 day, aggressive pricing for bulk)
+  INSERT INTO procurement.rfq_responses (rfq_id, supplier_id, response_date, status, org_id)
+    VALUES (rfq3, s1, '2024-04-02', 'received', org) RETURNING id INTO resp7;
+  INSERT INTO procurement.rfq_response_lines (response_id, rfq_line_id, quoted_price, lead_time_days, org_id)
+    VALUES (resp7, rl5, 68.00, 14, org);
+  INSERT INTO procurement.rfq_response_lines (response_id, rfq_line_id, quoted_price, lead_time_days, org_id)
+    VALUES (resp7, rl6, 22.00, 14, org);
+
+  -- Global Parts responds (7 days, standard pricing)
+  INSERT INTO procurement.rfq_responses (rfq_id, supplier_id, response_date, status, org_id)
+    VALUES (rfq3, s2, '2024-04-08', 'received', org) RETURNING id INTO resp8;
+  INSERT INTO procurement.rfq_response_lines (response_id, rfq_line_id, quoted_price, lead_time_days, org_id)
+    VALUES (resp8, rl5, 74.00, 16, org);
+  INSERT INTO procurement.rfq_response_lines (response_id, rfq_line_id, quoted_price, lead_time_days, org_id)
+    VALUES (resp8, rl6, 23.50, 18, org);
+
+  -- Premier Materials: no response (expired)
+
+  -- ===== RFQ 4: Q2 2024 - Mixed Items (3 invited, 1 responds) =====
+  INSERT INTO procurement.rfq_requests (rfq_number, title, rfq_date, deadline, status, created_by, org_id, branch_id)
+    VALUES ('RFQ-2024-004', 'Mixed Items Quarterly', '2024-05-15', '2024-05-30', 'closed', 'Procurement Team', org, br) RETURNING id INTO rfq4;
+  INSERT INTO procurement.rfq_lines (rfq_id, product_id, description, quantity, unit, target_price, org_id)
+    VALUES (rfq4, p2, 'Gadget-B standard', 80, 'each', 115.00, org) RETURNING id INTO rl7;
+  INSERT INTO procurement.rfq_lines (rfq_id, product_id, description, quantity, unit, target_price, org_id)
+    VALUES (rfq4, p4, 'Supply-D units', 300, 'each', 10.00, org) RETURNING id INTO rl8;
+
+  -- Only Premier Materials responds (4 days)
+  INSERT INTO procurement.rfq_responses (rfq_id, supplier_id, response_date, status, org_id)
+    VALUES (rfq4, s3, '2024-05-19', 'received', org) RETURNING id INTO resp9;
+  INSERT INTO procurement.rfq_response_lines (response_id, rfq_line_id, quoted_price, lead_time_days, org_id)
+    VALUES (resp9, rl7, 128.00, 12, org);
+  INSERT INTO procurement.rfq_response_lines (response_id, rfq_line_id, quoted_price, lead_time_days, org_id)
+    VALUES (resp9, rl8, 12.50, 10, org);
+
+  RAISE NOTICE 'RFQ seed data inserted: 4 RFQs, 8 lines, 9 responses, 16 response lines';
+END $$;
+
 
 -- ============================================================================
 -- Cashbook: Bank reconciliation and statement line tables

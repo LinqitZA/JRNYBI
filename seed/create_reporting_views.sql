@@ -34,6 +34,7 @@ DROP VIEW IF EXISTS reporting.v_product_catalogue CASCADE;
 DROP VIEW IF EXISTS reporting.v_pick_pack_performance CASCADE;
 DROP VIEW IF EXISTS reporting.v_otif CASCADE;
 DROP VIEW IF EXISTS reporting.v_procurement_otif CASCADE;
+DROP VIEW IF EXISTS reporting.v_purchase_price_variance CASCADE;
 DROP VIEW IF EXISTS reporting.v_ap_aging CASCADE;
 DROP VIEW IF EXISTS reporting.v_budget_variance CASCADE;
 DROP VIEW IF EXISTS reporting.v_pnl CASCADE;
@@ -1492,35 +1493,113 @@ COMMENT ON COLUMN reporting.v_procurement_otif.branch_id IS 'Branch ID for RLS f
 
 
 -- ============================================================================
--- 34. v_bank_reconciliation_status — Reconciliation progress per bank account
+-- 34. v_purchase_price_variance — PPV: PO price vs GRN actual cost
+-- ============================================================================
+CREATE VIEW reporting.v_purchase_price_variance AS
+SELECT
+  grl.id                                                      AS grn_line_id,
+  pol.id                                                      AS po_line_id,
+  po.id                                                       AS po_id,
+  po.po_number,
+  po.order_date,
+  gr.receipt_date,
+  gr.grn_number,
+  s.id                                                        AS supplier_id,
+  s.first_name || ' ' || s.last_name                         AS supplier_name,
+  p.id                                                        AS product_id,
+  p.product_code,
+  p.product_name,
+  p.category                                                  AS product_category,
+  pol.quantity                                                 AS ordered_qty,
+  grl.received_qty,
+  pol.unit_cost                                               AS po_unit_cost,
+  grl.unit_cost                                               AS grn_unit_cost,
+  (grl.unit_cost - pol.unit_cost)                             AS ppv_per_unit,
+  (grl.received_qty * pol.unit_cost)                          AS po_line_value,
+  (grl.received_qty * grl.unit_cost)                          AS grn_line_value,
+  ((grl.unit_cost - pol.unit_cost) * grl.received_qty)        AS ppv_amount,
+  CASE WHEN pol.unit_cost = 0 THEN 0
+    ELSE ROUND(((grl.unit_cost - pol.unit_cost) / pol.unit_cost) * 100, 2)
+  END                                                         AS ppv_pct,
+  CASE
+    WHEN (grl.unit_cost - pol.unit_cost) > 0 THEN 'Unfavourable'
+    WHEN (grl.unit_cost - pol.unit_cost) < 0 THEN 'Favourable'
+    ELSE 'No Variance'
+  END                                                         AS variance_type,
+  po.org_id,
+  po.branch_id
+FROM procurement.purchase_order_lines pol
+JOIN procurement.purchase_orders po ON po.id = pol.po_id
+JOIN inventory.goods_receipts gr ON gr.po_id = po.id
+JOIN inventory.goods_receipt_lines grl ON grl.grn_id = gr.id AND grl.product_id = pol.product_id
+JOIN core.contacts s ON s.id = po.supplier_id
+JOIN inventory.products p ON p.id = pol.product_id;
+
+COMMENT ON VIEW  reporting.v_purchase_price_variance IS 'Purchase Price Variance: compares PO agreed price to GRN actual cost per receipt line';
+COMMENT ON COLUMN reporting.v_purchase_price_variance.po_unit_cost IS 'Agreed unit price on the purchase order line';
+COMMENT ON COLUMN reporting.v_purchase_price_variance.grn_unit_cost IS 'Actual unit cost recorded on the goods receipt';
+COMMENT ON COLUMN reporting.v_purchase_price_variance.ppv_per_unit IS 'Per-unit variance (GRN cost minus PO cost)';
+COMMENT ON COLUMN reporting.v_purchase_price_variance.ppv_amount IS 'Total variance amount (ppv_per_unit x received_qty)';
+COMMENT ON COLUMN reporting.v_purchase_price_variance.ppv_pct IS 'Variance as percentage of PO unit cost';
+COMMENT ON COLUMN reporting.v_purchase_price_variance.variance_type IS 'Favourable (cost lower), Unfavourable (cost higher), or No Variance';
+COMMENT ON COLUMN reporting.v_purchase_price_variance.supplier_id IS 'fk:core.contacts.id Supplier FK';
+COMMENT ON COLUMN reporting.v_purchase_price_variance.po_id IS 'fk:procurement.purchase_orders.id Purchase order FK';
+COMMENT ON COLUMN reporting.v_purchase_price_variance.product_id IS 'fk:inventory.products.id Product FK';
+COMMENT ON COLUMN reporting.v_purchase_price_variance.org_id IS 'Organization ID for RLS filtering';
+COMMENT ON COLUMN reporting.v_purchase_price_variance.branch_id IS 'Branch ID for RLS filtering';
+
+
+-- ============================================================================
+-- 35. v_bank_reconciliation_status — Reconciliation progress per bank account
 -- ============================================================================
 
 CREATE VIEW reporting.v_bank_reconciliation_status AS
+WITH line_stats AS (
+  SELECT
+    sl.bank_account_id,
+    COUNT(*)                                          AS total_lines,
+    COUNT(*) FILTER (WHERE sl.match_status = 'matched')     AS matched_count,
+    COUNT(*) FILTER (WHERE sl.match_status = 'unmatched')   AS unmatched_count,
+    ROUND(
+      100.0 * COUNT(*) FILTER (WHERE sl.match_status = 'matched')
+      / NULLIF(COUNT(*), 0), 1
+    )                                                 AS pct_reconciled,
+    COALESCE(SUM(ABS(sl.amount)) FILTER (WHERE sl.match_status = 'matched'), 0)   AS matched_value,
+    COALESCE(SUM(ABS(sl.amount)) FILTER (WHERE sl.match_status = 'unmatched'), 0) AS unmatched_value,
+    MIN(sl.statement_date) FILTER (WHERE sl.match_status = 'unmatched') AS oldest_unmatched_date,
+    CURRENT_DATE - MIN(sl.statement_date) FILTER (WHERE sl.match_status = 'unmatched') AS oldest_unmatched_days
+  FROM cashbook.statement_lines sl
+  GROUP BY sl.bank_account_id
+),
+recon_stats AS (
+  SELECT DISTINCT ON (br.bank_account_id)
+    br.bank_account_id,
+    br.reconciliation_date AS last_reconciliation_date,
+    br.status              AS last_reconciliation_status
+  FROM cashbook.bank_reconciliations br
+  ORDER BY br.bank_account_id, br.reconciliation_date DESC
+)
 SELECT
   ba.id                                          AS bank_account_id,
   ba.account_name,
   ba.bank_name,
   ba.account_number,
   ba.balance                                     AS current_balance,
-  COUNT(sl.id)                                   AS total_lines,
-  COUNT(sl.id) FILTER (WHERE sl.match_status = 'matched')     AS matched_count,
-  COUNT(sl.id) FILTER (WHERE sl.match_status = 'unmatched')   AS unmatched_count,
-  ROUND(
-    100.0 * COUNT(sl.id) FILTER (WHERE sl.match_status = 'matched')
-    / NULLIF(COUNT(sl.id), 0), 1
-  )                                              AS pct_reconciled,
-  COALESCE(SUM(ABS(sl.amount)) FILTER (WHERE sl.match_status = 'matched'), 0)   AS matched_value,
-  COALESCE(SUM(ABS(sl.amount)) FILTER (WHERE sl.match_status = 'unmatched'), 0) AS unmatched_value,
-  MIN(sl.statement_date) FILTER (WHERE sl.match_status = 'unmatched') AS oldest_unmatched_date,
-  CURRENT_DATE - MIN(sl.statement_date) FILTER (WHERE sl.match_status = 'unmatched') AS oldest_unmatched_days,
-  MAX(br.reconciliation_date)                    AS last_reconciliation_date,
-  MAX(br.status)                                 AS last_reconciliation_status,
-  COALESCE(ba.org_id, sl.org_id)                 AS org_id,
+  COALESCE(ls.total_lines, 0)                    AS total_lines,
+  COALESCE(ls.matched_count, 0)                  AS matched_count,
+  COALESCE(ls.unmatched_count, 0)                AS unmatched_count,
+  COALESCE(ls.pct_reconciled, 0)                 AS pct_reconciled,
+  COALESCE(ls.matched_value, 0)                  AS matched_value,
+  COALESCE(ls.unmatched_value, 0)                AS unmatched_value,
+  ls.oldest_unmatched_date,
+  ls.oldest_unmatched_days,
+  rs.last_reconciliation_date,
+  rs.last_reconciliation_status,
+  ba.org_id,
   NULL::UUID                                     AS branch_id
 FROM cashbook.bank_accounts ba
-LEFT JOIN cashbook.statement_lines sl ON sl.bank_account_id = ba.id
-LEFT JOIN cashbook.bank_reconciliations br ON br.bank_account_id = ba.id
-GROUP BY ba.id, ba.account_name, ba.bank_name, ba.account_number, ba.balance, ba.org_id, sl.org_id;
+LEFT JOIN line_stats ls ON ls.bank_account_id = ba.id
+LEFT JOIN recon_stats rs ON rs.bank_account_id = ba.id;
 
 COMMENT ON VIEW  reporting.v_bank_reconciliation_status IS 'Bank reconciliation progress per account with matched/unmatched counts';
 COMMENT ON COLUMN reporting.v_bank_reconciliation_status.bank_account_id IS 'fk:cashbook.bank_accounts.id Bank account FK';
@@ -1576,44 +1655,51 @@ COMMENT ON COLUMN reporting.v_unmatched_statement_lines.org_id IS 'Organization 
 -- ============================================================================
 
 CREATE VIEW reporting.v_cash_position AS
+WITH ar_totals AS (
+  SELECT
+    COALESCE(SUM(inv.balance_due), 0)                                                          AS total_receivable,
+    COALESCE(SUM(inv.balance_due) FILTER (WHERE inv.due_date <= CURRENT_DATE + 30), 0)         AS receivable_30d,
+    COALESCE(SUM(inv.balance_due) FILTER (WHERE inv.due_date <= CURRENT_DATE + 60), 0)         AS receivable_60d,
+    COALESCE(SUM(inv.balance_due) FILTER (WHERE inv.due_date <= CURRENT_DATE + 90), 0)         AS receivable_90d
+  FROM finance.invoices inv
+  WHERE inv.balance_due > 0
+),
+ap_totals AS (
+  SELECT
+    COALESCE(SUM(po.total_amount) FILTER (WHERE po.status IN ('approved','sent','partially_received')), 0)  AS total_payable,
+    COALESCE(SUM(po.total_amount) FILTER (WHERE po.expected_date <= CURRENT_DATE + 30 AND po.status IN ('approved','sent','partially_received')), 0) AS payable_30d,
+    COALESCE(SUM(po.total_amount) FILTER (WHERE po.expected_date <= CURRENT_DATE + 60 AND po.status IN ('approved','sent','partially_received')), 0) AS payable_60d,
+    COALESCE(SUM(po.total_amount) FILTER (WHERE po.expected_date <= CURRENT_DATE + 90 AND po.status IN ('approved','sent','partially_received')), 0) AS payable_90d
+  FROM procurement.purchase_orders po
+),
+total_cash AS (
+  SELECT SUM(ba.balance) AS total_balance
+  FROM cashbook.bank_accounts ba
+)
 SELECT
-  ba.id                                          AS bank_account_id,
+  ba.id                                                    AS bank_account_id,
   ba.account_name,
   ba.bank_name,
   ba.account_number,
-  ba.balance                                     AS current_balance,
-  COALESCE(ar.total_receivable, 0)               AS projected_inflows,
-  COALESCE(ap.total_payable, 0)                  AS projected_outflows,
-  ba.balance + COALESCE(ar.total_receivable, 0) - COALESCE(ap.total_payable, 0) AS projected_balance,
-  COALESCE(ar.receivable_30d, 0)                 AS inflows_30d,
-  COALESCE(ar.receivable_60d, 0)                 AS inflows_60d,
-  COALESCE(ar.receivable_90d, 0)                 AS inflows_90d,
-  COALESCE(ap.payable_30d, 0)                    AS outflows_30d,
-  COALESCE(ap.payable_60d, 0)                    AS outflows_60d,
-  COALESCE(ap.payable_90d, 0)                    AS outflows_90d,
-  ba.balance + COALESCE(ar.receivable_30d, 0) - COALESCE(ap.payable_30d, 0) AS balance_30d,
-  ba.balance + COALESCE(ar.receivable_60d, 0) - COALESCE(ap.payable_60d, 0) AS balance_60d,
-  ba.balance + COALESCE(ar.receivable_90d, 0) - COALESCE(ap.payable_90d, 0) AS balance_90d,
-  COALESCE(ba.org_id)                            AS org_id,
-  NULL::UUID                                     AS branch_id
+  ba.balance                                               AS current_balance,
+  ar.total_receivable                                      AS projected_inflows,
+  ap.total_payable                                         AS projected_outflows,
+  tc.total_balance + ar.total_receivable - ap.total_payable AS projected_balance,
+  ar.receivable_30d                                        AS inflows_30d,
+  ar.receivable_60d                                        AS inflows_60d,
+  ar.receivable_90d                                        AS inflows_90d,
+  ap.payable_30d                                           AS outflows_30d,
+  ap.payable_60d                                           AS outflows_60d,
+  ap.payable_90d                                           AS outflows_90d,
+  tc.total_balance + ar.receivable_30d - ap.payable_30d    AS balance_30d,
+  tc.total_balance + ar.receivable_60d - ap.payable_60d    AS balance_60d,
+  tc.total_balance + ar.receivable_90d - ap.payable_90d    AS balance_90d,
+  ba.org_id,
+  NULL::UUID                                               AS branch_id
 FROM cashbook.bank_accounts ba
-LEFT JOIN LATERAL (
-  SELECT
-    SUM(inv.balance_due)                                                                      AS total_receivable,
-    SUM(inv.balance_due) FILTER (WHERE inv.due_date <= CURRENT_DATE + 30)                     AS receivable_30d,
-    SUM(inv.balance_due) FILTER (WHERE inv.due_date <= CURRENT_DATE + 60)                     AS receivable_60d,
-    SUM(inv.balance_due) FILTER (WHERE inv.due_date <= CURRENT_DATE + 90)                     AS receivable_90d
-  FROM finance.invoices inv
-  WHERE inv.balance_due > 0
-) ar ON true
-LEFT JOIN LATERAL (
-  SELECT
-    SUM(po.total_amount) FILTER (WHERE po.status IN ('approved','sent','partially_received'))  AS total_payable,
-    SUM(po.total_amount) FILTER (WHERE po.expected_date <= CURRENT_DATE + 30 AND po.status IN ('approved','sent','partially_received')) AS payable_30d,
-    SUM(po.total_amount) FILTER (WHERE po.expected_date <= CURRENT_DATE + 60 AND po.status IN ('approved','sent','partially_received')) AS payable_60d,
-    SUM(po.total_amount) FILTER (WHERE po.expected_date <= CURRENT_DATE + 90 AND po.status IN ('approved','sent','partially_received')) AS payable_90d
-  FROM procurement.purchase_orders po
-) ap ON true;
+CROSS JOIN ar_totals ar
+CROSS JOIN ap_totals ap
+CROSS JOIN total_cash tc;
 
 COMMENT ON VIEW  reporting.v_cash_position IS 'Cash position per bank account with projected inflows (AR) and outflows (AP)';
 COMMENT ON COLUMN reporting.v_cash_position.bank_account_id IS 'fk:cashbook.bank_accounts.id Bank account FK';
@@ -1624,5 +1710,5 @@ COMMENT ON COLUMN reporting.v_cash_position.org_id IS 'Organization ID for RLS f
 
 
 -- ============================================================================
--- Done — all 36 reporting views created successfully
+-- Done — all 37 reporting views created successfully
 -- ============================================================================

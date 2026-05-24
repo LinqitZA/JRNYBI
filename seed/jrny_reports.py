@@ -852,6 +852,101 @@ WHERE period BETWEEN '{{ start_date }}' AND '{{ end_date }}'
         },
         "tags": ["procurement", "jrny-report", "report:procurement"],
     },
+    # ---- Procurement: RFQ Response Analysis ----
+    "rfq_response_analysis": {
+        "name": "RFQ Response Analysis - Vendor Metrics",
+        "description": "Request for Quote response rates, average response time, and price competitiveness across vendors. Supports sourcing strategy and vendor pool management.",
+        "query": """
+WITH rfq_invites AS (
+    -- Each RFQ is assumed sent to all 3 suppliers (or we count actual responses + declines)
+    SELECT
+        r.rfq_id,
+        r.supplier_id,
+        s.supplier_name,
+        s.supplier_code,
+        rfq.rfq_number,
+        rfq.title AS rfq_title,
+        rfq.rfq_date,
+        r.response_date,
+        r.status AS response_status,
+        CASE WHEN r.status = 'received' THEN 1 ELSE 0 END AS responded,
+        CASE WHEN r.status = 'declined' THEN 1 ELSE 0 END AS declined,
+        CASE WHEN r.response_date IS NOT NULL
+             THEN (r.response_date - rfq.rfq_date)
+             ELSE NULL
+        END AS response_days
+    FROM procurement.rfq_responses r
+    JOIN procurement.rfq_requests rfq ON rfq.id = r.rfq_id
+    JOIN reporting.v_suppliers s ON s.id = r.supplier_id
+    WHERE rfq.rfq_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+)
+SELECT
+    supplier_name,
+    supplier_code,
+    COUNT(*) AS rfqs_received,
+    SUM(responded) AS rfqs_responded,
+    SUM(declined) AS rfqs_declined,
+    ROUND(100.0 * SUM(responded) / NULLIF(COUNT(*), 0), 1) AS response_rate_pct,
+    ROUND(AVG(CASE WHEN responded = 1 THEN response_days END), 1) AS avg_response_days,
+    MIN(CASE WHEN responded = 1 THEN response_days END) AS min_response_days,
+    MAX(CASE WHEN responded = 1 THEN response_days END) AS max_response_days
+FROM rfq_invites
+GROUP BY supplier_name, supplier_code
+ORDER BY response_rate_pct DESC, avg_response_days ASC;
+""".strip(),
+        "options": {"parameters": DATE_PARAMS},
+        "tags": ["procurement", "jrny-report", "report:procurement"],
+    },
+    "rfq_price_comparison": {
+        "name": "RFQ Response Analysis - Price Comparison",
+        "description": "Compare quoted prices across respondents for the same items to identify best-value suppliers.",
+        "query": """
+SELECT
+    rfq.rfq_number,
+    rfq.title AS rfq_title,
+    rl.description AS item_description,
+    rl.quantity,
+    rl.target_price,
+    s.supplier_name,
+    rrl.quoted_price,
+    rrl.lead_time_days,
+    ROUND(100.0 * (rrl.quoted_price - rl.target_price) / NULLIF(rl.target_price, 0), 1) AS price_vs_target_pct,
+    CASE
+        WHEN rrl.quoted_price <= rl.target_price THEN 'Below Target'
+        WHEN rrl.quoted_price <= rl.target_price * 1.1 THEN 'Near Target'
+        ELSE 'Above Target'
+    END AS price_bracket
+FROM procurement.rfq_response_lines rrl
+JOIN procurement.rfq_responses r ON r.id = rrl.response_id
+JOIN procurement.rfq_lines rl ON rl.id = rrl.rfq_line_id
+JOIN procurement.rfq_requests rfq ON rfq.id = r.rfq_id
+JOIN reporting.v_suppliers s ON s.id = r.supplier_id
+WHERE rfq.rfq_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND r.status = 'received'
+ORDER BY rfq.rfq_number, rl.description, rrl.quoted_price;
+""".strip(),
+        "options": {"parameters": DATE_PARAMS},
+        "tags": ["procurement", "jrny-report", "report:procurement"],
+    },
+    "rfq_response_kpi": {
+        "name": "RFQ Response Analysis - KPIs",
+        "description": "Summary KPIs for RFQ response analysis: total RFQs, overall response rate, average response time.",
+        "query": """
+SELECT
+    COUNT(DISTINCT rfq.id) AS total_rfqs,
+    COUNT(r.id) AS total_invitations,
+    SUM(CASE WHEN r.status = 'received' THEN 1 ELSE 0 END) AS total_responses,
+    ROUND(100.0 * SUM(CASE WHEN r.status = 'received' THEN 1 ELSE 0 END)
+        / NULLIF(COUNT(r.id), 0), 1) AS overall_response_rate,
+    ROUND(AVG(CASE WHEN r.status = 'received'
+        THEN (r.response_date - rfq.rfq_date) END), 1) AS avg_response_days
+FROM procurement.rfq_requests rfq
+LEFT JOIN procurement.rfq_responses r ON r.rfq_id = rfq.id
+WHERE rfq.rfq_date BETWEEN '{{ start_date }}' AND '{{ end_date }}';
+""".strip(),
+        "options": {"parameters": DATE_PARAMS},
+        "tags": ["procurement", "jrny-report", "report:procurement"],
+    },
     # ---- Finance: GL Account Activity ----
     "gl_account_activity": {
         "name": "GL Account Activity",
