@@ -37,6 +37,7 @@ DROP VIEW IF EXISTS reporting.v_ap_aging CASCADE;
 DROP VIEW IF EXISTS reporting.v_budget_variance CASCADE;
 DROP VIEW IF EXISTS reporting.v_pnl CASCADE;
 DROP VIEW IF EXISTS reporting.v_balance_sheet CASCADE;
+DROP VIEW IF EXISTS reporting.v_quote_to_order_conversion CASCADE;
 
 -- Also drop any legacy reporting tables (dev migration path)
 DROP TABLE IF EXISTS reporting.v_sales_orders CASCADE;
@@ -796,6 +797,47 @@ COMMENT ON COLUMN reporting.v_balance_sheet.org_id IS 'Organization ID for RLS f
 
 
 -- ============================================================================
+-- 22. v_quote_to_order_conversion — Quote-to-Order conversion tracking
+-- ============================================================================
+CREATE VIEW reporting.v_quote_to_order_conversion AS
+SELECT
+  q.id                                                     AS quote_id,
+  q.quote_number,
+  c.first_name || ' ' || c.last_name                      AS customer_name,
+  q.customer_id,
+  q.total_amount                                           AS quote_amount,
+  q.status                                                 AS quote_status,
+  q.quote_date,
+  q.expiry_date,
+  q.sales_rep,
+  so.id                                                    AS order_id,
+  so.order_number,
+  so.order_date,
+  so.total_amount                                          AS order_amount,
+  CASE WHEN so.id IS NOT NULL THEN TRUE ELSE FALSE END     AS converted,
+  CASE WHEN so.id IS NOT NULL
+    THEN so.order_date - q.quote_date
+    ELSE NULL
+  END                                                      AS days_to_close,
+  DATE_TRUNC('month', q.quote_date)::DATE                  AS quote_month,
+  q.org_id,
+  q.branch_id
+FROM sales.quotes q
+LEFT JOIN core.contacts c ON c.id = q.customer_id
+LEFT JOIN sales.sales_orders so ON so.quote_id = q.id;
+
+COMMENT ON VIEW  reporting.v_quote_to_order_conversion IS 'Quote-to-Order conversion tracking with time-to-close and rep performance';
+COMMENT ON COLUMN reporting.v_quote_to_order_conversion.quote_id IS 'Quote primary key';
+COMMENT ON COLUMN reporting.v_quote_to_order_conversion.quote_number IS 'Unique quote reference number | display_column';
+COMMENT ON COLUMN reporting.v_quote_to_order_conversion.customer_id IS 'fk:core.contacts.id Customer foreign key';
+COMMENT ON COLUMN reporting.v_quote_to_order_conversion.converted IS 'Whether the quote was converted to a sales order';
+COMMENT ON COLUMN reporting.v_quote_to_order_conversion.days_to_close IS 'Number of days from quote date to order confirmation';
+COMMENT ON COLUMN reporting.v_quote_to_order_conversion.quote_month IS 'Month the quote was created (for trend analysis)';
+COMMENT ON COLUMN reporting.v_quote_to_order_conversion.org_id IS 'Organization ID for RLS filtering';
+COMMENT ON COLUMN reporting.v_quote_to_order_conversion.branch_id IS 'Branch ID for RLS filtering';
+
+
+-- ============================================================================
 -- COMMENT ON annotations for base tables (idempotent)
 -- ============================================================================
 COMMENT ON VIEW reporting.v_sales_orders IS 'Denormalized sales order view with customer name and line aggregates';
@@ -810,5 +852,5 @@ COMMENT ON VIEW reporting.v_product_catalogue IS 'Product catalogue with pricing
 
 
 -- ============================================================================
--- Done — all 21 reporting views created successfully
+-- Done — all 22 reporting views created successfully
 -- ============================================================================

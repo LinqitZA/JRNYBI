@@ -773,6 +773,27 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='sales' AND table_name='sales_orders' AND column_name='branch_id') THEN
     ALTER TABLE sales.sales_orders ADD COLUMN branch_id UUID;
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='sales' AND table_name='sales_orders' AND column_name='quote_id') THEN
+    ALTER TABLE sales.sales_orders ADD COLUMN quote_id UUID;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='sales' AND table_name='quotes' AND column_name='org_id') THEN
+    ALTER TABLE sales.quotes ADD COLUMN org_id UUID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='sales' AND table_name='quotes' AND column_name='branch_id') THEN
+    ALTER TABLE sales.quotes ADD COLUMN branch_id UUID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='sales' AND table_name='quotes' AND column_name='quote_date') THEN
+    ALTER TABLE sales.quotes ADD COLUMN quote_date DATE DEFAULT CURRENT_DATE;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='sales' AND table_name='quotes' AND column_name='sales_rep') THEN
+    ALTER TABLE sales.quotes ADD COLUMN sales_rep TEXT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='sales' AND table_name='quotes' AND column_name='expiry_date') THEN
+    ALTER TABLE sales.quotes ADD COLUMN expiry_date DATE;
+  END IF;
 END $$;
 
 DO $$ BEGIN
@@ -967,6 +988,117 @@ COMMENT ON TABLE finance.accounts_payable IS 'Supplier invoices/bills (accounts 
 COMMENT ON TABLE finance.budgets IS 'Budget entries by account, year, and month';
 COMMENT ON TABLE procurement.purchase_order_lines IS 'Purchase order line items';
 
+-- FK: sales_orders.quote_id -> sales.quotes.id
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_sales_orders_quote' AND table_schema = 'sales'
+  ) THEN
+    ALTER TABLE sales.sales_orders
+      ADD CONSTRAINT fk_sales_orders_quote FOREIGN KEY (quote_id) REFERENCES sales.quotes(id);
+  END IF;
+END $$;
+
+-- ============================================================================
+-- Seed test data for Quote-to-Order Conversion report
+-- ============================================================================
+DO $$
+DECLARE
+  org UUID := '11111111-2222-3333-4444-555555555555';
+  br  UUID := 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  c1  UUID; c2 UUID; c3 UUID;
+  q1  UUID; q2 UUID; q3 UUID; q4 UUID; q5 UUID;
+  q6  UUID; q7 UUID; q8 UUID; q9 UUID; q10 UUID;
+  q11 UUID; q12 UUID; q13 UUID; q14 UUID; q15 UUID;
+BEGIN
+  -- Only seed if quotes table is empty
+  IF EXISTS (SELECT 1 FROM sales.quotes LIMIT 1) THEN
+    RETURN;
+  END IF;
+
+  -- Ensure org exists (needed for FK on contacts)
+  IF NOT EXISTS (SELECT 1 FROM core.organizations WHERE id = org) THEN
+    INSERT INTO core.organizations (id, name) VALUES (org, 'Test Org');
+  END IF;
+
+  -- Get or create customer contacts
+  SELECT id INTO c1 FROM core.contacts WHERE first_name = 'Alice' AND last_name = 'Johnson' LIMIT 1;
+  IF c1 IS NULL THEN
+    INSERT INTO core.contacts (first_name, last_name, email, org_id) VALUES ('Alice', 'Johnson', 'alice@example.com', org) RETURNING id INTO c1;
+  END IF;
+  SELECT id INTO c2 FROM core.contacts WHERE first_name = 'Bob' AND last_name = 'Smith' LIMIT 1;
+  IF c2 IS NULL THEN
+    INSERT INTO core.contacts (first_name, last_name, email, org_id) VALUES ('Bob', 'Smith', 'bob@example.com', org) RETURNING id INTO c2;
+  END IF;
+  SELECT id INTO c3 FROM core.contacts WHERE first_name = 'Carol' AND last_name = 'Davis' LIMIT 1;
+  IF c3 IS NULL THEN
+    INSERT INTO core.contacts (first_name, last_name, email, org_id) VALUES ('Carol', 'Davis', 'carol@example.com', org) RETURNING id INTO c3;
+  END IF;
+
+  -- Insert quotes spread across months (Jan 2024 - Jun 2024)
+  -- Rep: Sarah Connor - strong performer
+  INSERT INTO sales.quotes (quote_number, customer_id, total_amount, status, quote_date, sales_rep, org_id, branch_id, expiry_date)
+    VALUES ('Q-2024-001', c1, 15000.00, 'accepted', '2024-01-10', 'Sarah Connor', org, br, '2024-02-10') RETURNING id INTO q1;
+  INSERT INTO sales.quotes (quote_number, customer_id, total_amount, status, quote_date, sales_rep, org_id, branch_id, expiry_date)
+    VALUES ('Q-2024-002', c2, 8500.00, 'accepted', '2024-01-15', 'Sarah Connor', org, br, '2024-02-15') RETURNING id INTO q2;
+  INSERT INTO sales.quotes (quote_number, customer_id, total_amount, status, quote_date, sales_rep, org_id, branch_id, expiry_date)
+    VALUES ('Q-2024-003', c3, 22000.00, 'rejected', '2024-01-20', 'Sarah Connor', org, br, '2024-02-20') RETURNING id INTO q3;
+  INSERT INTO sales.quotes (quote_number, customer_id, total_amount, status, quote_date, sales_rep, org_id, branch_id, expiry_date)
+    VALUES ('Q-2024-004', c1, 12000.00, 'accepted', '2024-02-05', 'Sarah Connor', org, br, '2024-03-05') RETURNING id INTO q4;
+  INSERT INTO sales.quotes (quote_number, customer_id, total_amount, status, quote_date, sales_rep, org_id, branch_id, expiry_date)
+    VALUES ('Q-2024-005', c2, 9500.00, 'expired', '2024-02-12', 'Sarah Connor', org, br, '2024-03-12') RETURNING id INTO q5;
+
+  -- Rep: Mike Ross - average performer
+  INSERT INTO sales.quotes (quote_number, customer_id, total_amount, status, quote_date, sales_rep, org_id, branch_id, expiry_date)
+    VALUES ('Q-2024-006', c3, 18000.00, 'accepted', '2024-03-01', 'Mike Ross', org, br, '2024-04-01') RETURNING id INTO q6;
+  INSERT INTO sales.quotes (quote_number, customer_id, total_amount, status, quote_date, sales_rep, org_id, branch_id, expiry_date)
+    VALUES ('Q-2024-007', c1, 7000.00, 'rejected', '2024-03-10', 'Mike Ross', org, br, '2024-04-10') RETURNING id INTO q7;
+  INSERT INTO sales.quotes (quote_number, customer_id, total_amount, status, quote_date, sales_rep, org_id, branch_id, expiry_date)
+    VALUES ('Q-2024-008', c2, 25000.00, 'accepted', '2024-04-02', 'Mike Ross', org, br, '2024-05-02') RETURNING id INTO q8;
+  INSERT INTO sales.quotes (quote_number, customer_id, total_amount, status, quote_date, sales_rep, org_id, branch_id, expiry_date)
+    VALUES ('Q-2024-009', c3, 11000.00, 'rejected', '2024-04-15', 'Mike Ross', org, br, '2024-05-15') RETURNING id INTO q9;
+  INSERT INTO sales.quotes (quote_number, customer_id, total_amount, status, quote_date, sales_rep, org_id, branch_id, expiry_date)
+    VALUES ('Q-2024-010', c1, 16000.00, 'expired', '2024-04-25', 'Mike Ross', org, br, '2024-05-25') RETURNING id INTO q10;
+
+  -- Rep: Lisa Park - newer rep
+  INSERT INTO sales.quotes (quote_number, customer_id, total_amount, status, quote_date, sales_rep, org_id, branch_id, expiry_date)
+    VALUES ('Q-2024-011', c2, 13000.00, 'accepted', '2024-05-05', 'Lisa Park', org, br, '2024-06-05') RETURNING id INTO q11;
+  INSERT INTO sales.quotes (quote_number, customer_id, total_amount, status, quote_date, sales_rep, org_id, branch_id, expiry_date)
+    VALUES ('Q-2024-012', c3, 6500.00, 'sent', '2024-05-15', 'Lisa Park', org, br, '2024-06-15') RETURNING id INTO q12;
+  INSERT INTO sales.quotes (quote_number, customer_id, total_amount, status, quote_date, sales_rep, org_id, branch_id, expiry_date)
+    VALUES ('Q-2024-013', c1, 19000.00, 'accepted', '2024-06-01', 'Lisa Park', org, br, '2024-07-01') RETURNING id INTO q13;
+  INSERT INTO sales.quotes (quote_number, customer_id, total_amount, status, quote_date, sales_rep, org_id, branch_id, expiry_date)
+    VALUES ('Q-2024-014', c2, 8000.00, 'rejected', '2024-06-10', 'Lisa Park', org, br, '2024-07-10') RETURNING id INTO q14;
+  INSERT INTO sales.quotes (quote_number, customer_id, total_amount, status, quote_date, sales_rep, org_id, branch_id, expiry_date)
+    VALUES ('Q-2024-015', c3, 21000.00, 'accepted', '2024-06-20', 'Lisa Park', org, br, '2024-07-20') RETURNING id INTO q15;
+
+  -- Create corresponding sales orders for accepted quotes
+  -- Q1 accepted -> order created 5 days later
+  INSERT INTO sales.sales_orders (order_number, customer_id, total_amount, status, order_date, org_id, branch_id, quote_id)
+    VALUES ('SO-2024-101', c1, 15000.00, 'confirmed', '2024-01-15', org, br, q1);
+  -- Q2 accepted -> order created 3 days later
+  INSERT INTO sales.sales_orders (order_number, customer_id, total_amount, status, order_date, org_id, branch_id, quote_id)
+    VALUES ('SO-2024-102', c2, 8500.00, 'confirmed', '2024-01-18', org, br, q2);
+  -- Q4 accepted -> order created 7 days later
+  INSERT INTO sales.sales_orders (order_number, customer_id, total_amount, status, order_date, org_id, branch_id, quote_id)
+    VALUES ('SO-2024-103', c1, 12000.00, 'confirmed', '2024-02-12', org, br, q4);
+  -- Q6 accepted -> order created 4 days later
+  INSERT INTO sales.sales_orders (order_number, customer_id, total_amount, status, order_date, org_id, branch_id, quote_id)
+    VALUES ('SO-2024-104', c3, 18000.00, 'confirmed', '2024-03-05', org, br, q6);
+  -- Q8 accepted -> order created 10 days later
+  INSERT INTO sales.sales_orders (order_number, customer_id, total_amount, status, order_date, org_id, branch_id, quote_id)
+    VALUES ('SO-2024-105', c2, 25000.00, 'confirmed', '2024-04-12', org, br, q8);
+  -- Q11 accepted -> order created 2 days later
+  INSERT INTO sales.sales_orders (order_number, customer_id, total_amount, status, order_date, org_id, branch_id, quote_id)
+    VALUES ('SO-2024-106', c2, 13000.00, 'confirmed', '2024-05-07', org, br, q11);
+  -- Q13 accepted -> order created 6 days later
+  INSERT INTO sales.sales_orders (order_number, customer_id, total_amount, status, order_date, org_id, branch_id, quote_id)
+    VALUES ('SO-2024-107', c1, 19000.00, 'confirmed', '2024-06-07', org, br, q13);
+  -- Q15 accepted -> order created 3 days later
+  INSERT INTO sales.sales_orders (order_number, customer_id, total_amount, status, order_date, org_id, branch_id, quote_id)
+    VALUES ('SO-2024-108', c3, 21000.00, 'confirmed', '2024-06-23', org, br, q15);
+END $$;
+
 -- ============================================================================
 -- Reporting views are now created by seed/create_reporting_views.sql
 -- (see that file for the comprehensive denormalized reporting view set)
@@ -980,8 +1112,11 @@ COMMENT ON COLUMN core.branches.name IS 'Full name of the branch | display_colum
 COMMENT ON TABLE core.contacts IS 'Contact information';
 COMMENT ON COLUMN core.contacts.first_name IS 'First name | display_column';
 
-COMMENT ON TABLE sales.quotes IS 'Sales quotes';
+COMMENT ON TABLE sales.quotes IS 'Sales quotes and proposals sent to customers';
+COMMENT ON COLUMN sales.quotes.quote_number IS 'Unique quote reference number | display_column';
+COMMENT ON COLUMN sales.quotes.status IS 'Quote lifecycle status: draft, sent, accepted, rejected, expired';
 COMMENT ON TABLE sales.sales_orders IS 'Sales orders';
+COMMENT ON COLUMN sales.sales_orders.quote_id IS 'fk:sales.quotes.id Originating quote if converted from a quote';
 
 COMMENT ON TABLE finance.invoices IS 'Customer invoices';
 COMMENT ON TABLE finance.gl_entries IS 'General ledger journal entries';
