@@ -33,6 +33,7 @@ DROP VIEW IF EXISTS reporting.v_suppliers CASCADE;
 DROP VIEW IF EXISTS reporting.v_product_catalogue CASCADE;
 DROP VIEW IF EXISTS reporting.v_pick_pack_performance CASCADE;
 DROP VIEW IF EXISTS reporting.v_otif CASCADE;
+DROP VIEW IF EXISTS reporting.v_procurement_otif CASCADE;
 DROP VIEW IF EXISTS reporting.v_ap_aging CASCADE;
 DROP VIEW IF EXISTS reporting.v_budget_variance CASCADE;
 DROP VIEW IF EXISTS reporting.v_pnl CASCADE;
@@ -48,6 +49,9 @@ DROP VIEW IF EXISTS reporting.v_inventory_turnover CASCADE;
 DROP VIEW IF EXISTS reporting.v_grn_summary CASCADE;
 DROP VIEW IF EXISTS reporting.v_stock_count_variance CASCADE;
 DROP VIEW IF EXISTS reporting.v_bin_utilization CASCADE;
+DROP VIEW IF EXISTS reporting.v_bank_reconciliation_status CASCADE;
+DROP VIEW IF EXISTS reporting.v_unmatched_statement_lines CASCADE;
+DROP VIEW IF EXISTS reporting.v_cash_position CASCADE;
 
 -- Also drop any legacy reporting tables (dev migration path)
 DROP TABLE IF EXISTS reporting.v_sales_orders CASCADE;
@@ -1428,5 +1432,197 @@ COMMENT ON COLUMN reporting.v_bin_utilization.branch_id IS 'Branch ID for RLS fi
 
 
 -- ============================================================================
--- Done — all 32 reporting views created successfully
+-- 33. v_procurement_otif — On Time In Full (OTIF) supplier delivery metrics
+-- ============================================================================
+CREATE VIEW reporting.v_procurement_otif AS
+SELECT
+  gr.id                                   AS receipt_id,
+  gr.grn_number,
+  po.id                                   AS po_id,
+  po.po_number,
+  s.first_name || ' ' || s.last_name     AS supplier_name,
+  po.supplier_id,
+  po.order_date,
+  po.expected_date,
+  gr.receipt_date,
+  grl.product_id,
+  grl.expected_qty                        AS ordered_qty,
+  grl.received_qty,
+  grl.rejected_qty,
+  -- On-time: receipt_date <= expected_date
+  CASE
+    WHEN gr.receipt_date IS NOT NULL AND po.expected_date IS NOT NULL
+         AND gr.receipt_date <= po.expected_date THEN TRUE
+    ELSE FALSE
+  END                                     AS is_on_time,
+  -- In-full: received_qty >= expected_qty (ordered qty on the PO line)
+  CASE
+    WHEN grl.expected_qty > 0 AND grl.received_qty >= grl.expected_qty THEN TRUE
+    ELSE FALSE
+  END                                     AS is_in_full,
+  -- OTIF: both on-time AND in-full
+  CASE
+    WHEN gr.receipt_date IS NOT NULL AND po.expected_date IS NOT NULL
+         AND gr.receipt_date <= po.expected_date
+         AND grl.expected_qty > 0 AND grl.received_qty >= grl.expected_qty THEN TRUE
+    ELSE FALSE
+  END                                     AS is_otif,
+  -- Days late (negative = early, 0 = on-time, positive = late)
+  CASE
+    WHEN gr.receipt_date IS NOT NULL AND po.expected_date IS NOT NULL
+      THEN gr.receipt_date - po.expected_date
+    ELSE NULL
+  END                                     AS days_late,
+  gr.org_id,
+  gr.branch_id
+FROM inventory.goods_receipt_lines grl
+JOIN inventory.goods_receipts gr ON gr.id = grl.grn_id
+JOIN procurement.purchase_orders po ON po.id = gr.po_id
+LEFT JOIN core.contacts s ON s.id = po.supplier_id;
+
+COMMENT ON VIEW  reporting.v_procurement_otif IS 'Supplier delivery performance: On Time In Full (OTIF) metrics per GRN line';
+COMMENT ON COLUMN reporting.v_procurement_otif.is_on_time IS 'TRUE if goods received on or before PO expected date';
+COMMENT ON COLUMN reporting.v_procurement_otif.is_in_full IS 'TRUE if received quantity >= ordered quantity';
+COMMENT ON COLUMN reporting.v_procurement_otif.is_otif IS 'TRUE if both on-time AND in-full';
+COMMENT ON COLUMN reporting.v_procurement_otif.days_late IS 'Days past expected date (negative = early, 0 = on-time)';
+COMMENT ON COLUMN reporting.v_procurement_otif.supplier_id IS 'fk:core.contacts.id Supplier FK';
+COMMENT ON COLUMN reporting.v_procurement_otif.po_id IS 'fk:procurement.purchase_orders.id Purchase order FK';
+COMMENT ON COLUMN reporting.v_procurement_otif.org_id IS 'Organization ID for RLS filtering';
+COMMENT ON COLUMN reporting.v_procurement_otif.branch_id IS 'Branch ID for RLS filtering';
+
+
+-- ============================================================================
+-- 34. v_bank_reconciliation_status — Reconciliation progress per bank account
+-- ============================================================================
+
+CREATE VIEW reporting.v_bank_reconciliation_status AS
+SELECT
+  ba.id                                          AS bank_account_id,
+  ba.account_name,
+  ba.bank_name,
+  ba.account_number,
+  ba.balance                                     AS current_balance,
+  COUNT(sl.id)                                   AS total_lines,
+  COUNT(sl.id) FILTER (WHERE sl.match_status = 'matched')     AS matched_count,
+  COUNT(sl.id) FILTER (WHERE sl.match_status = 'unmatched')   AS unmatched_count,
+  ROUND(
+    100.0 * COUNT(sl.id) FILTER (WHERE sl.match_status = 'matched')
+    / NULLIF(COUNT(sl.id), 0), 1
+  )                                              AS pct_reconciled,
+  COALESCE(SUM(ABS(sl.amount)) FILTER (WHERE sl.match_status = 'matched'), 0)   AS matched_value,
+  COALESCE(SUM(ABS(sl.amount)) FILTER (WHERE sl.match_status = 'unmatched'), 0) AS unmatched_value,
+  MIN(sl.statement_date) FILTER (WHERE sl.match_status = 'unmatched') AS oldest_unmatched_date,
+  CURRENT_DATE - MIN(sl.statement_date) FILTER (WHERE sl.match_status = 'unmatched') AS oldest_unmatched_days,
+  MAX(br.reconciliation_date)                    AS last_reconciliation_date,
+  MAX(br.status)                                 AS last_reconciliation_status,
+  COALESCE(ba.org_id, sl.org_id)                 AS org_id,
+  NULL::UUID                                     AS branch_id
+FROM cashbook.bank_accounts ba
+LEFT JOIN cashbook.statement_lines sl ON sl.bank_account_id = ba.id
+LEFT JOIN cashbook.bank_reconciliations br ON br.bank_account_id = ba.id
+GROUP BY ba.id, ba.account_name, ba.bank_name, ba.account_number, ba.balance, ba.org_id, sl.org_id;
+
+COMMENT ON VIEW  reporting.v_bank_reconciliation_status IS 'Bank reconciliation progress per account with matched/unmatched counts';
+COMMENT ON COLUMN reporting.v_bank_reconciliation_status.bank_account_id IS 'fk:cashbook.bank_accounts.id Bank account FK';
+COMMENT ON COLUMN reporting.v_bank_reconciliation_status.pct_reconciled IS 'Percentage of statement lines matched';
+COMMENT ON COLUMN reporting.v_bank_reconciliation_status.oldest_unmatched_days IS 'Age in days of the oldest unmatched statement line';
+COMMENT ON COLUMN reporting.v_bank_reconciliation_status.org_id IS 'Organization ID for RLS filtering';
+
+
+-- ============================================================================
+-- 35. v_unmatched_statement_lines — Unmatched bank statement lines for reconciliation
+-- ============================================================================
+
+CREATE VIEW reporting.v_unmatched_statement_lines AS
+SELECT
+  sl.id,
+  ba.account_name                                AS bank_account,
+  ba.bank_name,
+  ba.account_number                              AS bank_account_number,
+  sl.bank_account_id,
+  sl.statement_date,
+  sl.description,
+  sl.amount,
+  sl.reference,
+  sl.match_status,
+  CURRENT_DATE - sl.statement_date               AS days_outstanding,
+  CASE
+    WHEN CURRENT_DATE - sl.statement_date <= 7   THEN '0-7 Days'
+    WHEN CURRENT_DATE - sl.statement_date <= 30  THEN '8-30 Days'
+    WHEN CURRENT_DATE - sl.statement_date <= 60  THEN '31-60 Days'
+    WHEN CURRENT_DATE - sl.statement_date <= 90  THEN '61-90 Days'
+    ELSE '90+ Days'
+  END                                            AS aging_bucket,
+  CASE
+    WHEN sl.amount >= 0 THEN 'Credit'
+    ELSE 'Debit'
+  END                                            AS direction,
+  sl.created_at,
+  COALESCE(sl.org_id, ba.org_id)                 AS org_id,
+  NULL::UUID                                     AS branch_id
+FROM cashbook.statement_lines sl
+JOIN cashbook.bank_accounts ba ON ba.id = sl.bank_account_id
+WHERE sl.match_status = 'unmatched';
+
+COMMENT ON VIEW  reporting.v_unmatched_statement_lines IS 'Unmatched bank statement lines pending reconciliation';
+COMMENT ON COLUMN reporting.v_unmatched_statement_lines.bank_account_id IS 'fk:cashbook.bank_accounts.id Bank account FK';
+COMMENT ON COLUMN reporting.v_unmatched_statement_lines.days_outstanding IS 'Days since statement date';
+COMMENT ON COLUMN reporting.v_unmatched_statement_lines.aging_bucket IS 'Age grouping: 0-7 Days, 8-30 Days, 31-60 Days, 61-90 Days, 90+ Days';
+COMMENT ON COLUMN reporting.v_unmatched_statement_lines.org_id IS 'Organization ID for RLS filtering';
+
+
+-- ============================================================================
+-- 36. v_cash_position — Current and projected cash position across bank accounts
+-- ============================================================================
+
+CREATE VIEW reporting.v_cash_position AS
+SELECT
+  ba.id                                          AS bank_account_id,
+  ba.account_name,
+  ba.bank_name,
+  ba.account_number,
+  ba.balance                                     AS current_balance,
+  COALESCE(ar.total_receivable, 0)               AS projected_inflows,
+  COALESCE(ap.total_payable, 0)                  AS projected_outflows,
+  ba.balance + COALESCE(ar.total_receivable, 0) - COALESCE(ap.total_payable, 0) AS projected_balance,
+  COALESCE(ar.receivable_30d, 0)                 AS inflows_30d,
+  COALESCE(ar.receivable_60d, 0)                 AS inflows_60d,
+  COALESCE(ar.receivable_90d, 0)                 AS inflows_90d,
+  COALESCE(ap.payable_30d, 0)                    AS outflows_30d,
+  COALESCE(ap.payable_60d, 0)                    AS outflows_60d,
+  COALESCE(ap.payable_90d, 0)                    AS outflows_90d,
+  ba.balance + COALESCE(ar.receivable_30d, 0) - COALESCE(ap.payable_30d, 0) AS balance_30d,
+  ba.balance + COALESCE(ar.receivable_60d, 0) - COALESCE(ap.payable_60d, 0) AS balance_60d,
+  ba.balance + COALESCE(ar.receivable_90d, 0) - COALESCE(ap.payable_90d, 0) AS balance_90d,
+  COALESCE(ba.org_id)                            AS org_id,
+  NULL::UUID                                     AS branch_id
+FROM cashbook.bank_accounts ba
+LEFT JOIN LATERAL (
+  SELECT
+    SUM(inv.balance_due)                                                                      AS total_receivable,
+    SUM(inv.balance_due) FILTER (WHERE inv.due_date <= CURRENT_DATE + 30)                     AS receivable_30d,
+    SUM(inv.balance_due) FILTER (WHERE inv.due_date <= CURRENT_DATE + 60)                     AS receivable_60d,
+    SUM(inv.balance_due) FILTER (WHERE inv.due_date <= CURRENT_DATE + 90)                     AS receivable_90d
+  FROM finance.invoices inv
+  WHERE inv.balance_due > 0
+) ar ON true
+LEFT JOIN LATERAL (
+  SELECT
+    SUM(po.total_amount) FILTER (WHERE po.status IN ('approved','sent','partially_received'))  AS total_payable,
+    SUM(po.total_amount) FILTER (WHERE po.expected_date <= CURRENT_DATE + 30 AND po.status IN ('approved','sent','partially_received')) AS payable_30d,
+    SUM(po.total_amount) FILTER (WHERE po.expected_date <= CURRENT_DATE + 60 AND po.status IN ('approved','sent','partially_received')) AS payable_60d,
+    SUM(po.total_amount) FILTER (WHERE po.expected_date <= CURRENT_DATE + 90 AND po.status IN ('approved','sent','partially_received')) AS payable_90d
+  FROM procurement.purchase_orders po
+) ap ON true;
+
+COMMENT ON VIEW  reporting.v_cash_position IS 'Cash position per bank account with projected inflows (AR) and outflows (AP)';
+COMMENT ON COLUMN reporting.v_cash_position.bank_account_id IS 'fk:cashbook.bank_accounts.id Bank account FK';
+COMMENT ON COLUMN reporting.v_cash_position.projected_inflows IS 'Total outstanding accounts receivable';
+COMMENT ON COLUMN reporting.v_cash_position.projected_outflows IS 'Total outstanding purchase commitments';
+COMMENT ON COLUMN reporting.v_cash_position.balance_30d IS 'Projected balance in 30 days';
+COMMENT ON COLUMN reporting.v_cash_position.org_id IS 'Organization ID for RLS filtering';
+
+
+-- ============================================================================
+-- Done — all 36 reporting views created successfully
 -- ============================================================================

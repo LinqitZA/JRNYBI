@@ -661,6 +661,197 @@ LIMIT 50;
         "options": {"parameters": DATE_PARAMS},
         "tags": ["procurement", "jrny-report"],
     },
+    # ---- Procurement: OTIF ----
+    "otif_kpi": {
+        "name": "OTIF - KPI Summary",
+        "description": "Overall On-Time In-Full (OTIF) KPI scores for supplier delivery performance.",
+        "query": """
+SELECT
+    COUNT(*) AS total_lines,
+    ROUND(100.0 * SUM(CASE WHEN is_on_time THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS on_time_pct,
+    ROUND(100.0 * SUM(CASE WHEN is_in_full THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS in_full_pct,
+    ROUND(100.0 * SUM(CASE WHEN is_otif THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS otif_pct,
+    ROUND(AVG(CASE WHEN days_late > 0 THEN days_late ELSE 0 END), 1) AS avg_days_late
+FROM reporting.v_procurement_otif
+WHERE receipt_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%');
+""".strip(),
+        "options": {"parameters": DATE_PARAMS + [
+            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
+        ]},
+        "tags": ["procurement", "jrny-report"],
+    },
+    "otif_by_supplier": {
+        "name": "OTIF - Supplier Ranking",
+        "description": "Supplier OTIF scores ranked by delivery performance.",
+        "query": """
+SELECT
+    supplier_name,
+    COUNT(*) AS total_lines,
+    SUM(CASE WHEN is_on_time THEN 1 ELSE 0 END) AS on_time_count,
+    ROUND(100.0 * SUM(CASE WHEN is_on_time THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS on_time_pct,
+    SUM(CASE WHEN is_in_full THEN 1 ELSE 0 END) AS in_full_count,
+    ROUND(100.0 * SUM(CASE WHEN is_in_full THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS in_full_pct,
+    SUM(CASE WHEN is_otif THEN 1 ELSE 0 END) AS otif_count,
+    ROUND(100.0 * SUM(CASE WHEN is_otif THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS otif_pct,
+    ROUND(AVG(CASE WHEN days_late > 0 THEN days_late ELSE 0 END), 1) AS avg_days_late
+FROM reporting.v_procurement_otif
+WHERE receipt_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%')
+GROUP BY supplier_name
+ORDER BY otif_pct DESC;
+""".strip(),
+        "options": {"parameters": DATE_PARAMS + [
+            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
+        ]},
+        "tags": ["procurement", "jrny-report"],
+    },
+    "otif_trend": {
+        "name": "OTIF - Monthly Trend",
+        "description": "Monthly OTIF trend showing on-time, in-full, and combined OTIF percentages over time.",
+        "query": """
+SELECT
+    DATE_TRUNC('month', receipt_date)::date AS month,
+    COUNT(*) AS total_lines,
+    ROUND(100.0 * SUM(CASE WHEN is_on_time THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS on_time_pct,
+    ROUND(100.0 * SUM(CASE WHEN is_in_full THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS in_full_pct,
+    ROUND(100.0 * SUM(CASE WHEN is_otif THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS otif_pct
+FROM reporting.v_procurement_otif
+WHERE receipt_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%')
+GROUP BY DATE_TRUNC('month', receipt_date)
+ORDER BY month;
+""".strip(),
+        "options": {"parameters": DATE_PARAMS + [
+            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
+        ]},
+        "tags": ["procurement", "jrny-report"],
+    },
+    # ---- Procurement: Vendor Scorecard ----
+    "vendor_scorecard": {
+        "name": "Vendor Scorecard - Performance Rankings",
+        "description": "Composite vendor performance scores combining OTIF, quality (inspection pass rate), price variance, and delivery timeliness. Supports vendor rationalization and negotiation.",
+        "query": """
+SELECT
+    supplier_name,
+    supplier_code,
+    vendor_group,
+    period_label,
+    total_pos,
+    total_lines,
+    otif_pct,
+    quality_pct,
+    ROUND(100 - ABS(price_variance_pct), 2) AS price_score,
+    delivery_score,
+    composite_score,
+    composite_rank,
+    COALESCE(prior_composite_score, 0) AS prior_composite_score,
+    COALESCE(score_trend, 0) AS score_trend,
+    CASE
+        WHEN composite_score >= 90 THEN 'Preferred'
+        WHEN composite_score >= 70 THEN 'Approved'
+        WHEN composite_score >= 50 THEN 'Conditional'
+        ELSE 'Under Review'
+    END AS vendor_tier,
+    avg_lead_time_days
+FROM reporting.v_vendor_scorecards
+WHERE period BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ vendor_group }}' = '' OR vendor_group = '{{ vendor_group }}')
+ORDER BY composite_score DESC;
+""".strip(),
+        "options": {
+            "parameters": DATE_PARAMS + [
+                {
+                    "name": "vendor_group",
+                    "title": "Vendor Group",
+                    "type": "text",
+                    "value": "",
+                },
+            ]
+        },
+        "tags": ["procurement", "jrny-report", "report:procurement"],
+    },
+    "vendor_scorecard_dimensions": {
+        "name": "Vendor Scorecard - Dimension Comparison",
+        "description": "Vendor scores across individual performance dimensions for radar-style comparison.",
+        "query": """
+SELECT
+    supplier_name,
+    'OTIF' AS dimension,
+    otif_pct AS score
+FROM reporting.v_vendor_scorecards
+WHERE period BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ vendor_group }}' = '' OR vendor_group = '{{ vendor_group }}')
+
+UNION ALL
+
+SELECT
+    supplier_name,
+    'Quality' AS dimension,
+    quality_pct AS score
+FROM reporting.v_vendor_scorecards
+WHERE period BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ vendor_group }}' = '' OR vendor_group = '{{ vendor_group }}')
+
+UNION ALL
+
+SELECT
+    supplier_name,
+    'Price' AS dimension,
+    ROUND(100 - ABS(price_variance_pct), 2) AS score
+FROM reporting.v_vendor_scorecards
+WHERE period BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ vendor_group }}' = '' OR vendor_group = '{{ vendor_group }}')
+
+UNION ALL
+
+SELECT
+    supplier_name,
+    'Delivery' AS dimension,
+    delivery_score AS score
+FROM reporting.v_vendor_scorecards
+WHERE period BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ vendor_group }}' = '' OR vendor_group = '{{ vendor_group }}')
+
+ORDER BY supplier_name, dimension;
+""".strip(),
+        "options": {
+            "parameters": DATE_PARAMS + [
+                {
+                    "name": "vendor_group",
+                    "title": "Vendor Group",
+                    "type": "text",
+                    "value": "",
+                },
+            ]
+        },
+        "tags": ["procurement", "jrny-report", "report:procurement"],
+    },
+    "vendor_scorecard_kpi": {
+        "name": "Vendor Scorecard - KPIs",
+        "description": "Summary KPIs for vendor scorecard: average composite score, best vendor, worst vendor.",
+        "query": """
+SELECT
+    COUNT(DISTINCT supplier_id) AS total_vendors,
+    ROUND(AVG(composite_score), 1) AS avg_composite_score,
+    MAX(composite_score) AS best_score,
+    MIN(composite_score) AS worst_score
+FROM reporting.v_vendor_scorecards
+WHERE period BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ vendor_group }}' = '' OR vendor_group = '{{ vendor_group }}');
+""".strip(),
+        "options": {
+            "parameters": DATE_PARAMS + [
+                {
+                    "name": "vendor_group",
+                    "title": "Vendor Group",
+                    "type": "text",
+                    "value": "",
+                },
+            ]
+        },
+        "tags": ["procurement", "jrny-report", "report:procurement"],
+    },
     # ---- Finance: GL Account Activity ----
     "gl_account_activity": {
         "name": "GL Account Activity",
@@ -1165,6 +1356,162 @@ ORDER BY vs.tax_period;
 """.strip(),
         "options": {"parameters": DATE_PARAMS},
         "tags": ["finance", "jrny-report"],
+    },
+    # ---- Cashbook ----
+    "bank_reconciliation_status": {
+        "name": "Bank Reconciliation Status",
+        "description": "Reconciliation progress per bank account showing matched vs unmatched lines and values.",
+        "query": """
+SELECT
+    account_name,
+    bank_name,
+    current_balance,
+    total_lines,
+    matched_count,
+    unmatched_count,
+    pct_reconciled,
+    matched_value,
+    unmatched_value,
+    oldest_unmatched_date,
+    oldest_unmatched_days,
+    last_reconciliation_date,
+    last_reconciliation_status
+FROM reporting.v_bank_reconciliation_status
+ORDER BY unmatched_count DESC, account_name;
+""".strip(),
+        "options": {"parameters": []},
+        "tags": ["cashbook", "jrny-report"],
+    },
+    "bank_recon_unmatched_detail": {
+        "name": "Bank Reconciliation - Unmatched Items Detail",
+        "description": "Detail of unmatched statement lines sorted by age, for reconciliation follow-up.",
+        "query": """
+SELECT
+    bank_account,
+    statement_date,
+    description,
+    amount,
+    reference,
+    days_outstanding,
+    aging_bucket,
+    direction
+FROM reporting.v_unmatched_statement_lines
+ORDER BY days_outstanding DESC, bank_account;
+""".strip(),
+        "options": {"parameters": []},
+        "tags": ["cashbook", "jrny-report"],
+    },
+    "cash_position_summary": {
+        "name": "Cash Position Summary",
+        "description": "Current cash position across all bank accounts with projected inflows and outflows over 30/60/90 days.",
+        "query": """
+SELECT
+    account_name,
+    bank_name,
+    current_balance,
+    projected_inflows,
+    projected_outflows,
+    projected_balance,
+    inflows_30d,
+    outflows_30d,
+    balance_30d,
+    inflows_60d,
+    outflows_60d,
+    balance_60d,
+    inflows_90d,
+    outflows_90d,
+    balance_90d
+FROM reporting.v_cash_position
+ORDER BY current_balance DESC;
+""".strip(),
+        "options": {"parameters": []},
+        "tags": ["cashbook", "jrny-report"],
+    },
+    "cash_position_projection": {
+        "name": "Cash Position - 30/60/90 Day Projection",
+        "description": "Projected cash balance over next 30, 60, and 90 days for treasury planning.",
+        "query": """
+SELECT
+    period,
+    SUM(balance) AS projected_balance,
+    SUM(inflows) AS total_inflows,
+    SUM(outflows) AS total_outflows
+FROM (
+    SELECT 'Now' AS period, 0 AS sort_order,
+           SUM(current_balance) AS balance,
+           0 AS inflows, 0 AS outflows
+    FROM reporting.v_cash_position
+    UNION ALL
+    SELECT '30 Days' AS period, 1 AS sort_order,
+           SUM(balance_30d) AS balance,
+           SUM(inflows_30d) AS inflows,
+           SUM(outflows_30d) AS outflows
+    FROM reporting.v_cash_position
+    UNION ALL
+    SELECT '60 Days' AS period, 2 AS sort_order,
+           SUM(balance_60d) AS balance,
+           SUM(inflows_60d) AS inflows,
+           SUM(outflows_60d) AS outflows
+    FROM reporting.v_cash_position
+    UNION ALL
+    SELECT '90 Days' AS period, 3 AS sort_order,
+           SUM(balance_90d) AS balance,
+           SUM(inflows_90d) AS inflows,
+           SUM(outflows_90d) AS outflows
+    FROM reporting.v_cash_position
+) sub
+GROUP BY period, sort_order
+ORDER BY sort_order;
+""".strip(),
+        "options": {"parameters": []},
+        "tags": ["cashbook", "jrny-report"],
+    },
+    "unmatched_transactions": {
+        "name": "Unmatched Transactions",
+        "description": "Bank statement lines not yet matched to any source document, sorted by oldest first.",
+        "query": """
+SELECT
+    bank_account,
+    bank_name,
+    statement_date,
+    description,
+    amount,
+    reference,
+    days_outstanding,
+    aging_bucket,
+    direction
+FROM reporting.v_unmatched_statement_lines
+WHERE ('{{ bank_account }}' = '' OR bank_account = '{{ bank_account }}')
+ORDER BY days_outstanding DESC;
+""".strip(),
+        "options": {"parameters": [
+            {
+                "name": "bank_account",
+                "title": "Bank Account",
+                "type": "text",
+                "value": "",
+            },
+        ]},
+        "tags": ["cashbook", "jrny-report"],
+    },
+    "unmatched_by_account_summary": {
+        "name": "Unmatched Transactions - Summary by Account",
+        "description": "Summary of unmatched transaction value grouped by bank account.",
+        "query": """
+SELECT
+    bank_account,
+    COUNT(*) AS unmatched_count,
+    SUM(ABS(amount)) AS total_unmatched_value,
+    SUM(CASE WHEN amount >= 0 THEN amount ELSE 0 END) AS unmatched_credits,
+    SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) AS unmatched_debits,
+    MIN(statement_date) AS oldest_item_date,
+    CURRENT_DATE - MIN(statement_date) AS oldest_item_age
+FROM reporting.v_unmatched_statement_lines
+GROUP BY bank_account
+ORDER BY total_unmatched_value DESC;
+""".strip(),
+        "options": {"parameters": []},
+        "tags": ["cashbook", "jrny-report"],
     },
 }
 
@@ -1715,6 +2062,203 @@ VISUALIZATIONS = {
             },
         },
     ],
+    "otif_kpi": [
+        {
+            "name": "OTIF Score",
+            "type": "COUNTER",
+            "options": {
+                "counterLabel": "OTIF Score %",
+                "counterColName": "otif_pct",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 1,
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0.0",
+                "stringSuffix": "%",
+            },
+        },
+        {
+            "name": "On-Time %",
+            "type": "COUNTER",
+            "options": {
+                "counterLabel": "On-Time Delivery %",
+                "counterColName": "on_time_pct",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 1,
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0.0",
+                "stringSuffix": "%",
+            },
+        },
+        {
+            "name": "In-Full %",
+            "type": "COUNTER",
+            "options": {
+                "counterLabel": "In-Full Delivery %",
+                "counterColName": "in_full_pct",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 1,
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0.0",
+                "stringSuffix": "%",
+            },
+        },
+    ],
+    "otif_by_supplier": [
+        {
+            "name": "Supplier OTIF Ranking (Bar)",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "bar",
+                "columnMapping": {
+                    "supplier_name": "x",
+                    "otif_pct": "y",
+                    "on_time_pct": "y",
+                    "in_full_pct": "y",
+                },
+                "seriesOptions": {
+                    "otif_pct": {"type": "bar", "yAxis": 0, "name": "OTIF %", "color": "#2563eb"},
+                    "on_time_pct": {"type": "bar", "yAxis": 0, "name": "On-Time %", "color": "#16a34a"},
+                    "in_full_pct": {"type": "bar", "yAxis": 0, "name": "In-Full %", "color": "#d97706"},
+                },
+                "sortX": True,
+                "legend": {"enabled": True},
+                "xAxis": {"type": "category"},
+                "yAxis": [{"type": "linear", "title": {"text": "Percentage (%)"}}],
+                "series": {"stacking": None},
+            },
+        },
+        {
+            "name": "Supplier OTIF Detail Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "supplier_name", "title": "Supplier", "visible": True},
+                    {"name": "total_lines", "title": "Total Lines", "visible": True, "alignContent": "right"},
+                    {"name": "on_time_pct", "title": "On-Time %", "visible": True, "displayAs": "number", "numberFormat": "0,0.0", "alignContent": "right"},
+                    {"name": "in_full_pct", "title": "In-Full %", "visible": True, "displayAs": "number", "numberFormat": "0,0.0", "alignContent": "right"},
+                    {"name": "otif_pct", "title": "OTIF %", "visible": True, "displayAs": "number", "numberFormat": "0,0.0", "alignContent": "right"},
+                    {"name": "avg_days_late", "title": "Avg Days Late", "visible": True, "displayAs": "number", "numberFormat": "0,0.0", "alignContent": "right"},
+                ],
+            },
+        },
+    ],
+    "otif_trend": [
+        {
+            "name": "OTIF Trend Over Time",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "line",
+                "columnMapping": {
+                    "month": "x",
+                    "otif_pct": "y",
+                    "on_time_pct": "y",
+                    "in_full_pct": "y",
+                },
+                "seriesOptions": {
+                    "otif_pct": {"type": "line", "yAxis": 0, "name": "OTIF %", "color": "#2563eb"},
+                    "on_time_pct": {"type": "line", "yAxis": 0, "name": "On-Time %", "color": "#16a34a"},
+                    "in_full_pct": {"type": "line", "yAxis": 0, "name": "In-Full %", "color": "#d97706"},
+                },
+                "xAxis": {"type": "datetime", "labels": {"enabled": True}},
+                "yAxis": [{"type": "linear", "title": {"text": "Percentage (%)"}}],
+                "series": {"stacking": None},
+                "sortX": True,
+                "legend": {"enabled": True},
+            },
+        },
+    ],
+    "vendor_scorecard": [
+        {
+            "name": "Vendor Performance Rankings (Table)",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "composite_rank", "title": "Rank", "visible": True, "alignContent": "center"},
+                    {"name": "supplier_name", "title": "Vendor", "visible": True},
+                    {"name": "supplier_code", "title": "Code", "visible": True},
+                    {"name": "vendor_group", "title": "Group", "visible": True},
+                    {"name": "vendor_tier", "title": "Tier", "visible": True},
+                    {"name": "otif_pct", "title": "OTIF %", "visible": True, "displayAs": "number", "numberFormat": "0,0.0", "alignContent": "right"},
+                    {"name": "quality_pct", "title": "Quality %", "visible": True, "displayAs": "number", "numberFormat": "0,0.0", "alignContent": "right"},
+                    {"name": "price_score", "title": "Price Score", "visible": True, "displayAs": "number", "numberFormat": "0,0.0", "alignContent": "right"},
+                    {"name": "delivery_score", "title": "Delivery", "visible": True, "displayAs": "number", "numberFormat": "0,0.0", "alignContent": "right"},
+                    {"name": "composite_score", "title": "Composite", "visible": True, "displayAs": "number", "numberFormat": "0,0.0", "alignContent": "right"},
+                    {"name": "score_trend", "title": "Trend", "visible": True, "displayAs": "number", "numberFormat": "+0,0.0;-0,0.0", "alignContent": "right"},
+                    {"name": "avg_lead_time_days", "title": "Lead Time (d)", "visible": True, "displayAs": "number", "numberFormat": "0,0.0", "alignContent": "right"},
+                    {"name": "period_label", "title": "Period", "visible": True},
+                ],
+            },
+        },
+    ],
+    "vendor_scorecard_dimensions": [
+        {
+            "name": "Vendor Dimension Comparison (Grouped Bar)",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "column",
+                "columnMapping": {
+                    "dimension": "x",
+                    "score": "y",
+                    "supplier_name": "series",
+                },
+                "seriesOptions": {},
+                "xAxis": {"type": "category", "labels": {"enabled": True}},
+                "yAxis": [{"type": "linear", "title": {"text": "Score (%)"}, "rangeMin": 0, "rangeMax": 100}],
+                "series": {"stacking": None},
+                "sortX": True,
+                "legend": {"enabled": True},
+            },
+        },
+    ],
+    "vendor_scorecard_kpi": [
+        {
+            "name": "Total Vendors",
+            "type": "COUNTER",
+            "options": {
+                "counterColName": "total_vendors",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 0,
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0",
+            },
+        },
+        {
+            "name": "Avg Composite Score",
+            "type": "COUNTER",
+            "options": {
+                "counterColName": "avg_composite_score",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 1,
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0.0",
+            },
+        },
+        {
+            "name": "Best Score",
+            "type": "COUNTER",
+            "options": {
+                "counterColName": "best_score",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 1,
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0.0",
+            },
+        },
+    ],
     "credit_note_trend": [
         {
             "name": "Credit Notes Over Time",
@@ -2154,6 +2698,220 @@ VISUALIZATIONS = {
             },
         },
     ],
+    # ---- Cashbook: Bank Reconciliation Status ----
+    "bank_reconciliation_status": [
+        {
+            "name": "Reconciliation Status Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "account_name", "title": "Account", "visible": True},
+                    {"name": "bank_name", "title": "Bank", "visible": True},
+                    {"name": "current_balance", "title": "Balance", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "total_lines", "title": "Total Lines", "visible": True, "alignContent": "right"},
+                    {"name": "matched_count", "title": "Matched", "visible": True, "alignContent": "right"},
+                    {"name": "unmatched_count", "title": "Unmatched", "visible": True, "alignContent": "right"},
+                    {"name": "pct_reconciled", "title": "% Reconciled", "visible": True, "displayAs": "number", "numberFormat": "0.0", "alignContent": "right"},
+                    {"name": "unmatched_value", "title": "Unmatched Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "oldest_unmatched_days", "title": "Oldest (Days)", "visible": True, "alignContent": "right"},
+                    {"name": "last_reconciliation_date", "title": "Last Recon Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                ],
+            },
+        },
+        {
+            "name": "Matched vs Unmatched Value by Account",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "column",
+                "columnMapping": {
+                    "account_name": "x",
+                    "matched_value": "y",
+                    "unmatched_value": "y",
+                },
+                "seriesOptions": {
+                    "matched_value": {"type": "column", "yAxis": 0, "name": "Matched Value", "color": "#2ecc71"},
+                    "unmatched_value": {"type": "column", "yAxis": 0, "name": "Unmatched Value", "color": "#e74c3c"},
+                },
+                "yAxis": [
+                    {"type": "linear", "title": {"text": "Value"}},
+                ],
+                "xAxis": {"type": "category", "labels": {"enabled": True}},
+                "series": {"stacking": "normal"},
+                "legend": {"enabled": True},
+            },
+        },
+    ],
+    "bank_recon_unmatched_detail": [
+        {
+            "name": "Unmatched Items Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "bank_account", "title": "Bank Account", "visible": True},
+                    {"name": "statement_date", "title": "Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "description", "title": "Description", "visible": True},
+                    {"name": "amount", "title": "Amount", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "reference", "title": "Reference", "visible": True},
+                    {"name": "days_outstanding", "title": "Days Outstanding", "visible": True, "alignContent": "right"},
+                    {"name": "aging_bucket", "title": "Age Bucket", "visible": True},
+                    {"name": "direction", "title": "Direction", "visible": True},
+                ],
+            },
+        },
+    ],
+    # ---- Cashbook: Cash Position Summary ----
+    "cash_position_summary": [
+        {
+            "name": "Cash Position Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "account_name", "title": "Account", "visible": True},
+                    {"name": "bank_name", "title": "Bank", "visible": True},
+                    {"name": "current_balance", "title": "Current Balance", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "projected_inflows", "title": "AR Inflows", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "projected_outflows", "title": "AP Outflows", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "projected_balance", "title": "Projected Balance", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "balance_30d", "title": "30-Day Balance", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "balance_60d", "title": "60-Day Balance", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "balance_90d", "title": "90-Day Balance", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                ],
+            },
+        },
+    ],
+    "cash_position_projection": [
+        {
+            "name": "Cash Projection Chart",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "area",
+                "columnMapping": {
+                    "period": "x",
+                    "projected_balance": "y",
+                    "total_inflows": "y",
+                    "total_outflows": "y",
+                },
+                "seriesOptions": {
+                    "projected_balance": {"type": "area", "yAxis": 0, "name": "Projected Balance", "color": "#2563eb"},
+                    "total_inflows": {"type": "line", "yAxis": 0, "name": "Inflows (AR)", "color": "#2ecc71"},
+                    "total_outflows": {"type": "line", "yAxis": 0, "name": "Outflows (AP)", "color": "#e74c3c"},
+                },
+                "yAxis": [
+                    {"type": "linear", "title": {"text": "Amount"}},
+                ],
+                "xAxis": {"type": "category", "labels": {"enabled": True}},
+                "series": {"stacking": None},
+                "legend": {"enabled": True},
+                "sortX": True,
+            },
+        },
+        {
+            "name": "Total Cash Now",
+            "type": "COUNTER",
+            "options": {
+                "counterColName": "projected_balance",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 2,
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0.00",
+                "defaultColumns": 2,
+                "counterLabel": "Total Cash Now",
+            },
+        },
+        {
+            "name": "Projected Balance (30 Days)",
+            "type": "COUNTER",
+            "options": {
+                "counterColName": "projected_balance",
+                "rowNumber": 2,
+                "targetRowNumber": 1,
+                "stringDecimal": 2,
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0.00",
+                "defaultColumns": 2,
+                "counterLabel": "Projected in 30 Days",
+            },
+        },
+    ],
+    # ---- Cashbook: Unmatched Transactions ----
+    "unmatched_transactions": [
+        {
+            "name": "Unmatched Transactions Table",
+            "type": "TABLE",
+            "options": {
+                "itemsPerPage": 25,
+                "columns": [
+                    {"name": "bank_account", "title": "Bank Account", "visible": True},
+                    {"name": "bank_name", "title": "Bank", "visible": True},
+                    {"name": "statement_date", "title": "Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "description", "title": "Description", "visible": True},
+                    {"name": "amount", "title": "Amount", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "reference", "title": "Reference", "visible": True},
+                    {"name": "days_outstanding", "title": "Days", "visible": True, "alignContent": "right"},
+                    {"name": "aging_bucket", "title": "Age Bucket", "visible": True},
+                    {"name": "direction", "title": "Direction", "visible": True},
+                ],
+            },
+        },
+    ],
+    "unmatched_by_account_summary": [
+        {
+            "name": "Unmatched by Account Chart",
+            "type": "CHART",
+            "options": {
+                "globalSeriesType": "column",
+                "columnMapping": {
+                    "bank_account": "x",
+                    "unmatched_credits": "y",
+                    "unmatched_debits": "y",
+                },
+                "seriesOptions": {
+                    "unmatched_credits": {"type": "column", "yAxis": 0, "name": "Unmatched Credits", "color": "#2ecc71"},
+                    "unmatched_debits": {"type": "column", "yAxis": 0, "name": "Unmatched Debits", "color": "#e74c3c"},
+                },
+                "yAxis": [
+                    {"type": "linear", "title": {"text": "Value"}},
+                ],
+                "xAxis": {"type": "category", "labels": {"enabled": True}},
+                "series": {"stacking": "normal"},
+                "legend": {"enabled": True},
+            },
+        },
+        {
+            "name": "Total Unmatched Value",
+            "type": "COUNTER",
+            "options": {
+                "counterColName": "total_unmatched_value",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 2,
+                "stringDecChar": ".",
+                "stringThouSep": ",",
+                "tooltipFormat": "0,0.00",
+                "defaultColumns": 2,
+                "counterLabel": "Total Unmatched Value",
+            },
+        },
+        {
+            "name": "Oldest Item Age",
+            "type": "COUNTER",
+            "options": {
+                "counterColName": "oldest_item_age",
+                "rowNumber": 1,
+                "targetRowNumber": 1,
+                "stringDecimal": 0,
+                "tooltipFormat": "0,0",
+                "defaultColumns": 2,
+                "counterLabel": "Oldest Item (Days)",
+            },
+        },
+    ],
 }
 
 
@@ -2270,6 +3028,29 @@ DASHBOARDS = {
             {"query_key": "supplier_spend_analysis", "vis_index": 1, "width": 6},
         ],
     },
+    "otif_dashboard": {
+        "name": "On-Time In-Full (OTIF)",
+        "tags": ["procurement", "jrny-report", "report:procurement"],
+        "widgets": [
+            {"query_key": "otif_kpi", "vis_index": 0, "width": 2},          # OTIF Score KPI
+            {"query_key": "otif_kpi", "vis_index": 1, "width": 2},          # On-Time % KPI
+            {"query_key": "otif_kpi", "vis_index": 2, "width": 2},          # In-Full % KPI
+            {"query_key": "otif_by_supplier", "vis_index": 0, "width": 6},  # Supplier ranking bar chart
+            {"query_key": "otif_trend", "vis_index": 0, "width": 6},        # OTIF trend line chart
+            {"query_key": "otif_by_supplier", "vis_index": 1, "width": 6},  # Supplier detail table
+        ],
+    },
+    "vendor_scorecard_dashboard": {
+        "name": "Vendor Scorecard",
+        "tags": ["procurement", "jrny-report", "report:procurement"],
+        "widgets": [
+            {"query_key": "vendor_scorecard_kpi", "vis_index": 0, "width": 2},           # Total Vendors KPI
+            {"query_key": "vendor_scorecard_kpi", "vis_index": 1, "width": 2},           # Avg Composite Score KPI
+            {"query_key": "vendor_scorecard_kpi", "vis_index": 2, "width": 2},           # Best Score KPI
+            {"query_key": "vendor_scorecard_dimensions", "vis_index": 0, "width": 6},    # Dimension comparison bar chart
+            {"query_key": "vendor_scorecard", "vis_index": 0, "width": 6},               # Rankings table
+        ],
+    },
     "gl_account_activity_dashboard": {
         "name": "GL Account Activity",
         "tags": ["finance", "jrny-report", "report:finance"],
@@ -2333,6 +3114,36 @@ DASHBOARDS = {
         "widgets": [
             {"query_key": "vat_liability_trend", "vis_index": 0, "width": 6},  # Monthly VAT trend chart
             {"query_key": "vat_summary", "vis_index": 0, "width": 6},          # VAT summary table
+        ],
+    },
+    # ---- Cashbook Dashboards ----
+    "bank_reconciliation_dashboard": {
+        "name": "Bank Reconciliation Status",
+        "tags": ["cashbook", "jrny-report", "report:cashbook"],
+        "widgets": [
+            {"query_key": "bank_reconciliation_status", "vis_index": 1, "width": 6},  # Matched vs Unmatched chart
+            {"query_key": "bank_reconciliation_status", "vis_index": 0, "width": 6},  # Summary table
+            {"query_key": "bank_recon_unmatched_detail", "vis_index": 0, "width": 6},  # Unmatched detail table
+        ],
+    },
+    "cash_position_dashboard": {
+        "name": "Cash Position Summary",
+        "tags": ["cashbook", "jrny-report", "report:cashbook"],
+        "widgets": [
+            {"query_key": "cash_position_projection", "vis_index": 1, "width": 3},  # KPI: Total Cash Now
+            {"query_key": "cash_position_projection", "vis_index": 2, "width": 3},  # KPI: Projected 30 Days
+            {"query_key": "cash_position_projection", "vis_index": 0, "width": 6},  # Area chart projection
+            {"query_key": "cash_position_summary", "vis_index": 0, "width": 6},     # Per-account table
+        ],
+    },
+    "unmatched_transactions_dashboard": {
+        "name": "Unmatched Transactions",
+        "tags": ["cashbook", "jrny-report", "report:cashbook"],
+        "widgets": [
+            {"query_key": "unmatched_by_account_summary", "vis_index": 1, "width": 3},  # KPI: Total Unmatched Value
+            {"query_key": "unmatched_by_account_summary", "vis_index": 2, "width": 3},  # KPI: Oldest Item Age
+            {"query_key": "unmatched_by_account_summary", "vis_index": 0, "width": 6},  # Chart by account
+            {"query_key": "unmatched_transactions", "vis_index": 0, "width": 6},         # Detail table
         ],
     },
 }
