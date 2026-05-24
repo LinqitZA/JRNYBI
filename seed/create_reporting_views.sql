@@ -38,6 +38,8 @@ DROP VIEW IF EXISTS reporting.v_budget_variance CASCADE;
 DROP VIEW IF EXISTS reporting.v_pnl CASCADE;
 DROP VIEW IF EXISTS reporting.v_balance_sheet CASCADE;
 DROP VIEW IF EXISTS reporting.v_quote_to_order_conversion CASCADE;
+DROP VIEW IF EXISTS reporting.v_sales_returns_analysis CASCADE;
+DROP VIEW IF EXISTS reporting.v_revenue_by_category CASCADE;
 
 -- Also drop any legacy reporting tables (dev migration path)
 DROP TABLE IF EXISTS reporting.v_sales_orders CASCADE;
@@ -838,6 +840,96 @@ COMMENT ON COLUMN reporting.v_quote_to_order_conversion.branch_id IS 'Branch ID 
 
 
 -- ============================================================================
+-- 23. v_sales_returns_analysis — Sales returns with product and reason details
+-- ============================================================================
+CREATE VIEW reporting.v_sales_returns_analysis AS
+SELECT
+  sr.id                                                   AS return_id,
+  sr.return_number,
+  c.first_name || ' ' || c.last_name                     AS customer_name,
+  sr.customer_id,
+  sr.return_date,
+  sr.reason                                               AS return_reason,
+  sr.status                                               AS return_status,
+  sr.total_amount                                         AS return_total,
+  so.order_number,
+  so.order_date,
+  so.total_amount                                         AS order_total,
+  srl.id                                                  AS line_id,
+  p.product_code,
+  p.product_name,
+  p.category                                              AS product_category,
+  srl.quantity                                            AS return_qty,
+  srl.unit_price,
+  srl.line_total                                          AS return_line_value,
+  srl.reason                                              AS line_reason,
+  DATE_TRUNC('month', sr.return_date)::DATE               AS return_month,
+  sr.org_id,
+  sr.branch_id
+FROM sales.sales_returns sr
+LEFT JOIN core.contacts c ON c.id = sr.customer_id
+LEFT JOIN sales.sales_orders so ON so.id = sr.order_id
+LEFT JOIN sales.sales_return_lines srl ON srl.return_id = sr.id
+LEFT JOIN inventory.products p ON p.id = srl.product_id;
+
+COMMENT ON VIEW  reporting.v_sales_returns_analysis IS 'Sales returns analysis with product details, reason codes, and order context';
+COMMENT ON COLUMN reporting.v_sales_returns_analysis.return_id IS 'Return header primary key';
+COMMENT ON COLUMN reporting.v_sales_returns_analysis.return_number IS 'Unique return reference | display_column';
+COMMENT ON COLUMN reporting.v_sales_returns_analysis.customer_id IS 'fk:core.contacts.id Customer foreign key';
+COMMENT ON COLUMN reporting.v_sales_returns_analysis.return_reason IS 'Return reason category (Defective, Wrong Item, Quality Issue, etc.)';
+COMMENT ON COLUMN reporting.v_sales_returns_analysis.product_category IS 'Product category for grouping analysis';
+COMMENT ON COLUMN reporting.v_sales_returns_analysis.return_month IS 'Month of return for trend analysis';
+COMMENT ON COLUMN reporting.v_sales_returns_analysis.org_id IS 'Organization ID for RLS filtering';
+COMMENT ON COLUMN reporting.v_sales_returns_analysis.branch_id IS 'Branch ID for RLS filtering';
+
+
+-- ============================================================================
+-- 24. v_revenue_by_category — Revenue breakdown by product category
+-- ============================================================================
+CREATE VIEW reporting.v_revenue_by_category AS
+SELECT
+  sol.id                                                  AS line_id,
+  so.id                                                   AS order_id,
+  so.order_number,
+  so.order_date,
+  c.first_name || ' ' || c.last_name                     AS customer_name,
+  so.customer_id,
+  p.id                                                    AS product_id,
+  p.product_code,
+  p.product_name,
+  COALESCE(p.category, 'Uncategorized')                   AS product_category,
+  sol.quantity,
+  sol.unit_price,
+  sol.discount_pct,
+  sol.line_total                                          AS revenue,
+  p.unit_cost,
+  sol.quantity * COALESCE(p.unit_cost, 0)                 AS cost_of_goods,
+  sol.line_total - (sol.quantity * COALESCE(p.unit_cost, 0)) AS contribution_margin,
+  CASE WHEN sol.line_total > 0
+    THEN ROUND(100.0 * (sol.line_total - (sol.quantity * COALESCE(p.unit_cost, 0))) / sol.line_total, 2)
+    ELSE 0
+  END                                                     AS margin_pct,
+  DATE_TRUNC('month', so.order_date)::DATE                AS order_month,
+  so.org_id,
+  so.branch_id
+FROM sales.sales_order_lines sol
+JOIN sales.sales_orders so ON so.id = sol.order_id
+LEFT JOIN core.contacts c ON c.id = so.customer_id
+LEFT JOIN inventory.products p ON p.id = sol.product_id;
+
+COMMENT ON VIEW  reporting.v_revenue_by_category IS 'Revenue and margin breakdown by product category with order line detail';
+COMMENT ON COLUMN reporting.v_revenue_by_category.line_id IS 'Sales order line primary key';
+COMMENT ON COLUMN reporting.v_revenue_by_category.product_category IS 'Product category for grouping analysis';
+COMMENT ON COLUMN reporting.v_revenue_by_category.revenue IS 'Line total (revenue)';
+COMMENT ON COLUMN reporting.v_revenue_by_category.cost_of_goods IS 'Cost of goods sold (quantity x unit cost)';
+COMMENT ON COLUMN reporting.v_revenue_by_category.contribution_margin IS 'Revenue minus COGS per line';
+COMMENT ON COLUMN reporting.v_revenue_by_category.margin_pct IS 'Contribution margin as % of revenue';
+COMMENT ON COLUMN reporting.v_revenue_by_category.order_month IS 'Month of order for trend analysis';
+COMMENT ON COLUMN reporting.v_revenue_by_category.org_id IS 'Organization ID for RLS filtering';
+COMMENT ON COLUMN reporting.v_revenue_by_category.branch_id IS 'Branch ID for RLS filtering';
+
+
+-- ============================================================================
 -- COMMENT ON annotations for base tables (idempotent)
 -- ============================================================================
 COMMENT ON VIEW reporting.v_sales_orders IS 'Denormalized sales order view with customer name and line aggregates';
@@ -852,5 +944,5 @@ COMMENT ON VIEW reporting.v_product_catalogue IS 'Product catalogue with pricing
 
 
 -- ============================================================================
--- Done — all 22 reporting views created successfully
+-- Done — all 24 reporting views created successfully
 -- ============================================================================

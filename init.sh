@@ -138,6 +138,25 @@ init_database() {
     ok "Database tables created."
   fi
 
+  # Create root admin user if no users exist (needed for API-based seeding)
+  local user_count
+  user_count=$(docker compose exec -T postgres psql -U postgres postgres -tAc \
+    "SELECT COUNT(*) FROM users" 2>/dev/null | tr -d '[:space:]' || echo "")
+
+  if [ "$user_count" = "0" ] || [ -z "$user_count" ]; then
+    info "Creating root admin user..."
+    local admin_password
+    admin_password=$(python3 -c "import secrets; print(secrets.token_hex(16))" 2>/dev/null \
+      || openssl rand -hex 16 2>/dev/null \
+      || echo "jrnybi-admin-$(date +%s)")
+    docker compose run --rm server manage users create_root admin@jrny.co.za "JRNY Admin" \
+      --password "$admin_password" --org default \
+      && ok "Root admin user created (admin@jrny.co.za)." \
+      || warn "Root user creation skipped (may already exist)."
+  else
+    ok "Admin user already exists."
+  fi
+
   # Seed JRNY read-replica data source (idempotent — skips if already exists)
   info "Ensuring JRNY read-replica data source exists..."
   docker compose run --rm server manage ds seed_jrny || warn "Data source seeding skipped (server may not be ready yet)."
@@ -174,6 +193,38 @@ start_app() {
   else
     ok "JRNYBI server is running!"
   fi
+}
+
+# ---------------------------------------------------------------------------
+# Seed pre-built reports
+# ---------------------------------------------------------------------------
+seed_reports() {
+  info "Seeding pre-built reports..."
+
+  # Get admin API key: prefer env var, fall back to database query
+  local api_key="${JRNYBI_ADMIN_API_KEY:-}"
+
+  if [ -z "$api_key" ]; then
+    api_key=$(docker compose exec -T postgres psql -U postgres postgres -tAc \
+      "SELECT api_key FROM users WHERE 1 = ANY(groups) ORDER BY id LIMIT 1" \
+      2>/dev/null | tr -d '[:space:]')
+  fi
+
+  if [ -z "$api_key" ]; then
+    warn "No admin API key available. Skipping report seeding."
+    warn "Set JRNYBI_ADMIN_API_KEY or create an admin user, then run:"
+    warn "  python seed/jrny_reports.py --api-key YOUR_KEY"
+    return 0
+  fi
+
+  # Run seed script inside the server container (idempotent — skips existing reports)
+  # The server listens on port 5000 inside the container
+  docker compose exec -T \
+    -e JRNYBI_ADMIN_API_KEY="$api_key" \
+    -e JRNYBI_BASE_URL="http://localhost:5000" \
+    server python /app/seed/jrny_reports.py \
+    && ok "Pre-built reports seeded successfully." \
+    || warn "Report seeding had issues (reports may already exist)."
 }
 
 # ---------------------------------------------------------------------------
@@ -235,6 +286,7 @@ main() {
       setup_env
       reset_database
       start_app
+      seed_reports
       print_summary
       ;;
     *)
@@ -243,6 +295,7 @@ main() {
       start_services
       init_database
       start_app
+      seed_reports
       print_summary
       ;;
   esac

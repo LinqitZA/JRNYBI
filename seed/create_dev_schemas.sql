@@ -219,6 +219,39 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='sales' AND table_name='sales_returns') THEN
+    EXECUTE '
+      CREATE TABLE sales.sales_returns (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        return_number TEXT,
+        order_id UUID,
+        customer_id UUID,
+        return_date DATE DEFAULT CURRENT_DATE,
+        reason TEXT,
+        status TEXT DEFAULT ''pending'',
+        total_amount NUMERIC(12,2) DEFAULT 0,
+        org_id UUID,
+        branch_id UUID
+      )';
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='sales' AND table_name='sales_return_lines') THEN
+    EXECUTE '
+      CREATE TABLE sales.sales_return_lines (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        return_id UUID,
+        product_id UUID,
+        quantity NUMERIC(12,2) DEFAULT 0,
+        unit_price NUMERIC(12,2) DEFAULT 0,
+        line_total NUMERIC(12,2) DEFAULT 0,
+        reason TEXT
+      )';
+  END IF;
+END $$;
+
 -- Finance schema
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='finance' AND table_name='invoices') THEN
@@ -999,6 +1032,50 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- FK: sales_returns.order_id -> sales.sales_orders.id
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_returns_order' AND table_schema = 'sales'
+  ) THEN
+    ALTER TABLE sales.sales_returns
+      ADD CONSTRAINT fk_returns_order FOREIGN KEY (order_id) REFERENCES sales.sales_orders(id);
+  END IF;
+END $$;
+
+-- FK: sales_returns.customer_id -> core.contacts.id
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_returns_customer' AND table_schema = 'sales'
+  ) THEN
+    ALTER TABLE sales.sales_returns
+      ADD CONSTRAINT fk_returns_customer FOREIGN KEY (customer_id) REFERENCES core.contacts(id);
+  END IF;
+END $$;
+
+-- FK: sales_return_lines.return_id -> sales.sales_returns.id
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_return_lines_return' AND table_schema = 'sales'
+  ) THEN
+    ALTER TABLE sales.sales_return_lines
+      ADD CONSTRAINT fk_return_lines_return FOREIGN KEY (return_id) REFERENCES sales.sales_returns(id);
+  END IF;
+END $$;
+
+-- FK: sales_return_lines.product_id -> inventory.products.id
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_return_lines_product' AND table_schema = 'sales'
+  ) THEN
+    ALTER TABLE sales.sales_return_lines
+      ADD CONSTRAINT fk_return_lines_product FOREIGN KEY (product_id) REFERENCES inventory.products(id);
+  END IF;
+END $$;
+
 -- ============================================================================
 -- Seed test data for Quote-to-Order Conversion report
 -- ============================================================================
@@ -1100,6 +1177,170 @@ BEGIN
 END $$;
 
 -- ============================================================================
+-- Seed test data for Sales Order Lines (needed for Revenue by Product Category)
+-- ============================================================================
+DO $$
+DECLARE
+  org UUID := '11111111-2222-3333-4444-555555555555';
+  p1  UUID; p2 UUID; p3 UUID; p4 UUID;
+  o   RECORD;
+BEGIN
+  -- Only seed if order_lines table is empty
+  IF EXISTS (SELECT 1 FROM sales.sales_order_lines LIMIT 1) THEN
+    RETURN;
+  END IF;
+
+  -- Get products
+  SELECT id INTO p1 FROM inventory.products WHERE product_code = 'WIDGET-A' LIMIT 1;
+  SELECT id INTO p2 FROM inventory.products WHERE product_code = 'GADGET-B' LIMIT 1;
+  SELECT id INTO p3 FROM inventory.products WHERE product_code = 'PART-C' LIMIT 1;
+  SELECT id INTO p4 FROM inventory.products WHERE product_code = 'SUPPLY-D' LIMIT 1;
+
+  -- If no products yet, create them
+  IF p1 IS NULL THEN
+    INSERT INTO inventory.products (product_code, product_name, category, unit_price, unit_cost, org_id)
+      VALUES ('WIDGET-A', 'Widget Alpha', 'Electronics', 150.00, 80.00, org) RETURNING id INTO p1;
+  END IF;
+  IF p2 IS NULL THEN
+    INSERT INTO inventory.products (product_code, product_name, category, unit_price, unit_cost, org_id)
+      VALUES ('GADGET-B', 'Gadget Beta', 'Electronics', 250.00, 130.00, org) RETURNING id INTO p2;
+  END IF;
+  IF p3 IS NULL THEN
+    INSERT INTO inventory.products (product_code, product_name, category, unit_price, unit_cost, org_id)
+      VALUES ('PART-C', 'Part Charlie', 'Components', 50.00, 25.00, org) RETURNING id INTO p3;
+  END IF;
+  IF p4 IS NULL THEN
+    INSERT INTO inventory.products (product_code, product_name, category, unit_price, unit_cost, org_id)
+      VALUES ('SUPPLY-D', 'Supply Delta', 'Consumables', 30.00, 12.00, org) RETURNING id INTO p4;
+  END IF;
+
+  -- Add unit_cost to existing products if missing
+  UPDATE inventory.products SET unit_cost = 80.00 WHERE product_code = 'WIDGET-A' AND (unit_cost IS NULL OR unit_cost = 0);
+  UPDATE inventory.products SET unit_cost = 130.00 WHERE product_code = 'GADGET-B' AND (unit_cost IS NULL OR unit_cost = 0);
+  UPDATE inventory.products SET unit_cost = 25.00 WHERE product_code = 'PART-C' AND (unit_cost IS NULL OR unit_cost = 0);
+  UPDATE inventory.products SET unit_cost = 12.00 WHERE product_code = 'SUPPLY-D' AND (unit_cost IS NULL OR unit_cost = 0);
+
+  -- Insert order lines for each sales order
+  FOR o IN (SELECT id, total_amount FROM sales.sales_orders ORDER BY order_date) LOOP
+    -- Each order gets 2-4 line items mixing product categories
+    INSERT INTO sales.sales_order_lines (order_id, product_id, quantity, unit_price, discount_pct, line_total, org_id)
+      VALUES (o.id, p1, 5, 150.00, 0, 750.00, org);
+    INSERT INTO sales.sales_order_lines (order_id, product_id, quantity, unit_price, discount_pct, line_total, org_id)
+      VALUES (o.id, p2, 3, 250.00, 5, 712.50, org);
+    INSERT INTO sales.sales_order_lines (order_id, product_id, quantity, unit_price, discount_pct, line_total, org_id)
+      VALUES (o.id, p3, 20, 50.00, 0, 1000.00, org);
+    INSERT INTO sales.sales_order_lines (order_id, product_id, quantity, unit_price, discount_pct, line_total, org_id)
+      VALUES (o.id, p4, 10, 30.00, 10, 270.00, org);
+  END LOOP;
+END $$;
+
+-- ============================================================================
+-- Seed test data for Sales Returns Analysis report
+-- ============================================================================
+DO $$
+DECLARE
+  org UUID := '11111111-2222-3333-4444-555555555555';
+  br  UUID := 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  c1  UUID; c2 UUID; c3 UUID;
+  o1  UUID; o2 UUID; o3 UUID; o4 UUID;
+  p1  UUID; p2 UUID; p3 UUID; p4 UUID;
+  r1  UUID; r2 UUID; r3 UUID; r4 UUID; r5 UUID; r6 UUID; r7 UUID; r8 UUID;
+BEGIN
+  -- Only seed if returns table is empty
+  IF EXISTS (SELECT 1 FROM sales.sales_returns LIMIT 1) THEN
+    RETURN;
+  END IF;
+
+  -- Get existing contacts
+  SELECT id INTO c1 FROM core.contacts WHERE first_name = 'Alice' AND last_name = 'Johnson' LIMIT 1;
+  SELECT id INTO c2 FROM core.contacts WHERE first_name = 'Bob' AND last_name = 'Smith' LIMIT 1;
+  SELECT id INTO c3 FROM core.contacts WHERE first_name = 'Carol' AND last_name = 'Davis' LIMIT 1;
+
+  -- Get or create products for return lines
+  SELECT id INTO p1 FROM inventory.products WHERE product_code = 'WIDGET-A' LIMIT 1;
+  IF p1 IS NULL THEN
+    INSERT INTO inventory.products (product_code, product_name, category, unit_price, org_id)
+      VALUES ('WIDGET-A', 'Widget Alpha', 'Electronics', 150.00, org) RETURNING id INTO p1;
+  END IF;
+  SELECT id INTO p2 FROM inventory.products WHERE product_code = 'GADGET-B' LIMIT 1;
+  IF p2 IS NULL THEN
+    INSERT INTO inventory.products (product_code, product_name, category, unit_price, org_id)
+      VALUES ('GADGET-B', 'Gadget Beta', 'Electronics', 250.00, org) RETURNING id INTO p2;
+  END IF;
+  SELECT id INTO p3 FROM inventory.products WHERE product_code = 'PART-C' LIMIT 1;
+  IF p3 IS NULL THEN
+    INSERT INTO inventory.products (product_code, product_name, category, unit_price, org_id)
+      VALUES ('PART-C', 'Part Charlie', 'Components', 50.00, org) RETURNING id INTO p3;
+  END IF;
+  SELECT id INTO p4 FROM inventory.products WHERE product_code = 'SUPPLY-D' LIMIT 1;
+  IF p4 IS NULL THEN
+    INSERT INTO inventory.products (product_code, product_name, category, unit_price, org_id)
+      VALUES ('SUPPLY-D', 'Supply Delta', 'Consumables', 30.00, org) RETURNING id INTO p4;
+  END IF;
+
+  -- Get existing orders
+  SELECT id INTO o1 FROM sales.sales_orders WHERE order_number = 'SO-2024-101' LIMIT 1;
+  SELECT id INTO o2 FROM sales.sales_orders WHERE order_number = 'SO-2024-102' LIMIT 1;
+  SELECT id INTO o3 FROM sales.sales_orders WHERE order_number = 'SO-2024-104' LIMIT 1;
+  SELECT id INTO o4 FROM sales.sales_orders WHERE order_number = 'SO-2024-105' LIMIT 1;
+
+  -- Create returns with various reasons spread across months
+  -- Jan: defective product return
+  INSERT INTO sales.sales_returns (return_number, order_id, customer_id, return_date, reason, status, total_amount, org_id, branch_id)
+    VALUES ('RET-2024-001', o1, c1, '2024-01-25', 'Defective', 'completed', 450.00, org, br) RETURNING id INTO r1;
+  INSERT INTO sales.sales_return_lines (return_id, product_id, quantity, unit_price, line_total, reason)
+    VALUES (r1, p1, 3, 150.00, 450.00, 'Defective - screen flickering');
+
+  -- Feb: wrong item shipped
+  INSERT INTO sales.sales_returns (return_number, order_id, customer_id, return_date, reason, status, total_amount, org_id, branch_id)
+    VALUES ('RET-2024-002', o2, c2, '2024-02-10', 'Wrong Item', 'completed', 250.00, org, br) RETURNING id INTO r2;
+  INSERT INTO sales.sales_return_lines (return_id, product_id, quantity, unit_price, line_total, reason)
+    VALUES (r2, p2, 1, 250.00, 250.00, 'Wrong item shipped - ordered GADGET-C');
+
+  -- Mar: quality issue
+  INSERT INTO sales.sales_returns (return_number, order_id, customer_id, return_date, reason, status, total_amount, org_id, branch_id)
+    VALUES ('RET-2024-003', o3, c3, '2024-03-15', 'Quality Issue', 'completed', 600.00, org, br) RETURNING id INTO r3;
+  INSERT INTO sales.sales_return_lines (return_id, product_id, quantity, unit_price, line_total, reason)
+    VALUES (r3, p1, 2, 150.00, 300.00, 'Quality issue - paint peeling');
+  INSERT INTO sales.sales_return_lines (return_id, product_id, quantity, unit_price, line_total, reason)
+    VALUES (r3, p3, 6, 50.00, 300.00, 'Quality issue - incorrect dimensions');
+
+  -- Apr: customer changed mind
+  INSERT INTO sales.sales_returns (return_number, order_id, customer_id, return_date, reason, status, total_amount, org_id, branch_id)
+    VALUES ('RET-2024-004', o1, c1, '2024-04-05', 'Changed Mind', 'completed', 300.00, org, br) RETURNING id INTO r4;
+  INSERT INTO sales.sales_return_lines (return_id, product_id, quantity, unit_price, line_total, reason)
+    VALUES (r4, p1, 2, 150.00, 300.00, 'No longer needed');
+
+  -- Apr: defective again
+  INSERT INTO sales.sales_returns (return_number, order_id, customer_id, return_date, reason, status, total_amount, org_id, branch_id)
+    VALUES ('RET-2024-005', o4, c2, '2024-04-20', 'Defective', 'completed', 500.00, org, br) RETURNING id INTO r5;
+  INSERT INTO sales.sales_return_lines (return_id, product_id, quantity, unit_price, line_total, reason)
+    VALUES (r5, p2, 2, 250.00, 500.00, 'Defective - buttons not working');
+
+  -- May: damaged in transit
+  INSERT INTO sales.sales_returns (return_number, order_id, customer_id, return_date, reason, status, total_amount, org_id, branch_id)
+    VALUES ('RET-2024-006', o2, c2, '2024-05-10', 'Damaged in Transit', 'completed', 180.00, org, br) RETURNING id INTO r6;
+  INSERT INTO sales.sales_return_lines (return_id, product_id, quantity, unit_price, line_total, reason)
+    VALUES (r6, p4, 6, 30.00, 180.00, 'Box crushed during shipping');
+
+  -- May: wrong item
+  INSERT INTO sales.sales_returns (return_number, order_id, customer_id, return_date, reason, status, total_amount, org_id, branch_id)
+    VALUES ('RET-2024-007', o3, c3, '2024-05-25', 'Wrong Item', 'completed', 150.00, org, br) RETURNING id INTO r7;
+  INSERT INTO sales.sales_return_lines (return_id, product_id, quantity, unit_price, line_total, reason)
+    VALUES (r7, p1, 1, 150.00, 150.00, 'Shipped Widget Alpha instead of Widget Omega');
+
+  -- Jun: quality issue on multiple items
+  INSERT INTO sales.sales_returns (return_number, order_id, customer_id, return_date, reason, status, total_amount, org_id, branch_id)
+    VALUES ('RET-2024-008', o4, c1, '2024-06-15', 'Quality Issue', 'pending', 530.00, org, br) RETURNING id INTO r8;
+  INSERT INTO sales.sales_return_lines (return_id, product_id, quantity, unit_price, line_total, reason)
+    VALUES (r8, p2, 1, 250.00, 250.00, 'Quality issue - scratch on casing');
+  INSERT INTO sales.sales_return_lines (return_id, product_id, quantity, unit_price, line_total, reason)
+    VALUES (r8, p3, 4, 50.00, 200.00, 'Quality issue - misaligned parts');
+  INSERT INTO sales.sales_return_lines (return_id, product_id, quantity, unit_price, line_total, reason)
+    VALUES (r8, p4, 2.67, 30.00, 80.00, 'Quality issue - packaging damaged');
+END $$;
+
+-- ============================================================================
 -- Reporting views are now created by seed/create_reporting_views.sql
 -- (see that file for the comprehensive denormalized reporting view set)
 -- ============================================================================
@@ -1117,6 +1358,14 @@ COMMENT ON COLUMN sales.quotes.quote_number IS 'Unique quote reference number | 
 COMMENT ON COLUMN sales.quotes.status IS 'Quote lifecycle status: draft, sent, accepted, rejected, expired';
 COMMENT ON TABLE sales.sales_orders IS 'Sales orders';
 COMMENT ON COLUMN sales.sales_orders.quote_id IS 'fk:sales.quotes.id Originating quote if converted from a quote';
+COMMENT ON TABLE sales.sales_returns IS 'Sales returns/RMAs for order items';
+COMMENT ON COLUMN sales.sales_returns.return_number IS 'Unique return reference number | display_column';
+COMMENT ON COLUMN sales.sales_returns.order_id IS 'fk:sales.sales_orders.id Originating sales order';
+COMMENT ON COLUMN sales.sales_returns.customer_id IS 'fk:core.contacts.id Customer who initiated the return';
+COMMENT ON COLUMN sales.sales_returns.reason IS 'Top-level return reason category';
+COMMENT ON TABLE sales.sales_return_lines IS 'Line items on a sales return';
+COMMENT ON COLUMN sales.sales_return_lines.return_id IS 'fk:sales.sales_returns.id Parent return record';
+COMMENT ON COLUMN sales.sales_return_lines.product_id IS 'fk:inventory.products.id Returned product';
 
 COMMENT ON TABLE finance.invoices IS 'Customer invoices';
 COMMENT ON TABLE finance.gl_entries IS 'General ledger journal entries';
