@@ -1,6 +1,91 @@
 #!/bin/bash
 set -e
 
+# ---------------------------------------------------------------------------
+# Logging helpers
+# ---------------------------------------------------------------------------
+log_info()  { echo "[JRNYBI] $*"; }
+log_ok()    { echo "[JRNYBI] OK: $*"; }
+log_warn()  { echo "[JRNYBI] WARN: $*"; }
+log_err()   { echo "[JRNYBI] ERROR: $*" >&2; }
+
+# ---------------------------------------------------------------------------
+# First-boot initialisation (idempotent — safe to run every startup)
+# ---------------------------------------------------------------------------
+# Runs database table creation, admin user bootstrap, and data source seeding.
+# All three commands are idempotent: they detect existing state and skip if
+# already done. Disable by setting JRNYBI_SKIP_INIT=true.
+#
+# Required env vars for full init:
+#   REDASH_DATABASE_URL          — Postgres connection for JRNYBI metadata DB
+#   JRNYBI_ADMIN_EMAIL           — Email for the root admin user
+#   JRNYBI_ADMIN_PASSWORD        — Password for the root admin user
+#
+# Optional:
+#   JRNYBI_ADMIN_NAME            — Display name (default: "JRNY Admin")
+#   JRNYBI_ORG                   — Organisation slug (default: "default")
+#   JRNYBI_JRNY_REPLICA_HOST     — Read-replica host (default: pg-replica)
+#   JRNYBI_JRNY_REPLICA_PORT     — Read-replica port (default: 5432)
+#   JRNYBI_JRNY_REPLICA_DB       — Read-replica database (default: jrny_db)
+#   JRNYBI_JRNY_REPLICA_USER     — Read-replica user (default: jrnybi_reader)
+#   JRNYBI_JRNY_REPLICA_PASSWORD — Read-replica password
+# ---------------------------------------------------------------------------
+init_first_boot() {
+  if [ "${JRNYBI_SKIP_INIT:-}" = "true" ]; then
+    log_info "JRNYBI_SKIP_INIT=true — skipping first-boot initialisation."
+    return 0
+  fi
+
+  log_info "Running first-boot initialisation..."
+
+  # 1. Create database tables (idempotent — skips if tables exist)
+  log_info "Ensuring database tables exist..."
+  /app/manage.py database create_tables 2>&1 || log_warn "database create_tables returned non-zero (may already exist)."
+
+  # 2. Create root admin user if credentials provided (skips if user exists)
+  if [ -n "${JRNYBI_ADMIN_EMAIL:-}" ]; then
+    log_info "Ensuring root admin user exists (${JRNYBI_ADMIN_EMAIL})..."
+    /app/manage.py users create_root \
+      "${JRNYBI_ADMIN_EMAIL}" \
+      "${JRNYBI_ADMIN_NAME:-JRNY Admin}" \
+      --password "${JRNYBI_ADMIN_PASSWORD:?JRNYBI_ADMIN_PASSWORD is required when JRNYBI_ADMIN_EMAIL is set}" \
+      --org "${JRNYBI_ORG:-default}" 2>&1 || log_warn "create_root returned non-zero (user may already exist)."
+  else
+    log_info "JRNYBI_ADMIN_EMAIL not set — skipping admin user creation."
+  fi
+
+  # 3. Seed JRNY read-replica data source (skips if already exists)
+  log_info "Ensuring JRNY read-replica data source exists..."
+  /app/manage.py ds seed_jrny 2>&1 || log_warn "seed_jrny returned non-zero (data source may already exist)."
+
+  log_ok "First-boot initialisation complete."
+}
+
+# ---------------------------------------------------------------------------
+# API key auto-detection (uses Python/SQLAlchemy — no psql binary needed)
+# ---------------------------------------------------------------------------
+detect_api_key() {
+  python3 -c "
+import os, sys
+try:
+    from sqlalchemy import create_engine, text
+    engine = create_engine(os.environ['REDASH_DATABASE_URL'])
+    with engine.connect() as conn:
+        row = conn.execute(text(
+            \"SELECT api_key FROM users WHERE 1 = ANY(groups) ORDER BY id LIMIT 1\"
+        )).fetchone()
+        if row and row[0]:
+            print(row[0].strip())
+        else:
+            sys.exit(1)
+except Exception:
+    sys.exit(1)
+" 2>/dev/null
+}
+
+# ---------------------------------------------------------------------------
+# Service commands
+# ---------------------------------------------------------------------------
 scheduler() {
   echo "Starting RQ scheduler..."
 
@@ -42,6 +127,10 @@ dev_worker() {
 }
 
 server() {
+  # Run idempotent first-boot initialisation before starting gunicorn.
+  # This ensures DB tables, admin user, and data source exist on fresh deploys.
+  init_first_boot
+
   # Recycle gunicorn workers every n-th request. See http://docs.gunicorn.org/en/stable/settings.html#max-requests for more details.
   MAX_REQUESTS=${MAX_REQUESTS:-1000}
   MAX_REQUESTS_JITTER=${MAX_REQUESTS_JITTER:-100}
@@ -50,21 +139,78 @@ server() {
   exec /usr/local/bin/gunicorn -b "$BIND_ADDRESS" --name redash -w${REDASH_WEB_WORKERS:-4} redash.wsgi:app --max-requests $MAX_REQUESTS --max-requests-jitter $MAX_REQUESTS_JITTER --timeout $TIMEOUT --limit-request-line ${REDASH_GUNICORN_LIMIT_REQUEST_LINE:-0}
 }
 
+# ---------------------------------------------------------------------------
+# seed_reports — One-shot container command for seeding pre-built reports.
+#
+# Waits for the JRNYBI server to be healthy, auto-detects an admin API key
+# from the database (or uses JRNYBI_ADMIN_API_KEY env var), then runs the
+# report seed script which creates queries, visualizations, and dashboards
+# via the REST API.
+#
+# Designed to run as a separate container with restart: "no" that starts
+# after the server passes its healthcheck.
+#
+# Env vars:
+#   JRNYBI_BASE_URL        — Server URL (default: http://localhost:5000)
+#   JRNYBI_ADMIN_API_KEY   — Admin API key (auto-detected from DB if not set)
+#   REDASH_DATABASE_URL    — Postgres URL for API key auto-detection
+# ---------------------------------------------------------------------------
+seed_reports() {
+  local base_url="${JRNYBI_BASE_URL:-http://localhost:5000}"
+  local max_wait=120
+  local waited=0
+
+  log_info "Waiting for JRNYBI server at ${base_url}/ping ..."
+  while [ $waited -lt $max_wait ]; do
+    if curl -sf "${base_url}/ping" > /dev/null 2>&1; then
+      log_ok "Server is ready."
+      break
+    fi
+    waited=$((waited + 2))
+    sleep 2
+  done
+
+  if [ $waited -ge $max_wait ]; then
+    log_err "Server not ready after ${max_wait}s. Aborting report seeding."
+    exit 1
+  fi
+
+  # Resolve API key: env var first, then auto-detect from database
+  local api_key="${JRNYBI_ADMIN_API_KEY:-}"
+
+  if [ -z "$api_key" ]; then
+    log_info "JRNYBI_ADMIN_API_KEY not set — auto-detecting from database..."
+    api_key=$(detect_api_key || true)
+  fi
+
+  if [ -z "$api_key" ]; then
+    log_err "No admin API key found. Cannot seed reports."
+    log_err "Set JRNYBI_ADMIN_API_KEY or ensure an admin user exists."
+    exit 1
+  fi
+
+  log_info "Seeding pre-built reports..."
+  export JRNYBI_ADMIN_API_KEY="$api_key"
+  export JRNYBI_BASE_URL="$base_url"
+  exec python /app/seed/jrny_reports.py
+}
+
 create_db() {
   exec /app/manage.py database create_tables
 }
 
 help() {
-  echo "Redash Docker."
+  echo "JRNYBI Docker."
   echo ""
   echo "Usage:"
   echo ""
 
-  echo "server -- start Redash server (with gunicorn)"
+  echo "server -- start JRNYBI server (with first-boot init + gunicorn)"
   echo "worker -- start a single RQ worker"
   echo "dev_worker -- start a single RQ worker with code reloading"
   echo "scheduler -- start an rq-scheduler instance"
   echo "dev_scheduler -- start an rq-scheduler instance with code reloading"
+  echo "seed_reports -- seed pre-built reports via REST API (one-shot)"
   echo ""
   echo "shell -- open shell"
   echo "dev_server -- start Flask development server with debugger and auto reload"
@@ -125,6 +271,10 @@ case "$1" in
     ;;
   shell)
     exec /app/manage.py shell
+    ;;
+  seed_reports)
+    shift
+    seed_reports
     ;;
   create_db)
     create_db
