@@ -2676,3 +2676,45 @@ Agent: Batch agent handling features #167, #168, #169
 - Features passing: 163+ (172 total)
 - Features #167, #168, #169 all complete
 - Server at http://localhost:5001, admin API key: adminTestKey123456789012345678901234
+
+## Session 30: 2026-05-30
+Agent: Feature #179
+
+### Feature #179: Hide report-tagged dashboards from the Dashboards listing page (PASSING)
+- Implemented backend exclude_tag_prefix API parameter (Option A from feature spec)
+- Added exclude_by_tag_prefix() helper in redash/handlers/base.py:
+  * Uses PostgreSQL unnest() to check individual tags in array column
+  * SQL: NOT EXISTS (SELECT 1 FROM unnest(dashboards.tags) AS t WHERE t LIKE prefix%)
+  * NULL tags not excluded (unnest returns no rows for NULL)
+  * Reads from ?exclude_tag_prefix= query parameter
+- Applied filter to all 3 dashboard list endpoints in dashboards.py:
+  * DashboardListResource.get() - /api/dashboards
+  * MyDashboardsResource.get() - /api/dashboards/my
+  * DashboardFavoriteListResource.get() - /api/dashboards/favorites
+- DashboardTagsResource.get() filters out report: tags from sidebar tag cloud
+  * Python-level filter using name.startswith(prefix)
+- Frontend DashboardList.jsx updated:
+  * getResource() wraps API calls with exclude_tag_prefix=report: param
+  * Sidebar.Tags URL updated to api/dashboards/tags?exclude_tag_prefix=report:
+- Verification results:
+  * Without filter: 39 dashboards returned (all)
+  * With filter: 14 dashboards returned (25 report-tagged excluded)
+  * Zero report:* tags in filtered results
+  * Tags sidebar: only domain tags shown (cashbook, finance, inventory, etc.)
+  * Search works correctly with filter
+  * Pagination count correct (count reflects filtered total)
+  * Filter persists across server restart (database-level, no in-memory state)
+  * No mock data patterns in modified files
+
+## Files Modified
+- redash/handlers/base.py - Added exclude_by_tag_prefix() with text() + unnest()
+- redash/handlers/dashboards.py - Applied filter to all list endpoints + tags endpoint
+- client/app/pages/dashboards/DashboardList.jsx - Pass exclude_tag_prefix in API calls + tags URL
+- Committed as 4ddda235
+
+## Current Status
+- Features passing: 173 (96.6% complete)
+- Total features: 179
+- Admin API key: XoHzEKVBwYa99t5cC5fhXoL3Ch0td75FJaiVm0PC
+- Server at http://localhost:5001
+- Playwright unavailable (no Chrome installed)
