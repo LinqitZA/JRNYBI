@@ -17,6 +17,25 @@ API_KEY = "adminTestKey123456789012345678901234"
 BASE_URL = "http://localhost:5001"
 DS_ID = 1
 
+# Resolve lookup query IDs for dropdown parameters
+try:
+    from seed.lookup_utils import resolve_lookup_id
+except ImportError:
+    try:
+        from lookup_utils import resolve_lookup_id
+    except ImportError:
+        resolve_lookup_id = None
+
+
+def _get_lookup_id(key):
+    """Get lookup query ID, falling back to None (text param) if unavailable."""
+    if resolve_lookup_id is None:
+        return None
+    try:
+        return resolve_lookup_id(key, base_url=BASE_URL, api_key=API_KEY, ds_id=DS_ID)
+    except Exception:
+        return None
+
 
 def api_call(method, path, data=None):
     url = f"{BASE_URL}{path}"
@@ -33,6 +52,14 @@ def api_call(method, path, data=None):
         err_body = e.read().decode() if e.fp else ""
         sys.stderr.write(f"HTTP {e.code} on {method} {path}: {err_body}\n")
         raise
+
+
+def _warehouse_param():
+    """Build the warehouse parameter — query dropdown if lookup available, else text."""
+    qid = _get_lookup_id("warehouse_lookup")
+    if qid:
+        return {"name": "warehouse", "title": "Warehouse", "type": "query", "queryId": qid, "value": ""}
+    return {"name": "warehouse", "title": "Warehouse", "type": "text", "value": ""}
 
 
 def main():
@@ -76,7 +103,7 @@ ORDER BY
         "query": q1_sql,
         "options": {
             "parameters": [
-                {"name": "warehouse", "title": "Warehouse", "type": "text", "value": ""},
+                _warehouse_param(),
             ]
         },
         "tags": ["inventory", "jrny-report"],
@@ -149,7 +176,7 @@ ORDER BY warehouse_name,
         "query": q3_sql,
         "options": {
             "parameters": [
-                {"name": "warehouse", "title": "Warehouse", "type": "text", "value": ""},
+                _warehouse_param(),
             ]
         },
         "tags": ["inventory", "jrny-report"],

@@ -40,6 +40,7 @@ Environment variables (alternative to CLI args):
 """
 
 import argparse
+import copy
 import json
 import logging
 import os
@@ -136,8 +137,87 @@ DATE_PARAMS = [
 STATUS_PARAM = {
     "name": "status",
     "title": "Status",
-    "type": "text",
+    "type": "query",
+    "queryId": "po_status_lookup",
     "value": "",
+}
+
+# ---------------------------------------------------------------------------
+# Lookup queries — small helper queries that populate dropdown parameters.
+# Created BEFORE report queries; their IDs are injected into report parameter
+# definitions at seed time.
+# ---------------------------------------------------------------------------
+LOOKUP_QUERIES = {
+    "supplier_lookup": {
+        "name": "Lookup: Suppliers",
+        "description": "Distinct active supplier names for dropdown parameters.",
+        "query": "SELECT DISTINCT vendor_name AS supplier_name FROM reporting.v_purchase_orders WHERE vendor_name IS NOT NULL ORDER BY vendor_name",
+        "options": {"parameters": []},
+        "tags": ["jrny-lookup"],
+    },
+    "warehouse_lookup": {
+        "name": "Lookup: Warehouses",
+        "description": "Distinct warehouse names for dropdown parameters.",
+        "query": "SELECT DISTINCT warehouse_name FROM reporting.v_inventory_levels WHERE warehouse_name IS NOT NULL ORDER BY warehouse_name",
+        "options": {"parameters": []},
+        "tags": ["jrny-lookup"],
+    },
+    "category_lookup": {
+        "name": "Lookup: Product Categories",
+        "description": "Distinct product categories for dropdown parameters.",
+        "query": "SELECT DISTINCT product_category AS category FROM reporting.v_inventory_levels WHERE product_category IS NOT NULL ORDER BY product_category",
+        "options": {"parameters": []},
+        "tags": ["jrny-lookup"],
+    },
+    "account_code_lookup": {
+        "name": "Lookup: GL Account Codes",
+        "description": "Distinct GL account codes for dropdown parameters.",
+        "query": "SELECT DISTINCT account_code || ' - ' || account_name AS account_code FROM reporting.v_general_ledger WHERE account_code IS NOT NULL ORDER BY 1",
+        "options": {"parameters": []},
+        "tags": ["jrny-lookup"],
+    },
+    "bank_account_lookup": {
+        "name": "Lookup: Bank Accounts",
+        "description": "Distinct bank account names for dropdown parameters.",
+        "query": "SELECT DISTINCT account_name AS bank_account FROM reporting.v_cash_position WHERE account_name IS NOT NULL ORDER BY account_name",
+        "options": {"parameters": []},
+        "tags": ["jrny-lookup"],
+    },
+    "po_status_lookup": {
+        "name": "Lookup: PO Statuses",
+        "description": "Distinct purchase order statuses for dropdown parameters.",
+        "query": "SELECT DISTINCT po_status AS status FROM reporting.v_purchase_orders WHERE po_status IS NOT NULL ORDER BY po_status",
+        "options": {"parameters": []},
+        "tags": ["jrny-lookup"],
+    },
+    "product_lookup": {
+        "name": "Lookup: Products",
+        "description": "Distinct product codes for dropdown parameters.",
+        "query": "SELECT DISTINCT product_code || ' - ' || product_name AS product_code FROM reporting.v_grn_summary WHERE product_code IS NOT NULL ORDER BY 1",
+        "options": {"parameters": []},
+        "tags": ["jrny-lookup"],
+    },
+    "vendor_group_lookup": {
+        "name": "Lookup: Vendor Groups",
+        "description": "Distinct vendor groups for dropdown parameters.",
+        "query": "SELECT DISTINCT vendor_name AS vendor_group FROM reporting.v_purchase_orders WHERE vendor_name IS NOT NULL ORDER BY vendor_name",
+        "options": {"parameters": []},
+        "tags": ["jrny-lookup"],
+    },
+    "customer_group_lookup": {
+        "name": "Lookup: Customer Groups",
+        "description": "Distinct customer type groups for dropdown parameters.",
+        "query": "SELECT DISTINCT COALESCE(customer_type, 'Ungrouped') AS customer_group FROM reporting.v_customers WHERE is_active = true ORDER BY 1",
+        "options": {"parameters": []},
+        "tags": ["jrny-lookup"],
+    },
+    "movement_type_lookup": {
+        "name": "Lookup: Stock Movement Types",
+        "description": "Distinct stock movement types for dropdown parameters.",
+        "query": "SELECT DISTINCT movement_type FROM reporting.v_stock_movements WHERE movement_type IS NOT NULL ORDER BY movement_type",
+        "options": {"parameters": []},
+        "tags": ["jrny-lookup"],
+    },
 }
 
 
@@ -402,7 +482,8 @@ ORDER BY turnover_ratio DESC;
                 {
                     "name": "category",
                     "title": "Product Category",
-                    "type": "text",
+                    "type": "query",
+                    "queryId": "category_lookup",
                     "value": "",
                 },
             ]
@@ -655,7 +736,7 @@ WHERE po_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
   AND ('{{ supplier_name }}' = '' OR vendor_name ILIKE '%' || '{{ supplier_name }}' || '%');
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
-            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
+            {"name": "supplier_name", "title": "Supplier Name", "type": "query", "queryId": "supplier_lookup", "value": ""},
         ]},
         "tags": ["procurement", "jrny-report"],
     },
@@ -682,7 +763,7 @@ GROUP BY vendor_name
 ORDER BY otif_pct DESC;
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
-            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
+            {"name": "supplier_name", "title": "Supplier Name", "type": "query", "queryId": "supplier_lookup", "value": ""},
         ]},
         "tags": ["procurement", "jrny-report"],
     },
@@ -703,7 +784,7 @@ GROUP BY DATE_TRUNC('month', po_date)
 ORDER BY month;
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
-            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
+            {"name": "supplier_name", "title": "Supplier Name", "type": "query", "queryId": "supplier_lookup", "value": ""},
         ]},
         "tags": ["procurement", "jrny-report"],
     },
@@ -728,8 +809,8 @@ WHERE grn.received_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
   AND ('{{ product_code }}' = '' OR grn.product_code ILIKE '%' || '{{ product_code }}' || '%')
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
-            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
-            {"name": "product_code", "title": "Product Code", "type": "text", "value": ""},
+            {"name": "supplier_name", "title": "Supplier Name", "type": "query", "queryId": "supplier_lookup", "value": ""},
+            {"name": "product_code", "title": "Product Code", "type": "query", "queryId": "product_lookup", "value": ""},
         ]},
         "tags": ["procurement", "jrny-report"],
     },
@@ -756,8 +837,8 @@ GROUP BY grn.vendor_name
 ORDER BY ABS(SUM((grn.unit_cost - po.unit_cost) * grn.received_quantity)) DESC
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
-            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
-            {"name": "product_code", "title": "Product Code", "type": "text", "value": ""},
+            {"name": "supplier_name", "title": "Supplier Name", "type": "query", "queryId": "supplier_lookup", "value": ""},
+            {"name": "product_code", "title": "Product Code", "type": "query", "queryId": "product_lookup", "value": ""},
         ]},
         "tags": ["procurement", "jrny-report"],
     },
@@ -785,8 +866,8 @@ GROUP BY grn.product_code, grn.product_name
 ORDER BY ABS(SUM((grn.unit_cost - po.unit_cost) * grn.received_quantity)) DESC
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
-            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
-            {"name": "product_code", "title": "Product Code", "type": "text", "value": ""},
+            {"name": "supplier_name", "title": "Supplier Name", "type": "query", "queryId": "supplier_lookup", "value": ""},
+            {"name": "product_code", "title": "Product Code", "type": "query", "queryId": "product_lookup", "value": ""},
         ]},
         "tags": ["procurement", "jrny-report"],
     },
@@ -825,8 +906,8 @@ WHERE grn.received_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
 ORDER BY ABS((grn.unit_cost - po.unit_cost) * grn.received_quantity) DESC
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
-            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
-            {"name": "product_code", "title": "Product Code", "type": "text", "value": ""},
+            {"name": "supplier_name", "title": "Supplier Name", "type": "query", "queryId": "supplier_lookup", "value": ""},
+            {"name": "product_code", "title": "Product Code", "type": "query", "queryId": "product_lookup", "value": ""},
         ]},
         "tags": ["procurement", "jrny-report"],
     },
@@ -848,7 +929,7 @@ WHERE po_date >= '{{ start_date }}'
   AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%')
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
-            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
+            {"name": "supplier_name", "title": "Supplier Name", "type": "query", "queryId": "supplier_lookup", "value": ""},
         ]},
         "tags": ["procurement", "jrny-report"],
     },
@@ -878,7 +959,7 @@ ORDER BY
   END
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
-            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
+            {"name": "supplier_name", "title": "Supplier Name", "type": "query", "queryId": "supplier_lookup", "value": ""},
         ]},
         "tags": ["procurement", "jrny-report"],
     },
@@ -902,7 +983,7 @@ WHERE po_date >= '{{ start_date }}'
 ORDER BY days_overdue DESC, po_total DESC
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
-            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
+            {"name": "supplier_name", "title": "Supplier Name", "type": "query", "queryId": "supplier_lookup", "value": ""},
         ]},
         "tags": ["procurement", "jrny-report"],
     },
@@ -925,7 +1006,7 @@ GROUP BY supplier_name
 ORDER BY SUM(po_total) DESC
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
-            {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
+            {"name": "supplier_name", "title": "Supplier Name", "type": "query", "queryId": "supplier_lookup", "value": ""},
         ]},
         "tags": ["procurement", "jrny-report"],
     },
@@ -1005,7 +1086,8 @@ ORDER BY composite_score DESC;
                 {
                     "name": "vendor_group",
                     "title": "Vendor Group",
-                    "type": "text",
+                    "type": "query",
+                    "queryId": "vendor_group_lookup",
                     "value": "",
                 },
             ]
@@ -1055,7 +1137,8 @@ ORDER BY supplier_name, dimension;
                 {
                     "name": "vendor_group",
                     "title": "Vendor Group",
-                    "type": "text",
+                    "type": "query",
+                    "queryId": "vendor_group_lookup",
                     "value": "",
                 },
             ]
@@ -1109,7 +1192,8 @@ FROM composites;
                 {
                     "name": "vendor_group",
                     "title": "Vendor Group",
-                    "type": "text",
+                    "type": "query",
+                    "queryId": "vendor_group_lookup",
                     "value": "",
                 },
             ]
@@ -1329,8 +1413,9 @@ ORDER BY a.entry_date, a.debit DESC;
                 {
                     "name": "account_code",
                     "title": "Account Code",
-                    "type": "text",
-                    "value": "4000",
+                    "type": "query",
+                    "queryId": "account_code_lookup",
+                    "value": "",
                 },
                 {
                     "name": "start_date",
@@ -1390,8 +1475,9 @@ LEFT JOIN LATERAL (
                 {
                     "name": "account_code",
                     "title": "Account Code",
-                    "type": "text",
-                    "value": "4000",
+                    "type": "query",
+                    "queryId": "account_code_lookup",
+                    "value": "",
                 },
                 {
                     "name": "start_date",
@@ -1603,7 +1689,8 @@ ORDER BY revenue DESC;
                 {
                     "name": "dimension_type",
                     "title": "Dimension Type",
-                    "type": "text",
+                    "type": "enum",
+                    "enumOptions": "Entity\nFunction\nProject",
                     "value": "",
                 },
             ]
@@ -1643,7 +1730,8 @@ ORDER BY de.month, de.dimension_code;
                 {
                     "name": "dimension_type",
                     "title": "Dimension Type",
-                    "type": "text",
+                    "type": "enum",
+                    "enumOptions": "Entity\nFunction\nProject",
                     "value": "",
                 },
             ]
@@ -1951,7 +2039,8 @@ ORDER BY days_unmatched DESC;
             {
                 "name": "bank_account",
                 "title": "Bank Account",
-                "type": "text",
+                "type": "query",
+                "queryId": "bank_account_lookup",
                 "value": "",
             },
         ]},
@@ -2040,13 +2129,15 @@ ORDER BY total_outstanding DESC NULLS LAST;
                 {
                     "name": "customer_group",
                     "title": "Customer Group",
-                    "type": "text",
+                    "type": "query",
+                    "queryId": "customer_group_lookup",
                     "value": "",
                 },
                 {
                     "name": "health_status",
                     "title": "Health Status",
-                    "type": "text",
+                    "type": "enum",
+                    "enumOptions": "Good\nWatch\nRisk",
                     "value": "",
                 },
             ]
@@ -2087,14 +2178,14 @@ END;
                 {
                     "name": "start_date",
                     "title": "Close Date From",
-                    "type": "text",
-                    "value": "",
+                    "type": "date",
+                    "value": "2024-01-01",
                 },
                 {
                     "name": "end_date",
                     "title": "Close Date To",
-                    "type": "text",
-                    "value": "",
+                    "type": "date",
+                    "value": "2024-12-31",
                 },
                 {
                     "name": "assigned_to",
@@ -2140,14 +2231,14 @@ ORDER BY
                 {
                     "name": "start_date",
                     "title": "Close Date From",
-                    "type": "text",
-                    "value": "",
+                    "type": "date",
+                    "value": "2024-01-01",
                 },
                 {
                     "name": "end_date",
                     "title": "Close Date To",
-                    "type": "text",
-                    "value": "",
+                    "type": "date",
+                    "value": "2024-12-31",
                 },
                 {
                     "name": "assigned_to",
@@ -2182,14 +2273,14 @@ ORDER BY stage DESC;
                 {
                     "name": "start_date",
                     "title": "Close Date From",
-                    "type": "text",
-                    "value": "",
+                    "type": "date",
+                    "value": "2024-01-01",
                 },
                 {
                     "name": "end_date",
                     "title": "Close Date To",
-                    "type": "text",
-                    "value": "",
+                    "type": "date",
+                    "value": "2024-12-31",
                 },
                 {
                     "name": "assigned_to",
@@ -2234,14 +2325,14 @@ ORDER BY days_since_last_activity DESC;
                 {
                     "name": "start_date",
                     "title": "Activity Date From",
-                    "type": "text",
-                    "value": "",
+                    "type": "date",
+                    "value": "2024-01-01",
                 },
                 {
                     "name": "end_date",
                     "title": "Activity Date To",
-                    "type": "text",
-                    "value": "",
+                    "type": "date",
+                    "value": "2024-12-31",
                 },
                 {
                     "name": "assigned_to",
@@ -2273,14 +2364,14 @@ ORDER BY week_start;
                 {
                     "name": "start_date",
                     "title": "Activity Date From",
-                    "type": "text",
-                    "value": "",
+                    "type": "date",
+                    "value": "2024-01-01",
                 },
                 {
                     "name": "end_date",
                     "title": "Activity Date To",
-                    "type": "text",
-                    "value": "",
+                    "type": "date",
+                    "value": "2024-12-31",
                 },
                 {
                     "name": "assigned_to",
@@ -2318,14 +2409,14 @@ ORDER BY a.activity_date DESC;
                 {
                     "name": "start_date",
                     "title": "Activity Date From",
-                    "type": "text",
-                    "value": "",
+                    "type": "date",
+                    "value": "2024-01-01",
                 },
                 {
                     "name": "end_date",
                     "title": "Activity Date To",
-                    "type": "text",
-                    "value": "",
+                    "type": "date",
+                    "value": "2024-12-31",
                 },
                 {
                     "name": "assigned_to",
@@ -4968,9 +5059,41 @@ def seed_reports(base_url=None, api_key=None, data_source_id=None):
         "dashboards": {},    # dash_key -> {id, name, slug}
     }
 
+    # ---- Step 0: Create lookup queries for dropdown parameters ----
+    lookup_ids = {}  # lookup_key -> query_id
+    logger.info("Creating lookup queries for dropdown parameters...")
+    for lookup_key, lookup_def in LOOKUP_QUERIES.items():
+        if lookup_def["name"] in existing_names:
+            logger.info("  Skipping existing lookup: '%s'", lookup_def["name"])
+            result = client.get(f"/api/queries?q={lookup_def['name']}")
+            for q in result.get("results", []):
+                if q["name"] == lookup_def["name"]:
+                    lookup_ids[lookup_key] = q["id"]
+                    break
+            continue
+
+        result = create_query(client, data_source_id, lookup_key, lookup_def)
+        lookup_ids[lookup_key] = result["id"]
+
+    logger.info("  Lookup queries created: %d (IDs: %s)", len(lookup_ids), lookup_ids)
+
+    # Resolve queryId string references in QUERIES parameters to actual IDs
+    resolved_queries = copy.deepcopy(QUERIES)
+    for query_key, query_def in resolved_queries.items():
+        for param in query_def.get("options", {}).get("parameters", []):
+            if param.get("type") == "query" and isinstance(param.get("queryId"), str):
+                ref = param["queryId"]
+                if ref in lookup_ids:
+                    param["queryId"] = lookup_ids[ref]
+                else:
+                    logger.warning("  Lookup '%s' not found for param '%s' in query '%s' — falling back to text",
+                                   ref, param.get("name"), query_def.get("name"))
+                    param["type"] = "text"
+                    param.pop("queryId", None)
+
     # ---- Step 1: Create queries ----
     logger.info("Creating report queries...")
-    for query_key, query_def in QUERIES.items():
+    for query_key, query_def in resolved_queries.items():
         if query_def["name"] in existing_names:
             logger.info("  Skipping existing query: '%s'", query_def["name"])
             # We need to find the existing query ID for visualizations/dashboards
