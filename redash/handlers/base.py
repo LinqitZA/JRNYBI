@@ -4,7 +4,7 @@ from inspect import isclass
 from flask import Blueprint, current_app, request
 from flask_login import current_user, login_required
 from flask_restful import Resource, abort
-from sqlalchemy import cast
+from sqlalchemy import cast, text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm.exc import NoResultFound
 
@@ -115,6 +115,24 @@ def filter_by_tags(result_set, column):
     if request.args.getlist("tags"):
         tags = request.args.getlist("tags")
         result_set = result_set.filter(cast(column, ARRAY(db.Text)).contains(tags))
+    return result_set
+
+
+def exclude_by_tag_prefix(result_set, table_name, prefix=None):
+    """Exclude results where any tag starts with the given prefix.
+
+    Uses PostgreSQL unnest() to check individual array elements.
+    Rows with NULL tags are not excluded (unnest returns no rows for NULL).
+    """
+    if prefix is None:
+        prefix = request.args.get("exclude_tag_prefix")
+    if prefix:
+        result_set = result_set.filter(
+            text(
+                f"NOT EXISTS (SELECT 1 FROM unnest({table_name}.tags) AS t "
+                "WHERE t LIKE :_exclude_prefix)"
+            ).params(_exclude_prefix=f"{prefix}%")
+        )
     return result_set
 
 

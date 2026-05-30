@@ -6,6 +6,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from redash import models
 from redash.handlers.base import (
     BaseResource,
+    exclude_by_tag_prefix,
     filter_by_tags,
     get_object_or_404,
     paginate,
@@ -60,6 +61,7 @@ class DashboardListResource(BaseResource):
             results = models.Dashboard.all(self.current_org, self.current_user.group_ids, self.current_user.id)
 
         results = filter_by_tags(results, models.Dashboard.tags)
+        results = exclude_by_tag_prefix(results, "dashboards")
 
         # order results according to passed order parameter,
         # special-casing search queries where the database
@@ -126,6 +128,7 @@ class MyDashboardsResource(BaseResource):
             results = models.Dashboard.by_user(self.current_user)
 
         results = filter_by_tags(results, models.Dashboard.tags)
+        results = exclude_by_tag_prefix(results, "dashboards")
 
         # order results according to passed order parameter,
         # special-casing search queries where the database
@@ -358,10 +361,18 @@ class DashboardTagsResource(BaseResource):
     @require_permission("list_dashboards")
     def get(self):
         """
-        Lists all accessible dashboards.
+        Lists all accessible dashboard tags, with optional prefix exclusion.
         """
         tags = models.Dashboard.all_tags(self.current_org, self.current_user)
-        return {"tags": [{"name": name, "count": count} for name, count in tags]}
+
+        exclude_tag_prefix = request.args.get("exclude_tag_prefix")
+        result = []
+        for name, count in tags:
+            if exclude_tag_prefix and name.startswith(exclude_tag_prefix):
+                continue
+            result.append({"name": name, "count": count})
+
+        return {"tags": result}
 
 
 class DashboardFavoriteListResource(BaseResource):
@@ -380,6 +391,7 @@ class DashboardFavoriteListResource(BaseResource):
             favorites = models.Dashboard.favorites(self.current_user)
 
         favorites = filter_by_tags(favorites, models.Dashboard.tags)
+        favorites = exclude_by_tag_prefix(favorites, "dashboards")
 
         # order results according to passed order parameter,
         # special-casing search queries where the database

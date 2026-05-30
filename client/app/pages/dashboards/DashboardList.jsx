@@ -118,7 +118,7 @@ function DashboardList({ controller }) {
               onChange={controller.updateSearch}
             />
             <Sidebar.Menu items={sidebarMenu} selected={controller.params.currentPage} />
-            <Sidebar.Tags url="api/dashboards/tags" onChange={controller.updateSelectedTags} showUnselectAll />
+            <Sidebar.Tags url="api/dashboards/tags?exclude_tag_prefix=report:" onChange={controller.updateSelectedTags} showUnselectAll />
           </Layout.Sidebar>
           <Layout.Content>
             <div data-test="DashboardLayoutContent">
@@ -170,11 +170,14 @@ const DashboardListPage = itemsList(
   () =>
     new ResourceItemsSource({
       getResource({ params: { currentPage } }) {
-        return {
+        const baseResource = {
           all: Dashboard.query.bind(Dashboard),
           my: Dashboard.myDashboards.bind(Dashboard),
           favorites: Dashboard.favorites.bind(Dashboard),
         }[currentPage];
+        // Exclude report-tagged dashboards from the dashboard listing;
+        // they are shown on the /reports page instead.
+        return (params) => baseResource({ ...params, exclude_tag_prefix: "report:" });
       },
       getItemProcessor() {
         return (item) => new Dashboard(item);
