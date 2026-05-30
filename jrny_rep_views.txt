@@ -1,0 +1,1726 @@
+-- =============================================================================
+-- JRNY ERP — Reporting Schema with Denormalized Views
+-- =============================================================================
+-- Creates the 'reporting' schema containing denormalized views that join across
+-- JRNY's domain schemas for simplified report writing. JRNYBI users query flat
+-- views instead of navigating 10+ schemas.
+--
+-- All views include entity_id and/or branch_id columns for RLS filtering.
+-- Views use CREATE OR REPLACE so re-running is safe (idempotent).
+--
+-- Feature: #2236
+-- =============================================================================
+
+BEGIN;
+
+-- ─── Step 1: Create reporting schema ─────────────────────────────────────────
+CREATE SCHEMA IF NOT EXISTS reporting;
+
+-- ─── Step 2: Ensure jrnybi_reader role exists ────────────────────────────────
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'jrnybi_reader') THEN
+        CREATE ROLE jrnybi_reader WITH
+            LOGIN
+            PASSWORD 'jrnybi_reader_dev_password'
+            NOSUPERUSER
+            NOCREATEDB
+            NOCREATEROLE;
+        RAISE NOTICE 'Created reporting user: jrnybi_reader';
+    ELSE
+        RAISE NOTICE 'Reporting user jrnybi_reader already exists';
+    END IF;
+END
+$$;
+
+GRANT USAGE ON SCHEMA reporting TO jrnybi_reader;
+
+-- ─── View 1: v_sales_orders ──────────────────────────────────────────────────
+-- Denormalized sales orders with line items, customer details, and product info.
+-- Grain: one row per sales order line.
+CREATE OR REPLACE VIEW reporting.v_sales_orders AS
+SELECT
+    so.id                       AS order_id,
+    so.order_number,
+    so.order_date,
+    so.status                   AS order_status,
+    so.customer_id,
+    so.customer_name,
+    c.code                      AS customer_code,
+    c.email                     AS customer_email,
+    c.phone                     AS customer_phone,
+    c.payment_terms_days        AS customer_payment_terms,
+    so.sales_rep_id,
+    so.sales_rep_name,
+    sol.id                      AS line_id,
+    sol.line_number,
+    sol.product_id,
+    sol.product_code,
+    sol.product_name,
+    p.category                  AS product_category,
+    p.uom                       AS product_uom,
+    sol.quantity,
+    sol.unit_price,
+    sol.cost_price,
+    sol.gp_margin               AS line_gp_margin,
+    sol.vat_rate                AS line_vat_rate,
+    sol.vat_amount              AS line_vat_amount,
+    sol.line_total,
+    sol.line_total_incl_vat,
+    sol.is_price_override,
+    so.subtotal                 AS order_subtotal,
+    so.vat_total                AS order_vat_total,
+    so.total                    AS order_total,
+    so.gp_margin                AS order_gp_margin,
+    so.currency,
+    so.source_quotation_id,
+    so.source_quotation_number,
+    so.credit_check_passed,
+    so.confirmed_at,
+    so.confirmed_by,
+    so.created_at,
+    so.updated_at,
+    so.branch_id,
+    b.name                      AS branch_name,
+    b.code                      AS branch_code,
+    c.entity_id
+FROM sales.sales_orders so
+LEFT JOIN sales.sales_order_lines sol ON sol.order_id = so.id
+LEFT JOIN crm.customers c ON c.id = so.customer_id
+LEFT JOIN inventory.products p ON p.id = sol.product_id
+LEFT JOIN core.branches b ON b.id = so.branch_id;
+
+COMMENT ON VIEW reporting.v_sales_orders IS
+'Denormalized sales orders at line-item grain. Joins sales_orders, sales_order_lines, customers, products, branches. Use for sales analysis, product mix, margin analysis. Filter by entity_id, branch_id, order_date, order_status.';
+
+
+-- ─── View 2: v_invoices ─────────────────────────────────────────────────────
+-- Denormalized invoices with line items, customer details, and linked SO.
+-- Grain: one row per invoice line.
+CREATE OR REPLACE VIEW reporting.v_invoices AS
+SELECT
+    inv.id                      AS invoice_id,
+    inv.invoice_number,
+    inv.invoice_date,
+    inv.due_date,
+    inv.status                  AS invoice_status,
+    inv.customer_id,
+    inv.customer_name,
+    c.code                      AS customer_code,
+    c.email                     AS customer_email,
+    c.payment_terms_days        AS customer_payment_terms,
+    il.id                       AS line_id,
+    il.line_number,
+    il.description              AS line_description,
+    il.quantity,
+    il.unit_price,
+    il.vat_rate                 AS line_vat_rate,
+    il.vat_amount               AS line_vat_amount,
+    il.line_total,
+    il.line_total_incl_vat,
+    il.tax_code_id,
+    il.tax_code,
+    inv.subtotal                AS invoice_subtotal,
+    inv.vat_total               AS invoice_vat_total,
+    inv.total                   AS invoice_total,
+    inv.amount_paid,
+    inv.balance                 AS invoice_balance,
+    inv.currency,
+    inv.sales_order_id,
+    so.order_number             AS linked_so_number,
+    inv.dispatch_note_id,
+    inv.posted_at,
+    inv.posted_by,
+    inv.created_at,
+    inv.updated_at,
+    -- Derive branch_id and entity_id from linked sales order or customer
+    COALESCE(so.branch_id, NULL)     AS branch_id,
+    COALESCE(b.name, NULL)           AS branch_name,
+    COALESCE(c.entity_id, NULL)      AS entity_id
+FROM finance.invoices inv
+LEFT JOIN finance.invoice_lines il ON il.invoice_id = inv.id
+LEFT JOIN crm.customers c ON c.id = inv.customer_id
+LEFT JOIN sales.sales_orders so ON so.id = inv.sales_order_id
+LEFT JOIN core.branches b ON b.id = so.branch_id;
+
+COMMENT ON VIEW reporting.v_invoices IS
+'Denormalized invoices at line-item grain. Joins invoices, invoice_lines, customers, sales_orders, branches. Use for revenue analysis, aging, collections. Filter by entity_id, branch_id, invoice_date, invoice_status.';
+
+
+-- ─── View 3: v_inventory_levels ──────────────────────────────────────────────
+-- Current stock levels by product and warehouse with product details.
+-- Grain: one row per product per warehouse.
+CREATE OR REPLACE VIEW reporting.v_inventory_levels AS
+SELECT
+    soh.id                      AS stock_id,
+    soh.product_id,
+    p.code                      AS product_code,
+    p.name                      AS product_name,
+    p.category                  AS product_category,
+    p.uom                       AS product_uom,
+    p.cost_price,
+    p.selling_price,
+    p.reorder_level             AS reorder_point,
+    p.reorder_quantity,
+    p.is_active                 AS product_is_active,
+    soh.warehouse_id,
+    w.code                      AS warehouse_code,
+    w.name                      AS warehouse_name,
+    w.warehouse_type,
+    soh.quantity_on_hand,
+    soh.quantity_reserved,
+    soh.quantity_available,
+    CASE
+        WHEN p.reorder_level IS NOT NULL AND soh.quantity_available <= p.reorder_level
+        THEN true ELSE false
+    END                         AS below_reorder_point,
+    (soh.quantity_on_hand * COALESCE(p.cost_price, 0))  AS stock_value_at_cost,
+    (soh.quantity_on_hand * COALESCE(p.selling_price, 0)) AS stock_value_at_sell,
+    soh.last_updated,
+    soh.created_at,
+    w.branch_id,
+    b.name                      AS branch_name,
+    b.code                      AS branch_code,
+    w.branch_id                 AS entity_id  -- branches represent entities in JRNY
+FROM inventory.stock_on_hand soh
+JOIN inventory.products p ON p.id = soh.product_id
+JOIN inventory.warehouses w ON w.id = soh.warehouse_id
+LEFT JOIN core.branches b ON b.id = w.branch_id;
+
+COMMENT ON VIEW reporting.v_inventory_levels IS
+'Current stock levels per product per warehouse. Joins stock_on_hand, products, warehouses, branches. Includes reorder alerts, stock valuation at cost and selling price. Filter by branch_id, warehouse_id, product_category, below_reorder_point.';
+
+
+-- ─── View 4: v_purchase_orders ───────────────────────────────────────────────
+-- Denormalized purchase orders with line items and supplier details.
+-- Grain: one row per PO line item.
+CREATE OR REPLACE VIEW reporting.v_purchase_orders AS
+SELECT
+    po.id                       AS po_id,
+    po.po_number,
+    po.po_date,
+    po.status                   AS po_status,
+    po.vendor_id                AS supplier_id,
+    po.vendor_name              AS supplier_name,
+    v.code                      AS supplier_code,
+    v.email                     AS supplier_email,
+    v.payment_terms_days        AS supplier_payment_terms,
+    po.expected_delivery_date,
+    poi.id                      AS line_id,
+    poi.line_number,
+    poi.product_id,
+    poi.product_code,
+    poi.product_name,
+    poi.description             AS line_description,
+    poi.quantity,
+    poi.unit_cost_tc              AS unit_cost,
+    poi.line_total,
+    poi.vat_rate                AS line_vat_rate,
+    poi.vat_amount              AS line_vat_amount,
+    poi.uom,
+    po.subtotal                 AS po_subtotal,
+    po.vat_amount               AS po_vat_total,
+    po.total                    AS po_total,
+    po.currency,
+    po.approval_band_code,
+    po.approval_required_role,
+    po.submitted_at,
+    po.submitted_by,
+    po.approved_at,
+    po.approved_by,
+    po.approval_notes,
+    po.rejected_at,
+    po.rejected_by,
+    po.rejection_reason,
+    po.created_at,
+    po.updated_at,
+    po.entity_id,
+    -- Derive branch_id: POs don't have branch_id directly, but entity_id maps
+    po.entity_id                AS branch_id
+FROM procurement.purchase_orders po
+LEFT JOIN procurement.purchase_order_items poi ON poi.purchase_order_id = po.id
+LEFT JOIN crm.vendors v ON v.id = po.vendor_id;
+
+COMMENT ON VIEW reporting.v_purchase_orders IS
+'Denormalized purchase orders at line-item grain. Joins purchase_orders, purchase_order_items, vendors. Use for procurement analysis, vendor spend, approval tracking. Filter by entity_id, po_date, po_status.';
+
+
+-- ─── View 5: v_cashbook_transactions ─────────────────────────────────────────
+-- Cashbook statement lines with bank account details.
+-- Grain: one row per statement line.
+CREATE OR REPLACE VIEW reporting.v_cashbook_transactions AS
+SELECT
+    sl.id                       AS transaction_id,
+    sl.transaction_date,
+    sl.value_date,
+    sl.description,
+    sl.reference,
+    sl.debit,
+    sl.credit,
+    sl.balance,
+    sl.match_status,
+    sl.matched_to_id,
+    sl.matched_to_type,
+    sl.matched_at,
+    sl.bank_account_id,
+    ba.bank_name,
+    ba.account_number           AS bank_account_number,
+    ba.account_name             AS bank_account_name,
+    ba.account_type             AS bank_account_type,
+    ba.currency,
+    ba.gl_account_id,
+    ga.code                     AS gl_account_code,
+    ga.name                     AS gl_account_name,
+    sl.import_id,
+    sl.created_at,
+    -- Cashbook tables don't have entity_id/branch_id directly;
+    -- use bank account's GL account as the link point
+    CAST(NULL AS uuid)          AS entity_id,
+    CAST(NULL AS uuid)          AS branch_id
+FROM cashbook.statement_lines sl
+JOIN cashbook.bank_accounts ba ON ba.id = sl.bank_account_id
+LEFT JOIN finance.gl_accounts ga ON ga.id = ba.gl_account_id;
+
+COMMENT ON VIEW reporting.v_cashbook_transactions IS
+'Cashbook statement lines with bank account and GL account details. Joins statement_lines, bank_accounts, gl_accounts. Use for bank reconciliation, cash flow analysis. Filter by transaction_date, bank_account_id, match_status.';
+
+
+-- ─── View 6: v_general_ledger ────────────────────────────────────────────────
+-- Journal entries with account details and batch context.
+-- Grain: one row per journal line.
+CREATE OR REPLACE VIEW reporting.v_general_ledger AS
+SELECT
+    jl.id                       AS line_id,
+    jl.batch_id,
+    jb.batch_number,
+    jb.description              AS batch_description,
+    jb.posting_date             AS entry_date,
+    jb.status                   AS batch_status,
+    jb.reference                AS source_document,
+    jl.line_number,
+    jl.account_id,
+    ga.code                     AS account_code,
+    ga.name                     AS account_name,
+    ga.account_type,
+    ga.account_group,
+    ga.ifrs18_category,
+    jl.description              AS line_description,
+    jl.debit_oc                  AS debit,
+    jl.credit_oc                 AS credit,
+    (COALESCE(jl.debit_oc, 0) - COALESCE(jl.credit_oc, 0)) AS net_amount,
+    jl.dim_entity_id,
+    jl.dim_function_id,
+    jl.dim_project_id,
+    jb.currency,
+    jb.is_intercompany,
+    jb.destination_entity_id,
+    jb.period_id,
+    jb.notes,
+    jb.created_by,
+    jl.created_at,
+    jl.entity_id,
+    jb.entity_id                AS batch_entity_id,
+    -- Derive branch_id from entity_id (entities are branches in JRNY)
+    jl.entity_id                AS branch_id
+FROM finance.journal_lines jl
+JOIN finance.journal_batches jb ON jb.id = jl.batch_id
+LEFT JOIN finance.gl_accounts ga ON ga.id = jl.account_id;
+
+COMMENT ON VIEW reporting.v_general_ledger IS
+'General ledger journal lines with batch and account details. Joins journal_lines, journal_batches, gl_accounts. Use for trial balance, P&L, balance sheet, audit trail. Filter by entity_id, entry_date, account_type, account_group, batch_status.';
+
+
+-- ─── View 7: v_customers ────────────────────────────────────────────────────
+-- Customer master data with aggregated sales totals, last order date,
+-- outstanding balance.
+-- Grain: one row per customer.
+CREATE OR REPLACE VIEW reporting.v_customers AS
+SELECT
+    c.id                        AS customer_id,
+    c.code                      AS customer_code,
+    c.name                      AS customer_name,
+    c.trading_name,
+    c.email,
+    c.phone,
+    c.vat_number,
+    c.registration_number,
+    c.billing_address,
+    c.delivery_address,
+    c.credit_limit,
+    c.payment_terms_days,
+    c.currency,
+    c.customer_type,
+    c.contact_name,
+    c.contact_email,
+    c.contact_phone,
+    c.is_active,
+    c.price_list_id,
+    c.invoicing_frequency,
+    c.created_at,
+    c.updated_at,
+    c.entity_id,
+    -- Aggregated sales metrics
+    COALESCE(so_agg.total_orders, 0)        AS total_orders,
+    COALESCE(so_agg.total_order_value, 0)   AS total_order_value,
+    so_agg.last_order_date,
+    -- Aggregated invoice / outstanding balance
+    COALESCE(inv_agg.total_invoices, 0)     AS total_invoices,
+    COALESCE(inv_agg.total_invoiced, 0)     AS total_invoiced,
+    COALESCE(inv_agg.total_paid, 0)         AS total_paid,
+    COALESCE(inv_agg.outstanding_balance, 0) AS outstanding_balance,
+    inv_agg.last_invoice_date,
+    -- Derive branch_id from entity_id
+    c.entity_id                              AS branch_id
+FROM crm.customers c
+LEFT JOIN (
+    SELECT
+        customer_id,
+        COUNT(*)            AS total_orders,
+        SUM(total)          AS total_order_value,
+        MAX(order_date)     AS last_order_date
+    FROM sales.sales_orders
+    WHERE status NOT IN ('cancelled', 'draft')
+    GROUP BY customer_id
+) so_agg ON so_agg.customer_id = c.id
+LEFT JOIN (
+    SELECT
+        customer_id,
+        COUNT(*)            AS total_invoices,
+        SUM(total)          AS total_invoiced,
+        SUM(amount_paid)    AS total_paid,
+        SUM(balance)        AS outstanding_balance,
+        MAX(invoice_date)   AS last_invoice_date
+    FROM finance.invoices
+    WHERE status NOT IN ('cancelled', 'draft')
+    GROUP BY customer_id
+) inv_agg ON inv_agg.customer_id = c.id
+WHERE c.deleted_at IS NULL;
+
+COMMENT ON VIEW reporting.v_customers IS
+'Customer master with aggregated sales and invoice totals. Joins customers, sales_orders (aggregated), invoices (aggregated). Excludes soft-deleted customers. Use for customer analysis, credit management, segmentation. Filter by entity_id, is_active, customer_type.';
+
+
+-- ─── View 8: v_suppliers ─────────────────────────────────────────────────────
+-- Supplier master data with aggregated PO totals and last PO date.
+-- Grain: one row per supplier.
+CREATE OR REPLACE VIEW reporting.v_suppliers AS
+SELECT
+    v.id                        AS supplier_id,
+    v.code                      AS supplier_code,
+    v.name                      AS supplier_name,
+    v.trading_name,
+    v.email,
+    v.phone,
+    v.vat_number,
+    v.registration_number,
+    v.address,
+    v.bank_name,
+    v.bank_account_number,
+    v.bank_branch_code,
+    v.bank_account_type,
+    v.payment_terms_days,
+    v.currency,
+    v.contact_name,
+    v.contact_email,
+    v.contact_phone,
+    v.categories                AS supplier_categories,
+    v.is_active,
+    v.created_at,
+    v.updated_at,
+    -- Aggregated PO metrics
+    COALESCE(po_agg.total_pos, 0)       AS total_purchase_orders,
+    COALESCE(po_agg.total_po_value, 0)  AS total_po_value,
+    po_agg.last_po_date,
+    po_agg.avg_delivery_lead_days,
+    -- Suppliers don't have entity_id; derive from POs
+    po_agg.primary_entity_id             AS entity_id,
+    po_agg.primary_entity_id             AS branch_id
+FROM crm.vendors v
+LEFT JOIN (
+    SELECT
+        vendor_id,
+        COUNT(*)                            AS total_pos,
+        SUM(total)                          AS total_po_value,
+        MAX(po_date)                        AS last_po_date,
+        AVG(EXTRACT(EPOCH FROM (
+            COALESCE(approved_at, created_at) - created_at
+        )) / 86400)::numeric(10,1)          AS avg_delivery_lead_days,
+        -- Most common entity for this vendor
+        (ARRAY_AGG(entity_id ORDER BY po_date DESC))[1] AS primary_entity_id
+    FROM procurement.purchase_orders
+    WHERE status NOT IN ('cancelled', 'draft')
+    GROUP BY vendor_id
+) po_agg ON po_agg.vendor_id = v.id
+WHERE v.deleted_at IS NULL;
+
+COMMENT ON VIEW reporting.v_suppliers IS
+'Supplier master with aggregated purchase order totals. Joins vendors, purchase_orders (aggregated). Excludes soft-deleted vendors. Use for vendor analysis, spend management, supplier performance. Filter by is_active, entity_id, supplier_categories.';
+
+
+-- ─── View 9: v_product_catalogue ─────────────────────────────────────────────
+-- Product master with category, stock summary across all warehouses, and
+-- price list entries.
+-- Grain: one row per product.
+CREATE OR REPLACE VIEW reporting.v_product_catalogue AS
+SELECT
+    p.id                        AS product_id,
+    p.code                      AS product_code,
+    p.name                      AS product_name,
+    p.short_description,
+    p.description               AS product_description,
+    p.category,
+    pg.name                     AS product_group_name,
+    p.uom,
+    p.cost_price,
+    p.selling_price,
+    p.vat_code,
+    p.barcode,
+    p.tracking_type,
+    p.stock_tracking,
+    p.reorder_level,
+    p.reorder_quantity,
+    p.is_active,
+    p.created_at,
+    p.updated_at,
+    -- Aggregated stock across all warehouses
+    COALESCE(stk.total_on_hand, 0)      AS total_qty_on_hand,
+    COALESCE(stk.total_reserved, 0)     AS total_qty_reserved,
+    COALESCE(stk.total_available, 0)    AS total_qty_available,
+    stk.warehouse_count,
+    COALESCE(stk.total_on_hand * COALESCE(p.cost_price, 0), 0) AS total_stock_value_at_cost,
+    -- Price list tiers
+    pl_agg.price_lists,
+    -- Products are global; entity_id/branch_id included for RLS filter consistency
+    CAST(NULL AS uuid)                  AS entity_id,
+    CAST(NULL AS uuid)                  AS branch_id
+FROM inventory.products p
+LEFT JOIN inventory.product_groups pg ON pg.id::text = p.category
+LEFT JOIN (
+    SELECT
+        product_id,
+        SUM(quantity_on_hand)   AS total_on_hand,
+        SUM(quantity_reserved)  AS total_reserved,
+        SUM(quantity_available) AS total_available,
+        COUNT(*)                AS warehouse_count
+    FROM inventory.stock_on_hand
+    GROUP BY product_id
+) stk ON stk.product_id = p.id
+LEFT JOIN (
+    SELECT
+        pll.product_id,
+        jsonb_agg(jsonb_build_object(
+            'price_list', pl.name,
+            'currency', pl.currency,
+            'price_type', pll.price_type,
+            'value', pll.value,
+            'effective_from', pl.effective_from,
+            'effective_to', pl.effective_to
+        ) ORDER BY pl.name) AS price_lists
+    FROM pricing.price_list_lines pll
+    JOIN pricing.price_lists pl ON pl.id = pll.price_list_id
+    WHERE pl.is_active = true
+    GROUP BY pll.product_id
+) pl_agg ON pl_agg.product_id = p.id;
+
+COMMENT ON VIEW reporting.v_product_catalogue IS
+'Product catalogue with category, aggregated stock levels, and active price list tiers. Joins products, product_groups, stock_on_hand (aggregated), price_list_lines. entity_id/branch_id are NULL (products are global). Use for product analysis, pricing review, stock valuation. Filter by category, is_active, stock_tracking.';
+
+
+-- ─── View 10: v_otif ─────────────────────────────────────────────────────────
+-- On-Time In-Full (OTIF) delivery performance per PO line.
+-- Measures whether each ordered item was received by the expected delivery date
+-- AND in the full quantity ordered.
+-- Grain: one row per PO line item (with GRN receipt data aggregated).
+CREATE OR REPLACE VIEW reporting.v_otif AS
+SELECT
+    po.id                                   AS po_id,
+    po.po_number,
+    po.po_date,
+    po.expected_delivery_date,
+    po.status                               AS po_status,
+    po.vendor_id,
+    po.vendor_name,
+    poi.id                                  AS po_line_id,
+    poi.line_number,
+    poi.product_id,
+    poi.product_code,
+    poi.product_name,
+    poi.quantity                             AS ordered_quantity,
+    COALESCE(grn_agg.total_received_qty, 0) AS received_quantity,
+    grn_agg.first_received_date,
+    grn_agg.last_received_date,
+    -- On-Time: received (last receipt) by expected delivery date
+    CASE
+        WHEN grn_agg.last_received_date IS NOT NULL
+             AND po.expected_delivery_date IS NOT NULL
+             AND grn_agg.last_received_date <= po.expected_delivery_date
+        THEN true
+        ELSE false
+    END                                     AS is_on_time,
+    -- In-Full: total received >= ordered quantity
+    CASE
+        WHEN COALESCE(grn_agg.total_received_qty, 0) >= poi.quantity
+        THEN true
+        ELSE false
+    END                                     AS is_in_full,
+    -- OTIF: both on-time AND in-full
+    CASE
+        WHEN grn_agg.last_received_date IS NOT NULL
+             AND po.expected_delivery_date IS NOT NULL
+             AND grn_agg.last_received_date <= po.expected_delivery_date
+             AND COALESCE(grn_agg.total_received_qty, 0) >= poi.quantity
+        THEN true
+        ELSE false
+    END                                     AS is_otif,
+    po.entity_id
+FROM procurement.purchase_orders po
+JOIN procurement.purchase_order_items poi ON poi.purchase_order_id = po.id
+LEFT JOIN (
+    SELECT
+        grn.po_id,
+        grl.product_id,
+        SUM(grl.received_quantity)   AS total_received_qty,
+        MIN(grn.received_date)       AS first_received_date,
+        MAX(grn.received_date)       AS last_received_date
+    FROM inventory.grn_headers grn
+    JOIN inventory.grn_lines grl ON grl.grn_id = grn.id
+    GROUP BY grn.po_id, grl.product_id
+) grn_agg ON grn_agg.po_id = po.id AND grn_agg.product_id = poi.product_id;
+
+COMMENT ON VIEW reporting.v_otif IS
+'On-Time In-Full (OTIF) delivery performance per PO line item. Joins purchase_orders, purchase_order_items, grn_headers, grn_lines. OTIF = received by expected_delivery_date AND received_qty >= ordered_qty. Use for supplier delivery performance, procurement KPIs. Filter by entity_id, po_date, vendor_id, is_otif.';
+
+GRANT SELECT ON reporting.v_otif TO jrnybi_reader;
+
+
+-- ─── View 11: v_open_po_aging ────────────────────────────────────────────────
+-- Open purchase orders with aging buckets based on days overdue.
+-- Only includes POs in active/open statuses (Sent, Partial, Confirmed).
+-- Grain: one row per open PO.
+CREATE OR REPLACE VIEW reporting.v_open_po_aging AS
+SELECT
+    po.id                                   AS po_id,
+    po.po_number,
+    po.po_date,
+    po.expected_delivery_date,
+    po.status                               AS po_status,
+    po.vendor_id,
+    v.name                                  AS supplier_name,
+    v.code                                  AS supplier_code,
+    po.total                                AS po_total,
+    po.currency,
+    -- Days overdue (negative = not yet due)
+    (CURRENT_DATE - po.expected_delivery_date) AS days_overdue,
+    -- Aging buckets
+    CASE
+        WHEN po.expected_delivery_date IS NULL THEN 'No Date'
+        WHEN CURRENT_DATE - po.expected_delivery_date <= 0 THEN 'Not Due'
+        WHEN CURRENT_DATE - po.expected_delivery_date BETWEEN 1 AND 7 THEN '1-7 Days'
+        WHEN CURRENT_DATE - po.expected_delivery_date BETWEEN 8 AND 14 THEN '8-14 Days'
+        WHEN CURRENT_DATE - po.expected_delivery_date BETWEEN 15 AND 30 THEN '15-30 Days'
+        WHEN CURRENT_DATE - po.expected_delivery_date BETWEEN 31 AND 60 THEN '31-60 Days'
+        WHEN CURRENT_DATE - po.expected_delivery_date BETWEEN 61 AND 90 THEN '61-90 Days'
+        ELSE '90+ Days'
+    END                                     AS aging_bucket,
+    po.created_at,
+    po.entity_id
+FROM procurement.purchase_orders po
+LEFT JOIN crm.vendors v ON v.id = po.vendor_id
+WHERE po.status IN ('Sent', 'Partial', 'Confirmed');
+
+COMMENT ON VIEW reporting.v_open_po_aging IS
+'Open purchase orders with overdue aging buckets. Joins purchase_orders, vendors. Only includes POs with status Sent/Partial/Confirmed. Aging buckets: Not Due, 1-7, 8-14, 15-30, 31-60, 61-90, 90+ days. Use for procurement overdue tracking, supplier follow-up. Filter by entity_id, aging_bucket, vendor_id.';
+
+GRANT SELECT ON reporting.v_open_po_aging TO jrnybi_reader;
+
+
+-- ─── View 12: v_procurement_lead_time ────────────────────────────────────────
+-- Procurement lead time analysis: days from PO creation to GRN receipt.
+-- Only includes POs that have been received (grn.received_date IS NOT NULL).
+-- Grain: one row per PO + product + GRN combination.
+CREATE OR REPLACE VIEW reporting.v_procurement_lead_time AS
+SELECT
+    po.id                                   AS po_id,
+    po.po_number,
+    po.po_date,
+    po.vendor_id,
+    v.name                                  AS supplier_name,
+    v.code                                  AS supplier_code,
+    poi.product_id,
+    poi.product_code,
+    poi.product_name,
+    p.category                              AS product_category,
+    pg.name                                 AS product_group_name,
+    grn.id                                  AS grn_id,
+    grn.grn_number,
+    grn.received_date,
+    -- Lead time in days = received_date - po_date
+    (grn.received_date - po.po_date)        AS lead_time_days,
+    po.entity_id
+FROM procurement.purchase_orders po
+JOIN procurement.purchase_order_items poi ON poi.purchase_order_id = po.id
+JOIN inventory.grn_headers grn ON grn.po_id = po.id
+JOIN inventory.grn_lines grl ON grl.grn_id = grn.id AND grl.product_id = poi.product_id
+LEFT JOIN crm.vendors v ON v.id = po.vendor_id
+LEFT JOIN inventory.products p ON p.id = poi.product_id
+LEFT JOIN inventory.product_groups pg ON pg.id = p.product_group_id
+WHERE grn.received_date IS NOT NULL;
+
+COMMENT ON VIEW reporting.v_procurement_lead_time IS
+'Procurement lead time analysis showing days from PO creation to GRN receipt. Joins purchase_orders, purchase_order_items, grn_headers, grn_lines, vendors, products, product_groups. Lead time = received_date - po_date. Use for supplier lead time analysis, product group trends. Filter by entity_id, vendor_id, product_group_name, po_date.';
+
+GRANT SELECT ON reporting.v_procurement_lead_time TO jrnybi_reader;
+
+
+-- ─── View 13: v_sales_by_branch ─────────────────────────────────────────────
+-- Sales orders aggregated by branch for branch-level performance analysis.
+-- Grain: one row per branch per entity.
+CREATE OR REPLACE VIEW reporting.v_sales_by_branch AS
+SELECT
+    b.id                        AS branch_id,
+    b.code                      AS branch_code,
+    b.name                      AS branch_name,
+    so.entity_id,
+    COUNT(DISTINCT so.id)       AS total_orders,
+    SUM(so.subtotal)            AS total_subtotal,
+    SUM(so.vat_total)           AS total_vat,
+    SUM(so.total)               AS total_revenue,
+    AVG(so.total)               AS avg_order_value,
+    MIN(so.order_date)          AS first_order_date,
+    MAX(so.order_date)          AS last_order_date,
+    COUNT(DISTINCT so.customer_id) AS unique_customers,
+    COUNT(DISTINCT so.sales_rep_id) AS unique_sales_reps
+FROM sales.sales_orders so
+JOIN core.branches b ON b.id = so.branch_id
+WHERE so.status NOT IN ('cancelled', 'draft')
+GROUP BY b.id, b.code, b.name, so.entity_id;
+
+COMMENT ON VIEW reporting.v_sales_by_branch IS
+'Sales orders aggregated by branch. Joins sales_orders, branches. Excludes cancelled and draft orders. Use for branch-level performance comparison, territory analysis. Filter by entity_id, branch_id.';
+
+GRANT SELECT ON reporting.v_sales_by_branch TO jrnybi_reader;
+
+
+-- ─── View 14: v_outstanding_orders ──────────────────────────────────────────
+-- Outstanding (open) sales orders with aging buckets for pipeline analysis.
+-- Grain: one row per outstanding sales order.
+CREATE OR REPLACE VIEW reporting.v_outstanding_orders AS
+SELECT
+    so.id                       AS order_id,
+    so.order_number,
+    so.order_date,
+    so.status                   AS order_status,
+    so.customer_id,
+    c.code                      AS customer_code,
+    c.name                      AS customer_name,
+    c.email                     AS customer_email,
+    so.subtotal,
+    so.vat_total,
+    so.total,
+    so.currency,
+    so.sales_rep_id,
+    so.sales_rep_name,
+    so.entity_id,
+    so.branch_id,
+    (CURRENT_DATE - so.order_date::date) AS days_outstanding,
+    CASE
+        WHEN (CURRENT_DATE - so.order_date::date) <= 7  THEN '0-7 days'
+        WHEN (CURRENT_DATE - so.order_date::date) <= 14 THEN '8-14 days'
+        WHEN (CURRENT_DATE - so.order_date::date) <= 30 THEN '15-30 days'
+        WHEN (CURRENT_DATE - so.order_date::date) <= 60 THEN '31-60 days'
+        ELSE '60+ days'
+    END                         AS aging_bucket,
+    so.source_quotation_id,
+    so.source_quotation_number,
+    so.credit_check_passed,
+    so.confirmed_at,
+    so.created_at,
+    so.updated_at
+FROM sales.sales_orders so
+LEFT JOIN crm.customers c ON c.id = so.customer_id
+WHERE so.status IN ('pending', 'confirmed', 'processing');
+
+COMMENT ON VIEW reporting.v_outstanding_orders IS
+'Outstanding sales orders (pending/confirmed/processing) with aging buckets. Joins sales_orders, customers. Use for pipeline analysis, order aging, delivery performance. Filter by entity_id, branch_id, aging_bucket, order_status.';
+
+GRANT SELECT ON reporting.v_outstanding_orders TO jrnybi_reader;
+
+
+-- ─── View 15: v_quote_conversion ────────────────────────────────────────────
+-- Quotation conversion analysis — tracks quotation lifecycle and conversion to orders.
+-- Grain: one row per quotation.
+CREATE OR REPLACE VIEW reporting.v_quote_conversion AS
+SELECT
+    q.id                        AS quotation_id,
+    q.quotation_number,
+    q.quotation_date,
+    q.valid_until,
+    q.status                    AS quotation_status,
+    q.customer_id,
+    c.code                      AS customer_code,
+    c.name                      AS customer_name,
+    q.subtotal,
+    q.vat_total,
+    q.total,
+    q.currency,
+    q.sales_rep_id,
+    q.sales_rep_name,
+    q.entity_id,
+    q.branch_id,
+    q.has_price_override,
+    q.has_contract_pricing,
+    q.has_promo_pricing,
+    q.rejection_reason,
+    q.rejected_at,
+    -- Conversion tracking
+    CASE
+        WHEN q.status IN ('Accepted', 'Converted') THEN true
+        ELSE false
+    END                         AS is_converted,
+    CASE
+        WHEN q.valid_until < CURRENT_DATE AND q.status NOT IN ('Accepted', 'Converted', 'Rejected')
+        THEN true
+        ELSE false
+    END                         AS is_expired,
+    (q.valid_until::date - q.quotation_date::date) AS validity_days,
+    q.created_at,
+    q.updated_at
+FROM sales.quotations q
+LEFT JOIN crm.customers c ON c.id = q.customer_id
+WHERE q.deleted_at IS NULL;
+
+COMMENT ON VIEW reporting.v_quote_conversion IS
+'Quotation conversion analysis. Joins quotations, customers. Excludes soft-deleted quotations. Tracks conversion status, expiry, validity period. Use for win-rate analysis, quote pipeline. Filter by entity_id, quotation_status, is_converted, is_expired.';
+
+GRANT SELECT ON reporting.v_quote_conversion TO jrnybi_reader;
+
+
+-- ─── View 16: v_sales_returns ───────────────────────────────────────────────
+-- Sales returns (RMA) with line-item details and product info.
+-- Grain: one row per RMA line.
+CREATE OR REPLACE VIEW reporting.v_sales_returns AS
+SELECT
+    rma.id                      AS rma_id,
+    rma.rma_number,
+    rma.rma_date,
+    rma.status                  AS rma_status,
+    rma.customer_id,
+    rma.customer_name,
+    c.code                      AS customer_code,
+    rma.invoice_id,
+    rma.invoice_number,
+    rma.sales_order_id,
+    rma.sales_order_number,
+    rma.reason,
+    rma.reason_details,
+    rma.disposition              AS header_disposition,
+    rma.subtotal                 AS rma_subtotal,
+    rma.vat_total                AS rma_vat_total,
+    rma.total                    AS rma_total,
+    rma.currency,
+    rma.warehouse_id,
+    rma.warehouse_name,
+    rma.credit_note_id,
+    rma.credit_note_number,
+    rl.id                        AS line_id,
+    rl.line_number,
+    rl.product_id,
+    rl.product_code,
+    rl.product_name,
+    p.code                       AS product_code_master,
+    p.name                       AS product_name_master,
+    rl.quantity_returned,
+    rl.quantity_received,
+    rl.unit_price,
+    rl.vat_rate                  AS line_vat_rate,
+    rl.line_total,
+    rl.vat_amount                AS line_vat_amount,
+    rl.line_total_incl_vat,
+    rl.disposition               AS line_disposition,
+    rl.inspection_notes,
+    rma.authorized_at,
+    rma.authorized_by_name,
+    rma.received_at,
+    rma.received_by_name,
+    rma.processed_at,
+    rma.processed_by_name,
+    rma.created_at,
+    rma.updated_at,
+    -- entity_id derived from customer (rma_headers has no entity_id)
+    c.entity_id
+FROM sales.rma_headers rma
+LEFT JOIN sales.rma_lines rl ON rl.rma_id = rma.id
+LEFT JOIN crm.customers c ON c.id = rma.customer_id
+LEFT JOIN inventory.products p ON p.id = rl.product_id;
+
+COMMENT ON VIEW reporting.v_sales_returns IS
+'Sales returns (RMA) at line-item grain. Joins rma_headers, rma_lines, customers, products. entity_id derived from customer. Use for return rate analysis, quality issues, reason trending. Filter by entity_id, rma_status, reason, disposition, rma_date.';
+
+GRANT SELECT ON reporting.v_sales_returns TO jrnybi_reader;
+
+
+-- ─── View 17: v_revenue_by_category ─────────────────────────────────────────
+-- Revenue aggregated by product category (product group) for category-level analysis.
+-- Grain: one row per product group per entity.
+CREATE OR REPLACE VIEW reporting.v_revenue_by_category AS
+SELECT
+    pg.id                       AS category_id,
+    pg.code                     AS category_code,
+    pg.name                     AS category_name,
+    so.entity_id,
+    COUNT(DISTINCT so.id)       AS total_orders,
+    COUNT(DISTINCT sol.id)      AS total_lines,
+    SUM(sol.quantity)           AS total_quantity_sold,
+    SUM(sol.line_total)         AS total_revenue_excl_vat,
+    SUM(sol.vat_amount)         AS total_vat,
+    SUM(sol.line_total_incl_vat) AS total_revenue_incl_vat,
+    AVG(sol.unit_price)         AS avg_unit_price,
+    AVG(sol.gp_margin)          AS avg_gp_margin,
+    COUNT(DISTINCT so.customer_id) AS unique_customers,
+    COUNT(DISTINCT sol.product_id) AS unique_products,
+    MIN(so.order_date)          AS first_order_date,
+    MAX(so.order_date)          AS last_order_date
+FROM sales.sales_order_lines sol
+JOIN sales.sales_orders so ON so.id = sol.order_id
+JOIN inventory.products p ON p.id = sol.product_id
+LEFT JOIN inventory.product_groups pg ON pg.id = p.product_group_id
+WHERE so.status NOT IN ('cancelled', 'draft')
+GROUP BY pg.id, pg.code, pg.name, so.entity_id;
+
+COMMENT ON VIEW reporting.v_revenue_by_category IS
+'Revenue aggregated by product category (product_groups). Joins sales_order_lines, sales_orders, products, product_groups. Excludes cancelled/draft orders. Use for category performance, product mix analysis, margin by category. Filter by entity_id, category_name.';
+
+GRANT SELECT ON reporting.v_revenue_by_category TO jrnybi_reader;
+
+
+-- ─── View 18: v_bank_reconciliation_status ──────────────────────────────────
+-- Bank reconciliation status showing statement lines with their match status,
+-- import details, and bank account info.
+-- Grain: one row per statement line.
+CREATE OR REPLACE VIEW reporting.v_bank_reconciliation_status AS
+SELECT
+    sl.id                                   AS transaction_id,
+    sl.bank_account_id,
+    ba.bank_name,
+    ba.account_name,
+    ba.account_number,
+    ba.account_type,
+    ba.currency,
+    sl.transaction_date,
+    sl.value_date,
+    sl.description,
+    sl.reference,
+    sl.debit,
+    sl.credit,
+    sl.balance,
+    sl.match_status,
+    sl.matched_to_id,
+    sl.matched_to_type,
+    sl.matched_at,
+    sl.import_id,
+    si.file_name                            AS import_file_name,
+    si.file_format                          AS import_file_format,
+    si.import_date,
+    si.line_count                           AS import_line_count,
+    si.status                               AS import_status,
+    sl.created_at,
+    -- Cashbook tables don't have entity_id — match existing pattern
+    CAST(NULL AS uuid)                      AS entity_id,
+    CAST(NULL AS uuid)                      AS branch_id
+FROM cashbook.statement_lines sl
+JOIN cashbook.bank_accounts ba ON ba.id = sl.bank_account_id
+LEFT JOIN cashbook.statement_imports si ON si.id = sl.import_id;
+
+COMMENT ON VIEW reporting.v_bank_reconciliation_status IS
+'Bank reconciliation status per statement line with match status, import details, and bank account info. Joins statement_lines, bank_accounts, statement_imports. Use for reconciliation progress tracking, import audit. Filter by match_status, bank_account_id, transaction_date.';
+
+GRANT SELECT ON reporting.v_bank_reconciliation_status TO jrnybi_reader;
+
+
+-- ─── View 19: v_cash_position ───────────────────────────────────────────────
+-- Current cash position across all active bank accounts.
+-- Grain: one row per active bank account.
+CREATE OR REPLACE VIEW reporting.v_cash_position AS
+SELECT
+    ba.id                                   AS bank_account_id,
+    ba.bank_name,
+    ba.account_name,
+    ba.account_number,
+    ba.account_type,
+    ba.currency,
+    ba.opening_balance,
+    ba.current_balance,
+    ba.gl_account_id,
+    ba.is_active,
+    ba.created_at,
+    ba.updated_at,
+    -- Cashbook tables don't have entity_id — match existing pattern
+    CAST(NULL AS uuid)                      AS entity_id,
+    CAST(NULL AS uuid)                      AS branch_id
+FROM cashbook.bank_accounts ba
+WHERE ba.is_active = true;
+
+COMMENT ON VIEW reporting.v_cash_position IS
+'Current cash position across all active bank accounts. Uses bank_accounts table. Shows opening and current balance per account. Use for cash position reporting, treasury dashboard. Filter by currency, account_type.';
+
+GRANT SELECT ON reporting.v_cash_position TO jrnybi_reader;
+
+
+-- ─── View 20: v_unmatched_transactions ──────────────────────────────────────
+-- Unmatched bank statement lines with aging buckets for reconciliation prioritization.
+-- Grain: one row per unmatched statement line.
+CREATE OR REPLACE VIEW reporting.v_unmatched_transactions AS
+SELECT
+    sl.id                                   AS transaction_id,
+    sl.bank_account_id,
+    ba.bank_name,
+    ba.account_name,
+    ba.account_number,
+    ba.currency,
+    sl.transaction_date,
+    sl.value_date,
+    sl.description,
+    sl.reference,
+    sl.debit,
+    sl.credit,
+    sl.balance,
+    sl.match_status,
+    -- Aging from transaction date
+    (CURRENT_DATE - sl.transaction_date)    AS days_unmatched,
+    CASE
+        WHEN (CURRENT_DATE - sl.transaction_date) <= 7  THEN '0-7 Days'
+        WHEN (CURRENT_DATE - sl.transaction_date) <= 14 THEN '8-14 Days'
+        WHEN (CURRENT_DATE - sl.transaction_date) <= 30 THEN '15-30 Days'
+        WHEN (CURRENT_DATE - sl.transaction_date) <= 60 THEN '31-60 Days'
+        WHEN (CURRENT_DATE - sl.transaction_date) <= 90 THEN '61-90 Days'
+        ELSE '90+ Days'
+    END                                     AS aging_bucket,
+    sl.import_id,
+    sl.created_at,
+    -- Cashbook tables don't have entity_id — match existing pattern
+    CAST(NULL AS uuid)                      AS entity_id,
+    CAST(NULL AS uuid)                      AS branch_id
+FROM cashbook.statement_lines sl
+JOIN cashbook.bank_accounts ba ON ba.id = sl.bank_account_id
+WHERE sl.match_status = 'Unmatched';
+
+COMMENT ON VIEW reporting.v_unmatched_transactions IS
+'Unmatched bank statement lines with aging buckets. Joins statement_lines, bank_accounts. Only includes lines with match_status = Unmatched. Aging from transaction_date. Use for reconciliation prioritization, outstanding items tracking. Filter by bank_account_id, aging_bucket, transaction_date.';
+
+GRANT SELECT ON reporting.v_unmatched_transactions TO jrnybi_reader;
+
+
+-- ─── View 21: v_ap_aging ────────────────────────────────────────────────────
+-- Accounts payable aging based on supplier invoices with aging buckets.
+-- Grain: one row per supplier invoice.
+CREATE OR REPLACE VIEW reporting.v_ap_aging AS
+SELECT
+    si.id                        AS supplier_invoice_id,
+    si.invoice_number,
+    si.vendor_id,
+    si.vendor_name,
+    v.code                       AS vendor_code,
+    v.name                       AS vendor_name_master,
+    si.po_id,
+    si.po_number,
+    si.invoice_type,
+    si.status                    AS invoice_status,
+    si.invoice_date,
+    si.due_date,
+    si.subtotal,
+    si.vat_amount,
+    si.total,
+    si.amount_paid,
+    si.balance,
+    si.currency,
+    si.payment_term_id,
+    pt.description               AS payment_term_description,
+    pt.nett_days                 AS payment_term_days,
+    si.branch_id,
+    b.code                       AS branch_code,
+    b.name                       AS branch_name,
+    -- Aging from due date
+    (CURRENT_DATE - si.due_date) AS days_overdue,
+    CASE
+        WHEN si.due_date IS NULL           THEN 'No Due Date'
+        WHEN CURRENT_DATE <= si.due_date   THEN 'Not Due'
+        WHEN (CURRENT_DATE - si.due_date) BETWEEN 1 AND 30  THEN '1-30 Days'
+        WHEN (CURRENT_DATE - si.due_date) BETWEEN 31 AND 60 THEN '31-60 Days'
+        WHEN (CURRENT_DATE - si.due_date) BETWEEN 61 AND 90 THEN '61-90 Days'
+        ELSE '90+ Days'
+    END                          AS aging_bucket,
+    si.created_at,
+    si.updated_at,
+    -- entity_id derived from branch
+    COALESCE(b.id, NULL)         AS entity_id
+FROM procurement.supplier_invoices si
+LEFT JOIN crm.vendors v ON v.id = si.vendor_id
+LEFT JOIN finance.payment_terms pt ON pt.id = si.payment_term_id
+LEFT JOIN core.branches b ON b.id = si.branch_id;
+
+COMMENT ON VIEW reporting.v_ap_aging IS
+'Accounts payable aging from supplier invoices with aging buckets. Joins supplier_invoices, vendors, payment_terms, branches. Use for AP aging reports, vendor payment prioritization. Filter by branch_id, aging_bucket, vendor_code, invoice_status.';
+
+GRANT SELECT ON reporting.v_ap_aging TO jrnybi_reader;
+
+
+-- ─── View 22: v_budget_variance ─────────────────────────────────────────────
+-- Budget vs actual variance analysis by GL account and period.
+-- Grain: one row per budget allocation (GL account + period + entity).
+CREATE OR REPLACE VIEW reporting.v_budget_variance AS
+SELECT
+    ba.id                        AS budget_allocation_id,
+    ba.entity_id,
+    ba.gl_account_id,
+    ga.code                      AS gl_account_code,
+    ga.name                      AS gl_account_name,
+    ga.account_type,
+    ga.account_group,
+    ag.name                      AS account_group_name,
+    ba.fiscal_year_id,
+    fy.fiscal_year_label,
+    fy.start_date                AS fy_start_date,
+    fy.end_date                  AS fy_end_date,
+    ba.period_id,
+    ap.name                      AS period_name,
+    ap.code                      AS period_code,
+    ap.period_number,
+    ap.start_date                AS period_start_date,
+    ap.end_date                  AS period_end_date,
+    ba.budget_amount,
+    ba.budget_currency,
+    ba.committed_spend,
+    ba.actual_spend              AS recorded_actual_spend,
+    -- Calculated actuals from journal lines (using debit_oc/credit_oc)
+    COALESCE(actuals.actual_debit_oc, 0)  AS actual_debit_oc,
+    COALESCE(actuals.actual_credit_oc, 0) AS actual_credit_oc,
+    COALESCE(actuals.actual_debit_oc, 0) - COALESCE(actuals.actual_credit_oc, 0) AS actual_net_oc,
+    -- Variance = budget - actual net
+    ba.budget_amount - (COALESCE(actuals.actual_debit_oc, 0) - COALESCE(actuals.actual_credit_oc, 0)) AS variance_amount,
+    -- Variance percentage (avoid division by zero)
+    CASE
+        WHEN ba.budget_amount IS NOT NULL AND ba.budget_amount != 0
+        THEN ((ba.budget_amount - (COALESCE(actuals.actual_debit_oc, 0) - COALESCE(actuals.actual_credit_oc, 0))) / ba.budget_amount * 100)
+        ELSE NULL
+    END                          AS variance_percentage,
+    ba.description,
+    ba.is_active,
+    ba.created_at,
+    ba.updated_at
+FROM finance.budget_allocations ba
+JOIN finance.gl_accounts ga ON ga.id = ba.gl_account_id
+LEFT JOIN finance.account_groups ag ON ag.code = ga.account_group AND ag.entity_id = ba.entity_id
+JOIN finance.fiscal_years fy ON fy.id = ba.fiscal_year_id
+JOIN finance.accounting_periods ap ON ap.id = ba.period_id
+LEFT JOIN (
+    SELECT
+        jl.account_id,
+        jl.entity_id,
+        jb.period_id,
+        SUM(COALESCE(jl.debit_oc, 0))  AS actual_debit_oc,
+        SUM(COALESCE(jl.credit_oc, 0)) AS actual_credit_oc
+    FROM finance.journal_lines jl
+    JOIN finance.journal_batches jb ON jb.id = jl.batch_id
+    WHERE jb.status = 'Posted'
+    GROUP BY jl.account_id, jl.entity_id, jb.period_id
+) actuals ON actuals.account_id = ba.gl_account_id
+         AND actuals.entity_id = ba.entity_id
+         AND actuals.period_id = ba.period_id;
+
+COMMENT ON VIEW reporting.v_budget_variance IS
+'Budget vs actual variance by GL account and period. Joins budget_allocations, gl_accounts, account_groups, fiscal_years, accounting_periods, journal_lines (actuals from debit_oc/credit_oc). Use for budget monitoring, variance analysis, departmental spending. Filter by entity_id, fiscal_year_label, period_name, account_type, variance_percentage.';
+
+GRANT SELECT ON reporting.v_budget_variance TO jrnybi_reader;
+
+
+-- ─── View 23: v_credit_notes ────────────────────────────────────────────────
+-- Credit notes with line-item details and linked invoice info.
+-- Grain: one row per credit note line.
+CREATE OR REPLACE VIEW reporting.v_credit_notes AS
+SELECT
+    cn.id                        AS credit_note_id,
+    cn.credit_note_number,
+    cn.credit_note_date,
+    cn.status                    AS credit_note_status,
+    cn.customer_id,
+    cn.customer_name,
+    c.code                       AS customer_code,
+    cn.invoice_id,
+    cn.invoice_number,
+    inv.invoice_date             AS linked_invoice_date,
+    inv.total                    AS linked_invoice_total,
+    cn.reason,
+    cn.subtotal                  AS cn_subtotal,
+    cn.vat_total                 AS cn_vat_total,
+    cn.amount                    AS cn_total,
+    cn.currency,
+    cnl.id                       AS line_id,
+    cnl.line_number,
+    cnl.description              AS line_description,
+    cnl.quantity,
+    cnl.unit_price,
+    cnl.vat_rate                 AS line_vat_rate,
+    cnl.line_total,
+    cnl.vat_amount               AS line_vat_amount,
+    cnl.line_total_incl_vat,
+    cnl.tax_code_id,
+    cnl.tax_code,
+    cn.notes,
+    cn.created_by_name,
+    cn.approved_by_name,
+    cn.approved_at,
+    cn.rejected_by_name,
+    cn.rejected_at,
+    cn.rejection_reason,
+    cn.branch_id,
+    b.code                       AS branch_code,
+    b.name                       AS branch_name,
+    cn.created_at,
+    cn.updated_at,
+    -- entity_id derived from customer
+    c.entity_id
+FROM finance.credit_notes cn
+LEFT JOIN finance.credit_note_lines cnl ON cnl.credit_note_id = cn.id
+LEFT JOIN crm.customers c ON c.id = cn.customer_id
+LEFT JOIN finance.invoices inv ON inv.id = cn.invoice_id
+LEFT JOIN core.branches b ON b.id = cn.branch_id;
+
+COMMENT ON VIEW reporting.v_credit_notes IS
+'Credit notes at line-item grain. Joins credit_notes, credit_note_lines, customers, invoices, branches. entity_id derived from customer. Use for credit note analysis, reason trending, approval tracking. Filter by entity_id, branch_id, credit_note_status, reason, credit_note_date.';
+
+GRANT SELECT ON reporting.v_credit_notes TO jrnybi_reader;
+
+
+-- ─── View 24: v_payment_compliance ──────────────────────────────────────────
+-- Payment compliance analysis: invoices with payment timing and customer group info.
+-- Grain: one row per invoice with aggregated payment data.
+CREATE OR REPLACE VIEW reporting.v_payment_compliance AS
+SELECT
+    inv.id                       AS invoice_id,
+    inv.invoice_number,
+    inv.invoice_date,
+    inv.due_date,
+    inv.status                   AS invoice_status,
+    inv.customer_id,
+    c.code                       AS customer_code,
+    c.name                       AS customer_name,
+    c.customer_group_id,
+    cg.name                      AS customer_group_name,
+    inv.total,
+    inv.amount_paid,
+    inv.balance,
+    inv.currency,
+    inv.entity_id,
+    inv.branch_id,
+    -- Payment aggregation
+    COALESCE(pay_agg.total_payments, 0)  AS total_payments,
+    COALESCE(pay_agg.total_paid, 0)      AS total_payment_amount,
+    pay_agg.first_payment_date,
+    pay_agg.last_payment_date,
+    -- Payment compliance metrics
+    CASE
+        WHEN pay_agg.last_payment_date IS NOT NULL
+        THEN (pay_agg.last_payment_date - inv.due_date)
+        ELSE NULL
+    END                          AS days_late,
+    CASE
+        WHEN inv.balance <= 0 THEN 'Paid'
+        WHEN inv.due_date >= CURRENT_DATE THEN 'Not Due'
+        WHEN (CURRENT_DATE - inv.due_date) BETWEEN 1 AND 30 THEN 'Overdue 1-30'
+        WHEN (CURRENT_DATE - inv.due_date) BETWEEN 31 AND 60 THEN 'Overdue 31-60'
+        WHEN (CURRENT_DATE - inv.due_date) BETWEEN 61 AND 90 THEN 'Overdue 61-90'
+        ELSE 'Overdue 90+'
+    END                          AS compliance_status,
+    CASE
+        WHEN inv.balance <= 0 AND pay_agg.last_payment_date IS NOT NULL
+             AND pay_agg.last_payment_date <= inv.due_date
+        THEN true
+        ELSE false
+    END                          AS paid_on_time,
+    inv.posted_at,
+    inv.created_at,
+    inv.updated_at
+FROM finance.invoices inv
+LEFT JOIN crm.customers c ON c.id = inv.customer_id
+LEFT JOIN crm.customer_groups cg ON cg.id = c.customer_group_id
+LEFT JOIN (
+    SELECT
+        invoice_id,
+        COUNT(*)              AS total_payments,
+        SUM(amount)           AS total_paid,
+        MIN(payment_date)     AS first_payment_date,
+        MAX(payment_date)     AS last_payment_date
+    FROM finance.customer_payments
+    WHERE status != 'voided'
+    GROUP BY invoice_id
+) pay_agg ON pay_agg.invoice_id = inv.id
+WHERE inv.status NOT IN ('cancelled', 'draft');
+
+COMMENT ON VIEW reporting.v_payment_compliance IS
+'Payment compliance analysis per invoice with customer group info. Joins invoices, customers, customer_groups, customer_payments (aggregated). Excludes cancelled/draft invoices. Tracks payment timing, on-time status, overdue buckets. Filter by entity_id, branch_id, compliance_status, customer_group_name, paid_on_time.';
+
+GRANT SELECT ON reporting.v_payment_compliance TO jrnybi_reader;
+
+
+-- ─── View 25: v_inventory_aging ─────────────────────────────────────────────
+-- Inventory aging by product and warehouse with aging buckets based on last receipt.
+-- Grain: one row per product per warehouse (where quantity > 0).
+CREATE OR REPLACE VIEW reporting.v_inventory_aging AS
+SELECT
+    soh.id                       AS stock_id,
+    soh.product_id,
+    p.code                       AS product_code,
+    p.name                       AS product_name,
+    pg.name                      AS category,
+    p.uom                        AS product_uom,
+    soh.warehouse_id,
+    w.code                       AS warehouse_code,
+    w.name                       AS warehouse_name,
+    soh.quantity_on_hand,
+    soh.quantity_reserved,
+    soh.quantity_available,
+    -- Latest unit cost from valuation snapshots
+    vs.unit_cost                 AS latest_unit_cost,
+    vs.costing_method,
+    vs.snapshot_date             AS valuation_date,
+    (soh.quantity_on_hand * COALESCE(vs.unit_cost, p.cost_price, 0)) AS stock_value,
+    -- Last receipt date from stock movements
+    lr.last_receipt_date,
+    CASE
+        WHEN lr.last_receipt_date IS NULL THEN 'No Receipt'
+        WHEN (CURRENT_DATE - lr.last_receipt_date::date) <= 30 THEN '0-30 Days'
+        WHEN (CURRENT_DATE - lr.last_receipt_date::date) <= 60 THEN '31-60 Days'
+        WHEN (CURRENT_DATE - lr.last_receipt_date::date) <= 90 THEN '61-90 Days'
+        WHEN (CURRENT_DATE - lr.last_receipt_date::date) <= 180 THEN '91-180 Days'
+        WHEN (CURRENT_DATE - lr.last_receipt_date::date) <= 365 THEN '181-365 Days'
+        ELSE '365+ Days'
+    END                          AS aging_bucket,
+    CASE
+        WHEN lr.last_receipt_date IS NOT NULL
+        THEN (CURRENT_DATE - lr.last_receipt_date::date)
+        ELSE NULL
+    END                          AS days_since_receipt,
+    w.branch_id,
+    w.branch_id                  AS entity_id
+FROM inventory.stock_on_hand soh
+JOIN inventory.products p ON p.id = soh.product_id
+LEFT JOIN inventory.product_groups pg ON pg.id = p.product_group_id
+JOIN inventory.warehouses w ON w.id = soh.warehouse_id
+LEFT JOIN LATERAL (
+    SELECT vs2.unit_cost, vs2.costing_method, vs2.snapshot_date
+    FROM inventory.valuation_snapshots vs2
+    WHERE vs2.product_id = soh.product_id AND vs2.warehouse_id = soh.warehouse_id
+    ORDER BY vs2.snapshot_date DESC
+    LIMIT 1
+) vs ON true
+LEFT JOIN LATERAL (
+    SELECT MAX(sm.transaction_date) AS last_receipt_date
+    FROM inventory.stock_movements sm
+    WHERE sm.product_id = soh.product_id
+      AND sm.warehouse_id = soh.warehouse_id
+      AND sm.movement_type IN ('GRN_RECEIPT', 'TRANSFER_IN')
+) lr ON true
+WHERE soh.quantity_on_hand > 0;
+
+COMMENT ON VIEW reporting.v_inventory_aging IS
+'Inventory aging by product and warehouse with aging buckets based on last receipt date. Joins stock_on_hand, products, product_groups, warehouses, valuation_snapshots, stock_movements. Use for dead stock identification, inventory health monitoring. Filter by entity_id, aging_bucket, category, warehouse_code.';
+
+GRANT SELECT ON reporting.v_inventory_aging TO jrnybi_reader;
+
+
+-- ─── View 26: v_stock_movements ─────────────────────────────────────────────
+-- Stock movements with full detail for audit trail and analysis.
+-- Grain: one row per stock movement.
+CREATE OR REPLACE VIEW reporting.v_stock_movements AS
+SELECT
+    sm.id                        AS movement_id,
+    sm.movement_type,
+    sm.reference_number,
+    sm.reference_type,
+    sm.reference_id,
+    sm.product_id,
+    sm.product_code,
+    sm.product_name,
+    sm.warehouse_id,
+    sm.warehouse_name,
+    sm.quantity,
+    sm.quantity_in,
+    sm.quantity_out,
+    sm.balance_after,
+    sm.unit_cost,
+    sm.total_value,
+    sm.costing_method,
+    sm.uom,
+    sm.serial_numbers,
+    sm.lot_batch_number,
+    sm.location_id,
+    sm.bin_id,
+    sm.carton_barcode,
+    sm.transaction_date,
+    sm.posted_at,
+    sm.status                    AS movement_status,
+    sm.notes,
+    sm.created_by,
+    sm.created_at,
+    sm.entity_id,
+    sm.branch_id
+FROM inventory.stock_movements sm;
+
+COMMENT ON VIEW reporting.v_stock_movements IS
+'Stock movements with full detail. Direct select from stock_movements. Use for stock movement audit trail, transaction analysis, inventory reconciliation. Filter by entity_id, branch_id, movement_type, transaction_date, warehouse_id.';
+
+GRANT SELECT ON reporting.v_stock_movements TO jrnybi_reader;
+
+
+-- ─── View 27: v_slow_moving_stock ───────────────────────────────────────────
+-- Slow-moving stock (no outbound movement in 60+ days).
+-- Grain: one row per product per warehouse (where quantity > 0 and no recent outbound).
+CREATE OR REPLACE VIEW reporting.v_slow_moving_stock AS
+SELECT
+    soh.id                       AS stock_id,
+    soh.product_id,
+    p.code                       AS product_code,
+    p.name                       AS product_name,
+    pg.name                      AS category,
+    p.uom                        AS product_uom,
+    soh.warehouse_id,
+    w.code                       AS warehouse_code,
+    w.name                       AS warehouse_name,
+    soh.quantity_on_hand,
+    soh.quantity_available,
+    (soh.quantity_on_hand * COALESCE(p.cost_price, 0)) AS stock_value_at_cost,
+    -- Last outbound movement
+    lo.last_outbound_date,
+    CASE
+        WHEN lo.last_outbound_date IS NOT NULL
+        THEN (CURRENT_DATE - lo.last_outbound_date::date)
+        ELSE NULL
+    END                          AS days_since_outbound,
+    CASE
+        WHEN lo.last_outbound_date IS NULL THEN 'No Movement'
+        WHEN (CURRENT_DATE - lo.last_outbound_date::date) BETWEEN 61 AND 90 THEN '61-90 Days'
+        WHEN (CURRENT_DATE - lo.last_outbound_date::date) BETWEEN 91 AND 180 THEN '91-180 Days'
+        WHEN (CURRENT_DATE - lo.last_outbound_date::date) BETWEEN 181 AND 365 THEN '181-365 Days'
+        ELSE '365+ Days'
+    END                          AS slow_moving_bucket,
+    w.branch_id,
+    w.branch_id                  AS entity_id
+FROM inventory.stock_on_hand soh
+JOIN inventory.products p ON p.id = soh.product_id
+LEFT JOIN inventory.product_groups pg ON pg.id = p.product_group_id
+JOIN inventory.warehouses w ON w.id = soh.warehouse_id
+LEFT JOIN LATERAL (
+    SELECT MAX(sm.transaction_date) AS last_outbound_date
+    FROM inventory.stock_movements sm
+    WHERE sm.product_id = soh.product_id
+      AND sm.warehouse_id = soh.warehouse_id
+      AND sm.movement_type IN ('SALE', 'TRANSFER_OUT', 'ADJUSTMENT')
+) lo ON true
+WHERE soh.quantity_on_hand > 0
+  AND (
+    lo.last_outbound_date IS NULL
+    OR (CURRENT_DATE - lo.last_outbound_date::date) > 60
+  );
+
+COMMENT ON VIEW reporting.v_slow_moving_stock IS
+'Slow-moving stock (no outbound movement in 60+ days). Joins stock_on_hand, products, product_groups, warehouses, stock_movements. Includes stock value at cost. Use for dead stock analysis, write-off candidates, inventory optimization. Filter by entity_id, slow_moving_bucket, category, warehouse_code.';
+
+GRANT SELECT ON reporting.v_slow_moving_stock TO jrnybi_reader;
+
+
+-- ─── View 28: v_pick_pack_performance ───────────────────────────────────────
+-- Pick and pack performance metrics from sales schema pick instructions.
+-- Grain: one row per pick instruction.
+CREATE OR REPLACE VIEW reporting.v_pick_pack_performance AS
+SELECT
+    pi.id                        AS pick_instruction_id,
+    pi.pick_number,
+    pi.sales_order_id,
+    pi.sales_order_number,
+    pi.customer_name,
+    pi.warehouse_id,
+    pi.warehouse_name,
+    pi.status                    AS pick_status,
+    pi.total_lines,
+    pi.total_quantity,
+    pi.created_at                AS pick_created_at,
+    pi.completed_at              AS pick_completed_at,
+    pi.created_by                AS pick_created_by,
+    pi.completed_by              AS pick_completed_by,
+    -- Pick performance metrics
+    CASE
+        WHEN pi.completed_at IS NOT NULL AND pi.created_at IS NOT NULL
+        THEN EXTRACT(EPOCH FROM (pi.completed_at - pi.created_at)) / 60.0
+        ELSE NULL
+    END                          AS pick_duration_minutes,
+    pi.picking_duration_minutes  AS recorded_pick_duration,
+    -- Lines performance
+    COALESCE(line_agg.total_lines_picked, 0) AS total_lines_picked,
+    COALESCE(line_agg.total_qty_picked, 0)   AS total_qty_picked,
+    -- Pack performance (via dispatch notes -> cartons)
+    dn.id                        AS dispatch_id,
+    dn.dispatch_number,
+    dn.pack_completed_at,
+    COALESCE(carton_agg.total_cartons, 0)    AS total_cartons,
+    CASE
+        WHEN dn.pack_completed_at IS NOT NULL AND pi.completed_at IS NOT NULL
+        THEN EXTRACT(EPOCH FROM (dn.pack_completed_at - pi.completed_at)) / 60.0
+        ELSE NULL
+    END                          AS pack_duration_minutes,
+    pi.entity_id,
+    pi.branch_id
+FROM sales.pick_instructions pi
+LEFT JOIN (
+    SELECT
+        pil.pick_instruction_id,
+        COUNT(*)                        AS total_lines_picked,
+        SUM(pil.quantity_picked)         AS total_qty_picked
+    FROM sales.pick_instruction_lines pil
+    WHERE pil.status = 'Picked'
+    GROUP BY pil.pick_instruction_id
+) line_agg ON line_agg.pick_instruction_id = pi.id
+LEFT JOIN sales.dispatch_notes dn ON dn.pick_instruction_id = pi.id
+LEFT JOIN (
+    SELECT
+        c.dispatch_id,
+        COUNT(*)                         AS total_cartons
+    FROM inventory.cartons c
+    GROUP BY c.dispatch_id
+) carton_agg ON carton_agg.dispatch_id = dn.id;
+
+COMMENT ON VIEW reporting.v_pick_pack_performance IS
+'Pick and pack performance metrics. Joins pick_instructions, pick_instruction_lines, dispatch_notes, cartons. Tracks pick duration, pack duration, carton counts. Use for warehouse productivity, SLA monitoring, bottleneck identification. Filter by entity_id, branch_id, pick_status, warehouse_id.';
+
+GRANT SELECT ON reporting.v_pick_pack_performance TO jrnybi_reader;
+
+
+-- ─── View 29: v_grn_summary ────────────────────────────────────────────────
+-- Goods received notes at line-item grain with vendor and PO details.
+-- Grain: one row per GRN line.
+CREATE OR REPLACE VIEW reporting.v_grn_summary AS
+SELECT
+    grn.id                       AS grn_id,
+    grn.grn_number,
+    grn.po_id,
+    grn.po_number,
+    grn.vendor_name,
+    po.vendor_id,
+    v.code                       AS vendor_code,
+    grn.warehouse_id,
+    grn.warehouse_name,
+    grn.status                   AS grn_status,
+    grn.received_date,
+    grn.invoicing_status,
+    grl.id                       AS line_id,
+    grl.line_number,
+    grl.product_id,
+    grl.product_code,
+    grl.product_name,
+    grl.ordered_quantity,
+    grl.received_quantity,
+    grl.unit_cost,
+    grl.line_total,
+    grl.uom,
+    grl.batch_number,
+    grl.is_capex,
+    -- Variance between ordered and received
+    (grl.received_quantity - grl.ordered_quantity) AS quantity_variance,
+    CASE
+        WHEN grl.ordered_quantity > 0
+        THEN ((grl.received_quantity - grl.ordered_quantity) / grl.ordered_quantity * 100)
+        ELSE NULL
+    END                          AS variance_percentage,
+    grn.notes,
+    grn.created_by,
+    grn.created_at,
+    grn.updated_at,
+    grn.branch_id,
+    grn.branch_id                AS entity_id
+FROM inventory.grn_headers grn
+LEFT JOIN inventory.grn_lines grl ON grl.grn_id = grn.id
+LEFT JOIN procurement.purchase_orders po ON po.id = grn.po_id
+LEFT JOIN crm.vendors v ON v.id = po.vendor_id;
+
+COMMENT ON VIEW reporting.v_grn_summary IS
+'Goods received notes at line-item grain. Joins grn_headers, grn_lines, purchase_orders (for vendor_id), vendors. Includes quantity variance. Use for receiving analysis, vendor delivery quality, GRN audit. Filter by entity_id, branch_id, received_date, grn_status, vendor_code.';
+
+GRANT SELECT ON reporting.v_grn_summary TO jrnybi_reader;
+
+
+-- ─── View 30: v_stock_count_variance ────────────────────────────────────────
+-- Stock count variance at line-item grain for inventory accuracy analysis.
+-- Grain: one row per stock count line.
+CREATE OR REPLACE VIEW reporting.v_stock_count_variance AS
+SELECT
+    sc.id                        AS stock_count_id,
+    sc.count_number,
+    sc.warehouse_id,
+    w.code                       AS warehouse_code,
+    w.name                       AS warehouse_name,
+    sc.count_date,
+    sc.count_type,
+    sc.status                    AS count_status,
+    sc.total_lines,
+    sc.variance_lines,
+    sc.total_variance_value,
+    scl.id                       AS line_id,
+    scl.product_id,
+    scl.product_code,
+    scl.product_name,
+    p.code                       AS product_code_master,
+    p.name                       AS product_name_master,
+    scl.bin_id,
+    scl.bin_code,
+    scl.system_quantity,
+    scl.counted_quantity,
+    scl.variance,
+    scl.variance_value,
+    scl.unit_cost,
+    scl.uom,
+    scl.status                   AS line_status,
+    scl.counted_by,
+    scl.counted_at,
+    scl.notes                    AS line_notes,
+    sc.completed_by,
+    sc.completed_at,
+    sc.approved_by,
+    sc.approved_at,
+    sc.created_at,
+    -- entity_id derived from warehouse branch_id
+    w.branch_id,
+    w.branch_id                  AS entity_id
+FROM inventory.stock_counts sc
+LEFT JOIN inventory.stock_count_lines scl ON scl.stock_count_id = sc.id
+LEFT JOIN inventory.warehouses w ON w.id = sc.warehouse_id
+LEFT JOIN inventory.products p ON p.id = scl.product_id;
+
+COMMENT ON VIEW reporting.v_stock_count_variance IS
+'Stock count variance at line-item grain. Joins stock_counts, stock_count_lines, warehouses, products. entity_id derived from warehouse branch_id. Use for count accuracy, variance trending, inventory control. Filter by entity_id, count_status, warehouse_code, count_date.';
+
+GRANT SELECT ON reporting.v_stock_count_variance TO jrnybi_reader;
+
+
+-- ─── View 31: v_bin_utilization ─────────────────────────────────────────────
+-- Bin utilization across warehouses with capacity analysis.
+-- Grain: one row per bin.
+CREATE OR REPLACE VIEW reporting.v_bin_utilization AS
+SELECT
+    bin.id                       AS bin_id,
+    bin.code                     AS bin_code,
+    bin.name                     AS bin_name,
+    bin.bin_type,
+    bin.max_capacity,
+    bin.capacity_unit,
+    bin.is_active                AS bin_is_active,
+    bin.location_id,
+    loc.code                     AS location_code,
+    loc.name                     AS location_name,
+    loc.location_type,
+    loc.warehouse_id,
+    w.code                       AS warehouse_code,
+    w.name                       AS warehouse_name,
+    -- Bin stock aggregation
+    COALESCE(bs_agg.total_products, 0)  AS total_products,
+    COALESCE(bs_agg.total_quantity, 0)  AS total_quantity,
+    -- Utilization percentage (if max_capacity is set)
+    CASE
+        WHEN bin.max_capacity IS NOT NULL AND bin.max_capacity > 0
+        THEN (COALESCE(bs_agg.total_quantity, 0) / bin.max_capacity * 100)
+        ELSE NULL
+    END                          AS utilization_percentage,
+    CASE
+        WHEN COALESCE(bs_agg.total_quantity, 0) = 0 THEN 'Empty'
+        WHEN bin.max_capacity IS NOT NULL AND bin.max_capacity > 0
+             AND (COALESCE(bs_agg.total_quantity, 0) / bin.max_capacity * 100) >= 90
+        THEN 'Near Full'
+        WHEN bin.max_capacity IS NOT NULL AND bin.max_capacity > 0
+             AND (COALESCE(bs_agg.total_quantity, 0) / bin.max_capacity * 100) >= 50
+        THEN 'Moderate'
+        ELSE 'Low'
+    END                          AS utilization_status,
+    bin.created_at,
+    w.branch_id,
+    w.branch_id                  AS entity_id
+FROM inventory.bins bin
+JOIN inventory.locations loc ON loc.id = bin.location_id
+JOIN inventory.warehouses w ON w.id = loc.warehouse_id
+LEFT JOIN (
+    SELECT
+        bs.bin_id,
+        COUNT(DISTINCT bs.product_id) AS total_products,
+        SUM(bs.quantity)              AS total_quantity
+    FROM inventory.bin_stock bs
+    GROUP BY bs.bin_id
+) bs_agg ON bs_agg.bin_id = bin.id;
+
+COMMENT ON VIEW reporting.v_bin_utilization IS
+'Bin utilization across warehouses. Joins bins, locations, warehouses, bin_stock. Shows capacity usage, utilization status. Use for warehouse space planning, bin allocation optimization. Filter by entity_id, warehouse_code, utilization_status, bin_type, location_name.';
+
+GRANT SELECT ON reporting.v_bin_utilization TO jrnybi_reader;
+
+
+-- ─── View 32: v_reorder_recommendations ─────────────────────────────────────
+-- Products at or below reorder level with last supplier info.
+-- Grain: one row per product per warehouse (where stock <= reorder level).
+CREATE OR REPLACE VIEW reporting.v_reorder_recommendations AS
+SELECT
+    soh.id                       AS stock_id,
+    soh.product_id,
+    p.code                       AS product_code,
+    p.name                       AS product_name,
+    pg.name                      AS category,
+    p.uom                        AS product_uom,
+    soh.warehouse_id,
+    w.code                       AS warehouse_code,
+    w.name                       AS warehouse_name,
+    soh.quantity_on_hand,
+    soh.quantity_reserved,
+    soh.quantity_available,
+    p.reorder_level,
+    p.reorder_quantity,
+    p.cost_price,
+    -- Recommended order value
+    (COALESCE(p.reorder_quantity, 0) * COALESCE(p.cost_price, 0)) AS reorder_cost,
+    -- Shortfall below reorder level
+    (p.reorder_level - soh.quantity_on_hand) AS quantity_shortfall,
+    -- Last supplier info
+    ls.last_supplier_name,
+    ls.last_supplier_code,
+    ls.last_po_date,
+    ls.last_unit_cost,
+    w.branch_id,
+    w.branch_id                  AS entity_id
+FROM inventory.stock_on_hand soh
+JOIN inventory.products p ON p.id = soh.product_id
+LEFT JOIN inventory.product_groups pg ON pg.id = p.product_group_id
+JOIN inventory.warehouses w ON w.id = soh.warehouse_id
+LEFT JOIN LATERAL (
+    SELECT
+        v.name  AS last_supplier_name,
+        v.code  AS last_supplier_code,
+        po.po_date AS last_po_date,
+        poi.unit_cost_tc AS last_unit_cost
+    FROM procurement.purchase_order_items poi
+    JOIN procurement.purchase_orders po ON po.id = poi.purchase_order_id
+    LEFT JOIN crm.vendors v ON v.id = po.vendor_id
+    WHERE poi.product_id = soh.product_id
+    ORDER BY po.po_date DESC
+    LIMIT 1
+) ls ON true
+WHERE p.reorder_level IS NOT NULL
+  AND p.reorder_level > 0
+  AND soh.quantity_on_hand <= p.reorder_level;
+
+COMMENT ON VIEW reporting.v_reorder_recommendations IS
+'Products at or below reorder level with supplier info. Joins stock_on_hand, products, product_groups, warehouses, purchase_order_items, purchase_orders, vendors. Use for purchasing decisions, stock replenishment, automated reorder alerts. Filter by entity_id, warehouse_code, category.';
+
+GRANT SELECT ON reporting.v_reorder_recommendations TO jrnybi_reader;
+
+
+-- ─── Step 3: Grant SELECT on all views in reporting schema ───────────────────
+GRANT SELECT ON ALL TABLES IN SCHEMA reporting TO jrnybi_reader;
+
+-- Also set default privileges for future views
+ALTER DEFAULT PRIVILEGES IN SCHEMA reporting GRANT SELECT ON TABLES TO jrnybi_reader;
+
+COMMIT;
