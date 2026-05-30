@@ -2,7 +2,7 @@
 """Create Goods Receipt Summary (GRN) report via JRNYBI API.
 
 Creates:
-  - Query 1: Supplier-level GRN metrics (total GRNs, avg fill rate, inspection pass %)
+  - Query 1: Supplier-level GRN metrics (total GRNs, fill rate, quantity variance)
   - Query 2: GRN volume over time (monthly trend)
   - Visualizations: Supplier metrics table, GRN volume chart, fill rate bar chart
   - Dashboard: "Goods Receipt Summary (GRN)" tagged report:inventory
@@ -46,34 +46,23 @@ def main():
     # Query 1: Supplier-level GRN metrics
     # -------------------------------------------------------------------------
     q1_sql = """SELECT
-  g.supplier_name,
+  g.vendor_name,
   COUNT(DISTINCT g.grn_id)                                    AS total_grns,
-  COUNT(g.grn_line_id)                                        AS total_lines,
-  ROUND(AVG(g.fill_rate_pct), 1)                              AS avg_fill_rate_pct,
-  ROUND(SUM(g.received_qty)::NUMERIC / NULLIF(SUM(g.expected_qty), 0) * 100, 1)
+  COUNT(g.line_id)                                            AS total_lines,
+  ROUND(SUM(g.received_quantity)::NUMERIC / NULLIF(SUM(g.ordered_quantity), 0) * 100, 1)
                                                               AS overall_fill_rate_pct,
-  SUM(g.rejected_qty)                                         AS total_rejected,
-  ROUND(
-    COUNT(*) FILTER (WHERE g.inspection_result = 'pass')::NUMERIC
-    / NULLIF(COUNT(*) FILTER (WHERE g.inspection_result IS NOT NULL), 0)
-    * 100, 1
-  )                                                           AS inspection_pass_pct,
-  ROUND(AVG(g.lead_time_days), 1)                             AS avg_lead_time_days,
-  ROUND(
-    COUNT(DISTINCT g.grn_id) FILTER (WHERE g.on_time)::NUMERIC
-    / NULLIF(COUNT(DISTINCT g.grn_id), 0)
-    * 100, 1
-  )                                                           AS on_time_pct,
-  SUM(g.line_total)                                           AS total_received_value
+  SUM(g.line_total)                                           AS total_received_value,
+  SUM(ABS(g.quantity_variance))                               AS total_qty_variance,
+  ROUND(AVG(ABS(g.variance_percentage)), 1)                   AS avg_variance_pct
 FROM reporting.v_grn_summary g
-WHERE g.receipt_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ supplier }}' = '' OR g.supplier_name ILIKE '%' || '{{ supplier }}' || '%')
-GROUP BY g.supplier_name
+WHERE g.received_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ supplier }}' = '' OR g.vendor_name ILIKE '%' || '{{ supplier }}' || '%')
+GROUP BY g.vendor_name
 ORDER BY total_grns DESC"""
 
     q1 = api_call("POST", "/api/queries", {
         "name": "Goods Receipt Summary - Supplier Metrics",
-        "description": "Supplier-level GRN performance: total receipts, fill rates, inspection pass rates, lead times, and on-time delivery. Key metrics for supplier quality and reliability assessment.",
+        "description": "Supplier-level GRN performance: total receipts, fill rates, and quantity variance. Key metrics for vendor quality and reliability assessment.",
         "data_source_id": DS_ID,
         "query": q1_sql,
         "options": {
@@ -92,29 +81,22 @@ ORDER BY total_grns DESC"""
     # Query 2: GRN volume over time
     # -------------------------------------------------------------------------
     q2_sql = """SELECT
-  DATE_TRUNC('month', g.receipt_date)::DATE                   AS month,
+  DATE_TRUNC('month', g.received_date)::DATE                  AS month,
   COUNT(DISTINCT g.grn_id)                                    AS grn_count,
-  SUM(g.received_qty)                                         AS total_received_qty,
-  SUM(g.expected_qty)                                         AS total_expected_qty,
-  ROUND(SUM(g.received_qty)::NUMERIC / NULLIF(SUM(g.expected_qty), 0) * 100, 1)
+  SUM(g.received_quantity)                                    AS total_received_qty,
+  SUM(g.ordered_quantity)                                     AS total_ordered_qty,
+  ROUND(SUM(g.received_quantity)::NUMERIC / NULLIF(SUM(g.ordered_quantity), 0) * 100, 1)
                                                               AS period_fill_rate_pct,
-  ROUND(
-    COUNT(*) FILTER (WHERE g.inspection_result = 'pass')::NUMERIC
-    / NULLIF(COUNT(*) FILTER (WHERE g.inspection_result IS NOT NULL), 0)
-    * 100, 1
-  )                                                           AS period_inspection_pass_pct,
-  SUM(g.rejected_qty)                                         AS total_rejected,
-  ROUND(AVG(g.lead_time_days), 1)                             AS avg_lead_time_days,
   SUM(g.line_total)                                           AS received_value
 FROM reporting.v_grn_summary g
-WHERE g.receipt_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ supplier }}' = '' OR g.supplier_name ILIKE '%' || '{{ supplier }}' || '%')
-GROUP BY DATE_TRUNC('month', g.receipt_date)
+WHERE g.received_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ supplier }}' = '' OR g.vendor_name ILIKE '%' || '{{ supplier }}' || '%')
+GROUP BY DATE_TRUNC('month', g.received_date)
 ORDER BY month"""
 
     q2 = api_call("POST", "/api/queries", {
         "name": "Goods Receipt Summary - Monthly Trend",
-        "description": "Monthly GRN volume trend showing receipt counts, fill rates, inspection pass rates, and lead time performance over time.",
+        "description": "Monthly GRN volume trend showing receipt counts, fill rates, and received value over time.",
         "data_source_id": DS_ID,
         "query": q2_sql,
         "options": {
@@ -139,15 +121,13 @@ ORDER BY month"""
         "options": {
             "itemsPerPage": 25,
             "columns": [
-                {"name": "supplier_name", "title": "Supplier", "visible": True},
+                {"name": "vendor_name", "title": "Vendor", "visible": True},
                 {"name": "total_grns", "title": "GRNs", "visible": True, "alignContent": "right"},
                 {"name": "total_lines", "title": "Lines", "visible": True, "alignContent": "right"},
                 {"name": "overall_fill_rate_pct", "title": "Fill Rate %", "visible": True, "displayAs": "number", "numberFormat": "0.0", "alignContent": "right"},
-                {"name": "inspection_pass_pct", "title": "Inspection Pass %", "visible": True, "displayAs": "number", "numberFormat": "0.0", "alignContent": "right"},
-                {"name": "total_rejected", "title": "Rejected Qty", "visible": True, "alignContent": "right"},
-                {"name": "avg_lead_time_days", "title": "Avg Lead Time (days)", "visible": True, "displayAs": "number", "numberFormat": "0.0", "alignContent": "right"},
-                {"name": "on_time_pct", "title": "On-Time %", "visible": True, "displayAs": "number", "numberFormat": "0.0", "alignContent": "right"},
                 {"name": "total_received_value", "title": "Total Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                {"name": "total_qty_variance", "title": "Total Qty Variance", "visible": True, "displayAs": "number", "numberFormat": "0,0", "alignContent": "right"},
+                {"name": "avg_variance_pct", "title": "Avg Variance %", "visible": True, "displayAs": "number", "numberFormat": "0.0", "alignContent": "right"},
             ],
         },
     })
@@ -164,16 +144,14 @@ ORDER BY month"""
         "options": {
             "globalSeriesType": "column",
             "columnMapping": {
-                "supplier_name": "x",
+                "vendor_name": "x",
                 "overall_fill_rate_pct": "y",
-                "inspection_pass_pct": "y",
             },
             "seriesOptions": {
                 "overall_fill_rate_pct": {"type": "column", "yAxis": 0, "color": "#2563eb", "name": "Fill Rate %"},
-                "inspection_pass_pct": {"type": "column", "yAxis": 0, "color": "#16a34a", "name": "Inspection Pass %"},
             },
             "legend": {"enabled": True},
-            "xAxis": {"type": "category", "title": {"text": "Supplier"}},
+            "xAxis": {"type": "category", "title": {"text": "Vendor"}},
             "yAxis": [{"type": "linear", "title": {"text": "Percentage"}, "rangeMax": 100}],
             "numberFormat": "0.0",
         },
@@ -225,11 +203,8 @@ ORDER BY month"""
                 {"name": "month", "title": "Month", "visible": True},
                 {"name": "grn_count", "title": "GRNs", "visible": True, "alignContent": "right"},
                 {"name": "total_received_qty", "title": "Received Qty", "visible": True, "displayAs": "number", "numberFormat": "0,0", "alignContent": "right"},
-                {"name": "total_expected_qty", "title": "Expected Qty", "visible": True, "displayAs": "number", "numberFormat": "0,0", "alignContent": "right"},
+                {"name": "total_ordered_qty", "title": "Ordered Qty", "visible": True, "displayAs": "number", "numberFormat": "0,0", "alignContent": "right"},
                 {"name": "period_fill_rate_pct", "title": "Fill Rate %", "visible": True, "displayAs": "number", "numberFormat": "0.0", "alignContent": "right"},
-                {"name": "period_inspection_pass_pct", "title": "Inspection Pass %", "visible": True, "displayAs": "number", "numberFormat": "0.0", "alignContent": "right"},
-                {"name": "total_rejected", "title": "Rejected", "visible": True, "alignContent": "right"},
-                {"name": "avg_lead_time_days", "title": "Avg Lead Time", "visible": True, "displayAs": "number", "numberFormat": "0.0", "alignContent": "right"},
                 {"name": "received_value", "title": "Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
             ],
         },

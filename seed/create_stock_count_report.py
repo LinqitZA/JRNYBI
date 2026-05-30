@@ -2,9 +2,9 @@
 """Create Stock Count Variance report via JRNYBI API.
 
 Creates:
-  - Query 1: Variance summary by warehouse zone and product category
-  - Query 2: Item-level detail with material variances
-  - Query 3: Variance distribution chart data
+  - Query 1: Variance summary by warehouse
+  - Query 2: Item-level detail with material variances (non-zero only)
+  - Query 3: Variance distribution chart data (Shrinkage / Over-count / Match)
   - Visualizations: Summary table, detail table, variance distribution chart
   - Dashboard: "Stock Count Variance" tagged report:inventory
 """
@@ -44,34 +44,32 @@ def main():
         return
 
     # -------------------------------------------------------------------------
-    # Query 1: Variance summary by zone and product category
+    # Query 1: Variance summary by warehouse
     # -------------------------------------------------------------------------
     q1_sql = """SELECT
   v.warehouse_name,
-  v.zone,
-  v.product_category,
   COUNT(*) AS line_count,
-  SUM(v.book_qty) AS total_book_qty,
-  SUM(v.physical_qty) AS total_physical_qty,
-  SUM(v.variance_qty) AS total_variance_qty,
+  SUM(v.system_quantity) AS total_system_quantity,
+  SUM(v.counted_quantity) AS total_counted_quantity,
+  SUM(v.variance) AS total_variance_qty,
   SUM(v.variance_value) AS total_variance_value,
-  COUNT(*) FILTER (WHERE v.variance_type = 'Shrinkage') AS shrinkage_count,
-  COUNT(*) FILTER (WHERE v.variance_type = 'Over-count') AS overcount_count,
-  COUNT(*) FILTER (WHERE v.variance_type = 'Match') AS match_count,
+  COUNT(*) FILTER (WHERE v.variance < 0) AS shrinkage_count,
+  COUNT(*) FILTER (WHERE v.variance > 0) AS overcount_count,
+  COUNT(*) FILTER (WHERE v.variance = 0) AS match_count,
   ROUND(
-    COUNT(*) FILTER (WHERE v.variance_type = 'Match')::NUMERIC
+    COUNT(*) FILTER (WHERE v.variance = 0)::NUMERIC
     / NULLIF(COUNT(*), 0) * 100, 1
   ) AS accuracy_pct
 FROM reporting.v_stock_count_variance v
 WHERE v.count_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
   AND ('{{ warehouse }}' = '' OR v.warehouse_name ILIKE '%' || '{{ warehouse }}' || '%')
   AND v.count_status = 'completed'
-GROUP BY v.warehouse_name, v.zone, v.product_category
+GROUP BY v.warehouse_name
 ORDER BY total_variance_value ASC"""
 
     q1 = api_call("POST", "/api/queries", {
         "name": "Stock Count Variance - Summary",
-        "description": "Stock count variance summary by warehouse zone and product category. Shows total shrinkage value, over-count value, and accuracy percentages for each area.",
+        "description": "Stock count variance summary by warehouse. Shows total shrinkage value, over-count value, and accuracy percentages for each warehouse.",
         "data_source_id": DS_ID,
         "query": q1_sql,
         "options": {
@@ -93,23 +91,25 @@ ORDER BY total_variance_value ASC"""
   v.count_number,
   v.count_date,
   v.warehouse_name,
-  v.zone,
   v.product_code,
   v.product_name,
-  v.product_category,
-  v.book_qty,
-  v.physical_qty,
-  v.variance_qty,
-  v.variance_pct,
+  v.system_quantity,
+  v.counted_quantity,
+  v.variance,
+  ROUND(100.0 * v.variance / NULLIF(v.system_quantity, 0), 2) AS variance_pct,
   v.unit_cost,
   v.variance_value,
-  v.variance_type,
+  CASE
+    WHEN v.variance < 0 THEN 'Shrinkage'
+    WHEN v.variance > 0 THEN 'Over-count'
+    ELSE 'Match'
+  END AS variance_type,
   v.counted_by
 FROM reporting.v_stock_count_variance v
 WHERE v.count_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
   AND ('{{ warehouse }}' = '' OR v.warehouse_name ILIKE '%' || '{{ warehouse }}' || '%')
   AND v.count_status = 'completed'
-  AND v.variance_qty <> 0
+  AND v.variance <> 0
 ORDER BY ABS(v.variance_value) DESC"""
 
     q2 = api_call("POST", "/api/queries", {
@@ -132,16 +132,26 @@ ORDER BY ABS(v.variance_value) DESC"""
     # -------------------------------------------------------------------------
     # Query 3: Variance distribution (for chart)
     # -------------------------------------------------------------------------
-    q3_sql = """SELECT
-  v.variance_type,
+    q3_sql = """WITH variance_classified AS (
+  SELECT
+    CASE
+      WHEN v.variance < 0 THEN 'Shrinkage'
+      WHEN v.variance > 0 THEN 'Over-count'
+      ELSE 'Match'
+    END AS variance_type,
+    v.variance_value
+  FROM reporting.v_stock_count_variance v
+  WHERE v.count_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    AND ('{{ warehouse }}' = '' OR v.warehouse_name ILIKE '%' || '{{ warehouse }}' || '%')
+    AND v.count_status = 'completed'
+)
+SELECT
+  variance_type,
   COUNT(*) AS item_count,
-  ABS(SUM(v.variance_value)) AS total_abs_value
-FROM reporting.v_stock_count_variance v
-WHERE v.count_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ warehouse }}' = '' OR v.warehouse_name ILIKE '%' || '{{ warehouse }}' || '%')
-  AND v.count_status = 'completed'
-GROUP BY v.variance_type
-ORDER BY v.variance_type"""
+  ABS(SUM(variance_value)) AS total_abs_value
+FROM variance_classified
+GROUP BY variance_type
+ORDER BY variance_type"""
 
     q3 = api_call("POST", "/api/queries", {
         "name": "Stock Count Variance - Distribution",
@@ -165,14 +175,12 @@ ORDER BY v.variance_type"""
     # -------------------------------------------------------------------------
     v1 = api_call("POST", "/api/visualizations", {
         "query_id": q1_id,
-        "name": "Variance Summary by Zone",
+        "name": "Variance Summary by Warehouse",
         "type": "TABLE",
         "options": {
             "itemsPerPage": 25,
             "columns": [
                 {"name": "warehouse_name", "title": "Warehouse", "visible": True},
-                {"name": "zone", "title": "Zone", "visible": True},
-                {"name": "product_category", "title": "Category", "visible": True},
                 {"name": "line_count", "title": "Items Counted", "visible": True, "alignContent": "right"},
                 {"name": "total_variance_qty", "title": "Variance Qty", "visible": True, "displayAs": "number", "numberFormat": "0,0", "alignContent": "right"},
                 {"name": "total_variance_value", "title": "Variance Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
@@ -249,13 +257,11 @@ ORDER BY v.variance_type"""
                 {"name": "count_number", "title": "Count #", "visible": True},
                 {"name": "count_date", "title": "Date", "visible": True},
                 {"name": "warehouse_name", "title": "Warehouse", "visible": True},
-                {"name": "zone", "title": "Zone", "visible": True},
                 {"name": "product_code", "title": "Product Code", "visible": True},
                 {"name": "product_name", "title": "Product", "visible": True},
-                {"name": "product_category", "title": "Category", "visible": True},
-                {"name": "book_qty", "title": "Book Qty", "visible": True, "displayAs": "number", "numberFormat": "0,0", "alignContent": "right"},
-                {"name": "physical_qty", "title": "Physical Qty", "visible": True, "displayAs": "number", "numberFormat": "0,0", "alignContent": "right"},
-                {"name": "variance_qty", "title": "Variance", "visible": True, "displayAs": "number", "numberFormat": "0,0", "alignContent": "right"},
+                {"name": "system_quantity", "title": "System Qty", "visible": True, "displayAs": "number", "numberFormat": "0,0", "alignContent": "right"},
+                {"name": "counted_quantity", "title": "Counted Qty", "visible": True, "displayAs": "number", "numberFormat": "0,0", "alignContent": "right"},
+                {"name": "variance", "title": "Variance", "visible": True, "displayAs": "number", "numberFormat": "0,0", "alignContent": "right"},
                 {"name": "variance_pct", "title": "Variance %", "visible": True, "displayAs": "number", "numberFormat": "0.00", "alignContent": "right"},
                 {"name": "variance_value", "title": "Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                 {"name": "variance_type", "title": "Type", "visible": True},

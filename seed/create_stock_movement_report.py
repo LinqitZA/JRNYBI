@@ -48,25 +48,25 @@ def main():
     q1_sql = """SELECT
   sm.product_code,
   sm.product_name,
-  sm.warehouse,
+  sm.warehouse_name,
   sm.movement_type,
   sm.quantity,
   sm.unit_cost,
-  sm.movement_value,
+  sm.total_value,
   sm.reference_type,
-  sm.reference_id::TEXT AS reference_id,
-  sm.movement_date::DATE AS movement_date,
+  sm.reference_number,
+  sm.transaction_date::DATE AS transaction_date,
   SUM(sm.quantity) OVER (
     PARTITION BY sm.product_id, sm.warehouse_id
-    ORDER BY sm.movement_date, sm.id
+    ORDER BY sm.transaction_date, sm.movement_id
     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
   ) AS running_balance
 FROM reporting.v_stock_movements sm
-WHERE sm.movement_date::DATE BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+WHERE sm.transaction_date::DATE BETWEEN '{{ start_date }}' AND '{{ end_date }}'
   AND ('{{ product }}' = '' OR sm.product_name ILIKE '%' || '{{ product }}' || '%' OR sm.product_code ILIKE '%' || '{{ product }}' || '%')
-  AND ('{{ warehouse }}' = '' OR sm.warehouse = '{{ warehouse }}')
+  AND ('{{ warehouse }}' = '' OR sm.warehouse_name = '{{ warehouse }}')
   AND ('{{ movement_type }}' = '' OR sm.movement_type = '{{ movement_type }}')
-ORDER BY sm.movement_date DESC, sm.product_name, sm.warehouse"""
+ORDER BY sm.transaction_date DESC, sm.product_name, sm.warehouse_name"""
 
     q1 = api_call("POST", "/api/queries", {
         "name": "Stock Movement History - Detail",
@@ -91,15 +91,15 @@ ORDER BY sm.movement_date DESC, sm.product_name, sm.warehouse"""
     # Query 2: Movement summary by type per period
     # -------------------------------------------------------------------------
     q2_sql = """SELECT
-  DATE_TRUNC('month', sm.movement_date)::DATE AS period,
+  DATE_TRUNC('month', sm.transaction_date)::DATE AS period,
   sm.movement_type,
   COUNT(*) AS movement_count,
   SUM(ABS(sm.quantity)) AS total_quantity,
-  SUM(ABS(sm.movement_value)) AS total_value
+  SUM(ABS(sm.total_value)) AS total_value
 FROM reporting.v_stock_movements sm
-WHERE sm.movement_date::DATE BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ warehouse }}' = '' OR sm.warehouse = '{{ warehouse }}')
-GROUP BY DATE_TRUNC('month', sm.movement_date), sm.movement_type
+WHERE sm.transaction_date::DATE BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ warehouse }}' = '' OR sm.warehouse_name = '{{ warehouse }}')
+GROUP BY DATE_TRUNC('month', sm.transaction_date), sm.movement_type
 ORDER BY period, sm.movement_type"""
 
     q2 = api_call("POST", "/api/queries", {
@@ -129,17 +129,17 @@ ORDER BY period, sm.movement_type"""
         "options": {
             "itemsPerPage": 50,
             "columns": [
-                {"name": "movement_date", "title": "Date", "visible": True},
+                {"name": "transaction_date", "title": "Date", "visible": True},
                 {"name": "product_code", "title": "Code", "visible": True},
                 {"name": "product_name", "title": "Product", "visible": True},
-                {"name": "warehouse", "title": "Warehouse", "visible": True},
+                {"name": "warehouse_name", "title": "Warehouse", "visible": True},
                 {"name": "movement_type", "title": "Type", "visible": True},
                 {"name": "quantity", "title": "Qty", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                 {"name": "unit_cost", "title": "Unit Cost", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
-                {"name": "movement_value", "title": "Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                {"name": "total_value", "title": "Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                 {"name": "running_balance", "title": "Running Balance", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                 {"name": "reference_type", "title": "Ref Type", "visible": True},
-                {"name": "reference_id", "title": "Ref ID", "visible": True},
+                {"name": "reference_number", "title": "Ref ID", "visible": True},
             ],
         },
     })

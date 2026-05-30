@@ -47,25 +47,25 @@ def main():
     # -------------------------------------------------------------------------
     q1_sql = """SELECT
   u.warehouse_name,
-  u.zone_code,
-  u.zone_name,
-  u.zone_type,
+  u.location_code,
+  u.location_name,
+  u.location_type,
   COUNT(DISTINCT u.bin_id) AS total_bins,
-  COUNT(DISTINCT u.bin_id) FILTER (WHERE u.bin_status <> 'Empty') AS occupied_bins,
-  COUNT(DISTINCT u.bin_id) FILTER (WHERE u.bin_status = 'Empty') AS empty_bins,
-  COUNT(DISTINCT u.bin_id) FILTER (WHERE u.bin_status = 'Over-capacity') AS overcapacity_bins,
-  COUNT(DISTINCT u.bin_id) FILTER (WHERE u.bin_status = 'Near-full') AS nearfull_bins,
+  COUNT(DISTINCT u.bin_id) FILTER (WHERE u.utilization_status <> 'Empty') AS occupied_bins,
+  COUNT(DISTINCT u.bin_id) FILTER (WHERE u.utilization_status = 'Empty') AS empty_bins,
+  COUNT(DISTINCT u.bin_id) FILTER (WHERE u.utilization_status = 'Over-capacity') AS overcapacity_bins,
+  COUNT(DISTINCT u.bin_id) FILTER (WHERE u.utilization_status = 'Near-full') AS nearfull_bins,
   ROUND(
-    COUNT(DISTINCT u.bin_id) FILTER (WHERE u.bin_status <> 'Empty')::NUMERIC
+    COUNT(DISTINCT u.bin_id) FILTER (WHERE u.utilization_status <> 'Empty')::NUMERIC
     / NULLIF(COUNT(DISTINCT u.bin_id), 0)
     * 100, 1
   ) AS utilization_pct,
-  ROUND(AVG(u.bin_fill_pct) FILTER (WHERE u.bin_status <> 'Empty'), 1) AS avg_fill_pct,
-  SUM(u.current_qty) AS total_qty_stored
+  ROUND(AVG(u.utilization_percentage) FILTER (WHERE u.utilization_status <> 'Empty'), 1) AS avg_fill_pct,
+  SUM(u.total_quantity) AS total_qty_stored
 FROM reporting.v_bin_utilization u
 WHERE ('{{ warehouse }}' = '' OR u.warehouse_name ILIKE '%' || '{{ warehouse }}' || '%')
-GROUP BY u.warehouse_name, u.zone_code, u.zone_name, u.zone_type
-ORDER BY u.warehouse_name, u.zone_code"""
+GROUP BY u.warehouse_name, u.location_code, u.location_name, u.location_type
+ORDER BY u.warehouse_name, u.location_code"""
 
     q1 = api_call("POST", "/api/queries", {
         "name": "Warehouse Bin Utilization - Zone Summary",
@@ -87,22 +87,20 @@ ORDER BY u.warehouse_name, u.zone_code"""
     # -------------------------------------------------------------------------
     q2_sql = """SELECT
   u.warehouse_name,
-  u.zone_code,
-  u.zone_name,
+  u.location_code,
+  u.location_name,
   u.bin_code,
   u.bin_type,
   u.max_capacity,
-  u.current_qty,
-  u.bin_fill_pct,
-  u.bin_status,
-  u.product_code,
-  u.product_name,
-  u.product_category
+  u.total_quantity,
+  u.total_products,
+  u.utilization_percentage,
+  u.utilization_status
 FROM reporting.v_bin_utilization u
 WHERE ('{{ warehouse }}' = '' OR u.warehouse_name ILIKE '%' || '{{ warehouse }}' || '%')
-  AND ('{{ zone }}' = '' OR u.zone_code = '{{ zone }}')
-  AND ('{{ status }}' = '' OR u.bin_status = '{{ status }}')
-ORDER BY u.warehouse_name, u.zone_code, u.bin_code"""
+  AND ('{{ location }}' = '' OR u.location_code = '{{ location }}')
+  AND ('{{ status }}' = '' OR u.utilization_status = '{{ status }}')
+ORDER BY u.warehouse_name, u.location_code, u.bin_code"""
 
     q2 = api_call("POST", "/api/queries", {
         "name": "Warehouse Bin Utilization - Bin Detail",
@@ -112,7 +110,7 @@ ORDER BY u.warehouse_name, u.zone_code, u.bin_code"""
         "options": {
             "parameters": [
                 {"name": "warehouse", "title": "Warehouse", "type": "text", "value": ""},
-                {"name": "zone", "title": "Zone Code", "type": "text", "value": ""},
+                {"name": "location", "title": "Location Code", "type": "text", "value": ""},
                 {"name": "status", "title": "Bin Status", "type": "text", "value": ""},
             ]
         },
@@ -131,7 +129,7 @@ ORDER BY u.warehouse_name, u.zone_code, u.bin_code"""
         "options": {
             "globalSeriesType": "column",
             "columnMapping": {
-                "zone_name": "x",
+                "location_name": "x",
                 "utilization_pct": "y",
                 "avg_fill_pct": "y",
             },
@@ -140,7 +138,7 @@ ORDER BY u.warehouse_name, u.zone_code, u.bin_code"""
                 "avg_fill_pct": {"type": "line", "yAxis": 0, "color": "#dc2626", "name": "Avg Fill Rate %"},
             },
             "legend": {"enabled": True},
-            "xAxis": {"type": "category", "title": {"text": "Zone"}},
+            "xAxis": {"type": "category", "title": {"text": "Location"}},
             "yAxis": [{"type": "linear", "title": {"text": "Percentage"}, "rangeMax": 100}],
             "numberFormat": "0.0",
             "series": {"stacking": None},
@@ -160,9 +158,9 @@ ORDER BY u.warehouse_name, u.zone_code, u.bin_code"""
             "itemsPerPage": 25,
             "columns": [
                 {"name": "warehouse_name", "title": "Warehouse", "visible": True},
-                {"name": "zone_code", "title": "Zone", "visible": True},
-                {"name": "zone_name", "title": "Zone Name", "visible": True},
-                {"name": "zone_type", "title": "Type", "visible": True},
+                {"name": "location_code", "title": "Location", "visible": True},
+                {"name": "location_name", "title": "Location Name", "visible": True},
+                {"name": "location_type", "title": "Type", "visible": True},
                 {"name": "total_bins", "title": "Total Bins", "visible": True, "alignContent": "right"},
                 {"name": "occupied_bins", "title": "Occupied", "visible": True, "alignContent": "right"},
                 {"name": "empty_bins", "title": "Empty", "visible": True, "alignContent": "right"},
@@ -187,15 +185,14 @@ ORDER BY u.warehouse_name, u.zone_code, u.bin_code"""
             "itemsPerPage": 50,
             "columns": [
                 {"name": "warehouse_name", "title": "Warehouse", "visible": True},
-                {"name": "zone_code", "title": "Zone", "visible": True},
+                {"name": "location_code", "title": "Location", "visible": True},
                 {"name": "bin_code", "title": "Bin", "visible": True},
                 {"name": "bin_type", "title": "Type", "visible": True},
-                {"name": "product_code", "title": "Product", "visible": True},
-                {"name": "product_name", "title": "Product Name", "visible": True},
-                {"name": "current_qty", "title": "Qty", "visible": True, "displayAs": "number", "numberFormat": "0,0", "alignContent": "right"},
+                {"name": "total_products", "title": "Products", "visible": True, "displayAs": "number", "numberFormat": "0,0", "alignContent": "right"},
+                {"name": "total_quantity", "title": "Qty", "visible": True, "displayAs": "number", "numberFormat": "0,0", "alignContent": "right"},
                 {"name": "max_capacity", "title": "Capacity", "visible": True, "displayAs": "number", "numberFormat": "0,0", "alignContent": "right"},
-                {"name": "bin_fill_pct", "title": "Fill %", "visible": True, "displayAs": "number", "numberFormat": "0.0", "alignContent": "right"},
-                {"name": "bin_status", "title": "Status", "visible": True},
+                {"name": "utilization_percentage", "title": "Fill %", "visible": True, "displayAs": "number", "numberFormat": "0.0", "alignContent": "right"},
+                {"name": "utilization_status", "title": "Status", "visible": True},
             ],
         },
     })

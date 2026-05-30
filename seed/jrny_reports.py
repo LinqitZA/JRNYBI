@@ -270,11 +270,11 @@ SELECT
     il.product_name,
     il.warehouse_name,
     il.quantity_on_hand,
-    il.unit_cost,
-    il.quantity_on_hand * il.unit_cost AS total_value,
+    il.cost_price,
+    il.stock_value_at_cost AS total_value,
     il.reorder_point,
     CASE
-        WHEN il.quantity_on_hand <= il.reorder_point THEN 'Low Stock'
+        WHEN il.below_reorder_point THEN 'Low Stock'
         ELSE 'OK'
     END AS stock_status
 FROM reporting.v_inventory_levels il
@@ -295,10 +295,10 @@ SELECT
     il.quantity_on_hand,
     il.reorder_point,
     il.reorder_point - il.quantity_on_hand AS shortfall,
-    il.unit_cost,
-    (il.reorder_point - il.quantity_on_hand) * il.unit_cost AS reorder_value
+    il.cost_price,
+    (il.reorder_point - il.quantity_on_hand) * il.cost_price AS reorder_value
 FROM reporting.v_inventory_levels il
-WHERE il.quantity_on_hand <= il.reorder_point
+WHERE il.below_reorder_point
 ORDER BY shortfall DESC;
 """.strip(),
         "options": {"parameters": []},
@@ -309,31 +309,19 @@ ORDER BY shortfall DESC;
         "name": "Reorder Recommendations",
         "description": "Products at or below reorder point with suggested order quantities, estimated cost, and preferred supplier. Actionable report that can drive PO creation.",
         "query": """
-WITH preferred_suppliers AS (
-    SELECT DISTINCT ON (pol.product_id)
-        pol.product_id,
-        s.supplier_name,
-        po.supplier_id
-    FROM procurement.purchase_order_lines pol
-    JOIN procurement.purchase_orders po ON po.id = pol.po_id
-    JOIN reporting.v_suppliers s ON s.supplier_id = po.vendor_id
-    ORDER BY pol.product_id, po.order_date DESC
-)
 SELECT
-    il.product_code,
-    il.product_name,
-    il.warehouse,
-    il.quantity_on_hand,
-    il.reorder_point,
-    il.reorder_point - il.quantity_on_hand AS shortfall,
-    GREATEST(il.reorder_point - il.quantity_on_hand, il.reorder_point) AS suggested_order_qty,
-    il.unit_cost,
-    (GREATEST(il.reorder_point - il.quantity_on_hand, il.reorder_point) * il.unit_cost)::NUMERIC(12,2) AS estimated_reorder_cost,
-    COALESCE(ps.supplier_name, 'No Supplier on File') AS preferred_supplier
-FROM reporting.v_inventory_levels il
-LEFT JOIN preferred_suppliers ps ON ps.product_id = il.product_id
-WHERE il.quantity_on_hand <= il.reorder_point
-ORDER BY shortfall DESC;
+    r.product_code,
+    r.product_name,
+    r.warehouse_name,
+    r.quantity_on_hand,
+    r.reorder_level,
+    r.quantity_shortfall AS shortfall,
+    r.reorder_quantity AS suggested_order_qty,
+    r.cost_price,
+    r.reorder_cost AS estimated_reorder_cost,
+    COALESCE(r.last_supplier_name, 'No Supplier on File') AS preferred_supplier
+FROM reporting.v_reorder_recommendations r
+ORDER BY r.quantity_shortfall DESC;
 """.strip(),
         "options": {"parameters": []},
         "tags": ["inventory", "jrny-report", "report:inventory"],
@@ -344,11 +332,8 @@ ORDER BY shortfall DESC;
         "query": """
 SELECT
     COUNT(*) AS items_below_reorder,
-    COALESCE(SUM(
-        GREATEST(il.reorder_point - il.quantity_on_hand, il.reorder_point) * il.unit_cost
-    ), 0)::NUMERIC(12,2) AS total_reorder_cost
-FROM reporting.v_inventory_levels il
-WHERE il.quantity_on_hand <= il.reorder_point;
+    COALESCE(SUM(r.reorder_cost), 0)::NUMERIC(12,2) AS total_reorder_cost
+FROM reporting.v_reorder_recommendations r;
 """.strip(),
         "options": {"parameters": []},
         "tags": ["inventory", "jrny-report", "report:inventory"],
@@ -362,28 +347,27 @@ WITH period_usage AS (
     SELECT
         sm.product_id,
         sm.warehouse_id,
-        SUM(ABS(sm.quantity))                                    AS total_issued,
-        SUM(ABS(sm.quantity) * COALESCE(p.unit_cost, 0))         AS cogs_value,
-        COUNT(DISTINCT DATE_TRUNC('day', sm.movement_date))      AS active_days
-    FROM inventory.stock_movements sm
-    LEFT JOIN inventory.products p ON p.id = sm.product_id
-    WHERE sm.movement_type = 'issue'
-      AND sm.movement_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+        SUM(sm.quantity_out)                                     AS total_issued,
+        SUM(sm.quantity_out * sm.unit_cost)                      AS cogs_value,
+        COUNT(DISTINCT DATE_TRUNC('day', sm.transaction_date))   AS active_days
+    FROM reporting.v_stock_movements sm
+    WHERE sm.quantity_out > 0
+      AND sm.transaction_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
     GROUP BY sm.product_id, sm.warehouse_id
 )
 SELECT
-    p.product_code,
-    p.product_name,
-    p.category,
-    w.warehouse_name                                             AS warehouse,
-    sl.quantity                                                   AS current_stock,
-    COALESCE(sl.unit_cost, p.unit_cost, 0)                       AS unit_cost,
-    (sl.quantity * COALESCE(sl.unit_cost, p.unit_cost, 0))::NUMERIC(12,2) AS stock_value,
+    il.product_code,
+    il.product_name,
+    il.product_category                                          AS category,
+    il.warehouse_name                                            AS warehouse,
+    il.quantity_on_hand                                           AS current_stock,
+    il.cost_price                                                AS unit_cost,
+    il.stock_value_at_cost                                       AS stock_value,
     COALESCE(pu.total_issued, 0)                                 AS total_issued,
     COALESCE(pu.cogs_value, 0)                                   AS cogs_value,
     CASE
-        WHEN (sl.quantity * COALESCE(sl.unit_cost, p.unit_cost, 0)) > 0
-          THEN ROUND(COALESCE(pu.cogs_value, 0) / (sl.quantity * COALESCE(sl.unit_cost, p.unit_cost, 0)), 2)
+        WHEN il.stock_value_at_cost > 0
+          THEN ROUND(COALESCE(pu.cogs_value, 0) / il.stock_value_at_cost, 2)
         ELSE 0
     END                                                          AS turnover_ratio,
     CASE
@@ -393,26 +377,24 @@ SELECT
     END                                                          AS avg_daily_usage,
     CASE
         WHEN COALESCE(pu.active_days, 0) > 0 AND pu.total_issued > 0
-          THEN ROUND(sl.quantity / (pu.total_issued / pu.active_days), 0)
+          THEN ROUND(il.quantity_on_hand / (pu.total_issued / pu.active_days), 0)
         ELSE NULL
     END                                                          AS days_of_stock,
     CASE
         WHEN COALESCE(pu.active_days, 0) = 0 THEN 'No Movement'
         WHEN COALESCE(pu.cogs_value, 0) /
-             NULLIF(sl.quantity * COALESCE(sl.unit_cost, p.unit_cost, 0), 0) >= 4
+             NULLIF(il.stock_value_at_cost, 0) >= 4
           THEN 'Fast Mover'
         WHEN COALESCE(pu.cogs_value, 0) /
-             NULLIF(sl.quantity * COALESCE(sl.unit_cost, p.unit_cost, 0), 0) >= 1
+             NULLIF(il.stock_value_at_cost, 0) >= 1
           THEN 'Normal'
         ELSE 'Slow Mover'
     END                                                          AS turnover_class
-FROM inventory.stock_levels sl
-LEFT JOIN inventory.products p ON p.id = sl.product_id
-LEFT JOIN inventory.warehouses w ON w.id = sl.warehouse_id
-LEFT JOIN period_usage pu ON pu.product_id = sl.product_id
-                          AND pu.warehouse_id = sl.warehouse_id
-WHERE sl.quantity > 0
-  AND ('{{ category }}' = '' OR p.category = '{{ category }}')
+FROM reporting.v_inventory_levels il
+LEFT JOIN period_usage pu ON pu.product_id = il.product_id
+                          AND pu.warehouse_id = il.warehouse_id
+WHERE il.quantity_on_hand > 0
+  AND ('{{ category }}' = '' OR il.product_category = '{{ category }}')
 ORDER BY turnover_ratio DESC;
 """.strip(),
         "options": {
@@ -434,17 +416,15 @@ ORDER BY turnover_ratio DESC;
         "query": """
 WITH product_revenue AS (
     SELECT
-        p.id AS product_id,
-        p.product_code,
-        p.product_name,
-        p.category,
-        SUM(sol.quantity) AS total_qty_sold,
-        SUM(sol.line_total) AS total_revenue
-    FROM sales.sales_order_lines sol
-    JOIN sales.sales_orders so ON so.id = sol.order_id
-    JOIN inventory.products p ON p.id = sol.product_id
+        so.product_id,
+        so.product_code,
+        so.product_name,
+        so.product_category AS category,
+        SUM(so.quantity) AS total_qty_sold,
+        SUM(so.line_total) AS total_revenue
+    FROM reporting.v_sales_orders so
     WHERE so.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-    GROUP BY p.id, p.product_code, p.product_name, p.category
+    GROUP BY so.product_id, so.product_code, so.product_name, so.product_category
 ),
 ranked AS (
     SELECT
@@ -459,8 +439,8 @@ ranked AS (
 with_stock AS (
     SELECT
         r.*,
-        COALESCE(sl_agg.current_stock, 0) AS current_stock,
-        COALESCE(sl_agg.stock_value, 0) AS stock_value,
+        COALESCE(il_agg.current_stock, 0) AS current_stock,
+        COALESCE(il_agg.stock_value, 0) AS stock_value,
         CASE
             WHEN r.cumulative_pct <= 80 THEN 'A'
             WHEN r.cumulative_pct <= 95 THEN 'B'
@@ -469,12 +449,12 @@ with_stock AS (
     FROM ranked r
     LEFT JOIN LATERAL (
         SELECT
-            SUM(sl.quantity) AS current_stock,
-            SUM(sl.quantity * COALESCE(sl.unit_cost, 0))::NUMERIC(12,2) AS stock_value
-        FROM inventory.stock_levels sl
-        WHERE sl.product_id = r.product_id
-          AND sl.quantity > 0
-    ) sl_agg ON TRUE
+            SUM(il.quantity_on_hand) AS current_stock,
+            SUM(il.stock_value_at_cost)::NUMERIC(12,2) AS stock_value
+        FROM reporting.v_inventory_levels il
+        WHERE il.product_id = r.product_id
+          AND il.quantity_on_hand > 0
+    ) il_agg ON TRUE
 )
 SELECT
     rank,
@@ -500,13 +480,11 @@ ORDER BY rank;
         "query": """
 WITH product_revenue AS (
     SELECT
-        p.id AS product_id,
-        SUM(sol.line_total) AS total_revenue
-    FROM sales.sales_order_lines sol
-    JOIN sales.sales_orders so ON so.id = sol.order_id
-    JOIN inventory.products p ON p.id = sol.product_id
+        so.product_id,
+        SUM(so.line_total) AS total_revenue
+    FROM reporting.v_sales_orders so
     WHERE so.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-    GROUP BY p.id
+    GROUP BY so.product_id
 ),
 ranked AS (
     SELECT
@@ -531,13 +509,13 @@ SELECT
     ROUND(100.0 * COUNT(*) / NULLIF(SUM(COUNT(*)) OVER (), 0), 1) AS item_pct,
     SUM(c.total_revenue) AS total_revenue,
     ROUND(100.0 * SUM(c.total_revenue) / NULLIF(SUM(SUM(c.total_revenue)) OVER (), 0), 1) AS revenue_pct,
-    COALESCE(SUM(sl_agg.stock_value), 0) AS stock_value
+    COALESCE(SUM(il_agg.stock_value), 0) AS stock_value
 FROM classified c
 LEFT JOIN LATERAL (
-    SELECT SUM(sl.quantity * COALESCE(sl.unit_cost, 0))::NUMERIC(12,2) AS stock_value
-    FROM inventory.stock_levels sl
-    WHERE sl.product_id = c.product_id AND sl.quantity > 0
-) sl_agg ON TRUE
+    SELECT SUM(il.stock_value_at_cost)::NUMERIC(12,2) AS stock_value
+    FROM reporting.v_inventory_levels il
+    WHERE il.product_id = c.product_id AND il.quantity_on_hand > 0
+) il_agg ON TRUE
 GROUP BY c.abc_class
 ORDER BY c.abc_class;
 """.strip(),
@@ -551,19 +529,19 @@ ORDER BY c.abc_class;
         "query": """
 SELECT
     COUNT(*) AS total_deliveries,
-    ROUND(AVG(pp.shipped_qty), 1) AS avg_lines_per_order,
+    ROUND(AVG(pp.total_qty_picked), 1) AS avg_lines_per_order,
     CASE
-        WHEN SUM(pp.pick_duration_mins) > 0
-          THEN ROUND(SUM(pp.shipped_qty) / (SUM(pp.pick_duration_mins) / 60.0), 1)
+        WHEN SUM(pp.pick_duration_minutes) > 0
+          THEN ROUND(SUM(pp.total_qty_picked) / (SUM(pp.pick_duration_minutes) / 60.0), 1)
         ELSE 0
     END AS picks_per_hour,
-    ROUND(AVG(pp.fill_rate_pct), 1) AS avg_fill_rate_pct,
-    ROUND(AVG(pp.total_fulfilment_mins), 1) AS avg_fulfilment_mins,
-    ROUND(AVG(pp.pick_duration_mins), 1) AS avg_pick_mins,
-    ROUND(AVG(pp.pack_duration_mins), 1) AS avg_pack_mins
+    ROUND(AVG(100.0 * pp.total_qty_picked / NULLIF(pp.total_quantity, 0)), 1) AS avg_fill_rate_pct,
+    ROUND(AVG(COALESCE(pp.pick_duration_minutes, 0) + COALESCE(pp.pack_duration_minutes, 0)), 1) AS avg_fulfilment_mins,
+    ROUND(AVG(pp.pick_duration_minutes), 1) AS avg_pick_mins,
+    ROUND(AVG(pp.pack_duration_minutes), 1) AS avg_pack_mins
 FROM reporting.v_pick_pack_performance pp
-WHERE pp.delivery_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND pp.status != 'cancelled';
+WHERE pp.pick_created_at::DATE BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND pp.pick_status != 'cancelled';
 """.strip(),
         "options": {"parameters": DATE_PARAMS},
         "tags": ["inventory", "jrny-report"],
@@ -573,21 +551,21 @@ WHERE pp.delivery_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
         "description": "Daily trends: picks per hour, fill rate, and fulfilment time over the selected period.",
         "query": """
 SELECT
-    pp.delivery_date AS date,
+    pp.pick_created_at::DATE AS date,
     COUNT(*) AS deliveries,
-    ROUND(AVG(pp.shipped_qty), 1) AS avg_lines_per_order,
+    ROUND(AVG(pp.total_qty_picked), 1) AS avg_lines_per_order,
     CASE
-        WHEN SUM(pp.pick_duration_mins) > 0
-          THEN ROUND(SUM(pp.shipped_qty) / (SUM(pp.pick_duration_mins) / 60.0), 1)
+        WHEN SUM(pp.pick_duration_minutes) > 0
+          THEN ROUND(SUM(pp.total_qty_picked) / (SUM(pp.pick_duration_minutes) / 60.0), 1)
         ELSE 0
     END AS picks_per_hour,
-    ROUND(AVG(pp.fill_rate_pct), 1) AS avg_fill_rate_pct,
-    ROUND(AVG(pp.total_fulfilment_mins), 1) AS avg_fulfilment_mins
+    ROUND(AVG(100.0 * pp.total_qty_picked / NULLIF(pp.total_quantity, 0)), 1) AS avg_fill_rate_pct,
+    ROUND(AVG(COALESCE(pp.pick_duration_minutes, 0) + COALESCE(pp.pack_duration_minutes, 0)), 1) AS avg_fulfilment_mins
 FROM reporting.v_pick_pack_performance pp
-WHERE pp.delivery_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND pp.status != 'cancelled'
-GROUP BY pp.delivery_date
-ORDER BY pp.delivery_date;
+WHERE pp.pick_created_at::DATE BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND pp.pick_status != 'cancelled'
+GROUP BY pp.pick_created_at::DATE
+ORDER BY pp.pick_created_at::DATE;
 """.strip(),
         "options": {"parameters": DATE_PARAMS},
         "tags": ["inventory", "jrny-report"],
@@ -597,25 +575,25 @@ ORDER BY pp.delivery_date;
         "description": "Per-delivery pick and pack performance metrics.",
         "query": """
 SELECT
-    pp.delivery_number,
-    pp.order_number,
-    pp.delivery_date,
-    pp.status,
-    pp.ordered_qty,
-    pp.shipped_qty,
-    pp.fill_rate_pct,
-    ROUND(pp.pick_duration_mins, 1) AS pick_mins,
-    ROUND(pp.pack_duration_mins, 1) AS pack_mins,
-    ROUND(pp.total_fulfilment_mins, 1) AS total_mins,
+    pp.pick_number AS delivery_number,
+    pp.sales_order_number AS order_number,
+    pp.pick_created_at::DATE AS delivery_date,
+    pp.pick_status AS status,
+    pp.total_quantity AS ordered_qty,
+    pp.total_qty_picked AS shipped_qty,
+    ROUND(100.0 * pp.total_qty_picked / NULLIF(pp.total_quantity, 0), 1) AS fill_rate_pct,
+    ROUND(pp.pick_duration_minutes, 1) AS pick_mins,
+    ROUND(pp.pack_duration_minutes, 1) AS pack_mins,
+    ROUND(COALESCE(pp.pick_duration_minutes, 0) + COALESCE(pp.pack_duration_minutes, 0), 1) AS total_mins,
     CASE
-        WHEN pp.pick_duration_mins > 0
-          THEN ROUND(pp.shipped_qty / (pp.pick_duration_mins / 60.0), 1)
+        WHEN pp.pick_duration_minutes > 0
+          THEN ROUND(pp.total_qty_picked / (pp.pick_duration_minutes / 60.0), 1)
         ELSE NULL
     END AS picks_per_hour
 FROM reporting.v_pick_pack_performance pp
-WHERE pp.delivery_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND pp.status != 'cancelled'
-ORDER BY pp.delivery_date DESC, pp.delivery_number;
+WHERE pp.pick_created_at::DATE BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND pp.pick_status != 'cancelled'
+ORDER BY pp.pick_created_at DESC, pp.pick_number;
 """.strip(),
         "options": {"parameters": DATE_PARAMS},
         "tags": ["inventory", "jrny-report"],
@@ -2585,7 +2563,7 @@ VISUALIZATIONS = {
                     {"name": "product_name", "title": "Product Name", "visible": True},
                     {"name": "warehouse_name", "title": "Warehouse", "visible": True},
                     {"name": "quantity_on_hand", "title": "Qty on Hand", "visible": True, "alignContent": "right"},
-                    {"name": "unit_cost", "title": "Unit Cost", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "cost_price", "title": "Unit Cost", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                     {"name": "total_value", "title": "Total Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                     {"name": "stock_status", "title": "Status", "visible": True},
                 ],
@@ -2646,12 +2624,12 @@ VISUALIZATIONS = {
                 "columns": [
                     {"name": "product_code", "title": "Product Code", "visible": True},
                     {"name": "product_name", "title": "Product", "visible": True},
-                    {"name": "warehouse", "title": "Warehouse", "visible": True},
+                    {"name": "warehouse_name", "title": "Warehouse", "visible": True},
                     {"name": "quantity_on_hand", "title": "Qty on Hand", "visible": True, "alignContent": "right"},
-                    {"name": "reorder_point", "title": "Reorder Point", "visible": True, "alignContent": "right"},
+                    {"name": "reorder_level", "title": "Reorder Level", "visible": True, "alignContent": "right"},
                     {"name": "shortfall", "title": "Shortfall", "visible": True, "alignContent": "right"},
                     {"name": "suggested_order_qty", "title": "Suggested Order Qty", "visible": True, "alignContent": "right"},
-                    {"name": "unit_cost", "title": "Unit Cost", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "cost_price", "title": "Unit Cost", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                     {"name": "estimated_reorder_cost", "title": "Est. Reorder Cost", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                     {"name": "preferred_supplier", "title": "Preferred Supplier", "visible": True},
                 ],

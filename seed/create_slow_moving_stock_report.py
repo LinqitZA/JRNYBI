@@ -46,53 +46,28 @@ def main():
     # -------------------------------------------------------------------------
     # Query 1: Slow/Dead Stock Detail
     # -------------------------------------------------------------------------
-    q1_sql = """WITH last_outbound AS (
-  SELECT
-    sm.product_id,
-    sm.warehouse_id,
-    MAX(sm.movement_date) AS last_movement_date
-  FROM inventory.stock_movements sm
-  WHERE sm.movement_type IN ('issue', 'transfer')
-    AND sm.quantity < 0
-  GROUP BY sm.product_id, sm.warehouse_id
-),
-stock_analysis AS (
-  SELECT
-    p.product_code,
-    p.product_name,
-    p.category AS product_category,
-    w.warehouse_name AS warehouse,
-    sl.quantity AS quantity_on_hand,
-    COALESCE(sl.unit_cost, p.unit_cost, 0) AS unit_cost,
-    (sl.quantity * COALESCE(sl.unit_cost, p.unit_cost, 0))::NUMERIC(12,2) AS holding_cost,
-    lo.last_movement_date::DATE AS last_outbound_date,
-    COALESCE(CURRENT_DATE - lo.last_movement_date::DATE, 9999) AS days_since_last_movement,
-    CASE
-      WHEN lo.last_movement_date IS NULL THEN 'Dead (Never Sold)'
-      WHEN CURRENT_DATE - lo.last_movement_date::DATE > 180 THEN 'Dead (180+ Days)'
-      WHEN CURRENT_DATE - lo.last_movement_date::DATE > 90 THEN 'Very Slow (90-180 Days)'
-      WHEN CURRENT_DATE - lo.last_movement_date::DATE > 60 THEN 'Slow (60-90 Days)'
-      ELSE 'Active'
-    END AS movement_category,
-    sl.org_id
-  FROM inventory.stock_levels sl
-  JOIN inventory.products p ON p.id = sl.product_id
-  JOIN inventory.warehouses w ON w.id = sl.warehouse_id
-  LEFT JOIN last_outbound lo ON lo.product_id = sl.product_id AND lo.warehouse_id = sl.warehouse_id
-  WHERE sl.quantity > 0
-)
-SELECT *
-FROM stock_analysis
-WHERE movement_category != 'Active'
-  AND ('{{ warehouse }}' = '' OR warehouse = '{{ warehouse }}')
+    q1_sql = """SELECT
+  product_code,
+  product_name,
+  category AS product_category,
+  warehouse_name AS warehouse,
+  quantity_on_hand,
+  COALESCE(stock_value_at_cost / NULLIF(quantity_on_hand, 0), 0) AS unit_cost,
+  stock_value_at_cost AS holding_cost,
+  last_outbound_date,
+  days_since_outbound AS days_since_last_movement,
+  slow_moving_bucket AS movement_category
+FROM reporting.v_slow_moving_stock
+WHERE ('{{ warehouse }}' = '' OR warehouse_name = '{{ warehouse }}')
 ORDER BY
-  CASE movement_category
-    WHEN 'Dead (Never Sold)' THEN 1
-    WHEN 'Dead (180+ Days)' THEN 2
-    WHEN 'Very Slow (90-180 Days)' THEN 3
-    WHEN 'Slow (60-90 Days)' THEN 4
+  CASE slow_moving_bucket
+    WHEN 'Dead Stock (No Outbound)' THEN 1
+    WHEN '365+ Days' THEN 2
+    WHEN '181-365 Days' THEN 3
+    WHEN '91-180 Days' THEN 4
+    WHEN '61-90 Days' THEN 5
   END,
-  holding_cost DESC"""
+  stock_value_at_cost DESC"""
 
     q1 = api_call("POST", "/api/queries", {
         "name": "Slow-Moving and Dead Stock - Detail",
@@ -112,41 +87,29 @@ ORDER BY
     # -------------------------------------------------------------------------
     # Query 2: Summary KPIs
     # -------------------------------------------------------------------------
-    q2_sql = """WITH last_outbound AS (
+    q2_sql = """WITH all_stock AS (
   SELECT
-    sm.product_id,
-    sm.warehouse_id,
-    MAX(sm.movement_date) AS last_movement_date
-  FROM inventory.stock_movements sm
-  WHERE sm.movement_type IN ('issue', 'transfer')
-    AND sm.quantity < 0
-  GROUP BY sm.product_id, sm.warehouse_id
+    SUM(stock_value_at_cost) AS total_inventory_value,
+    COUNT(*) AS total_items
+  FROM reporting.v_inventory_levels
+  WHERE quantity_on_hand > 0
 ),
-stock_analysis AS (
+slow_stock AS (
   SELECT
-    sl.quantity AS quantity_on_hand,
-    (sl.quantity * COALESCE(sl.unit_cost, p.unit_cost, 0))::NUMERIC(12,2) AS holding_cost,
-    CASE
-      WHEN lo.last_movement_date IS NULL THEN 'Dead'
-      WHEN CURRENT_DATE - lo.last_movement_date::DATE > 180 THEN 'Dead'
-      WHEN CURRENT_DATE - lo.last_movement_date::DATE > 90 THEN 'Very Slow'
-      WHEN CURRENT_DATE - lo.last_movement_date::DATE > 60 THEN 'Slow'
-      ELSE 'Active'
-    END AS movement_category
-  FROM inventory.stock_levels sl
-  JOIN inventory.products p ON p.id = sl.product_id
-  LEFT JOIN last_outbound lo ON lo.product_id = sl.product_id AND lo.warehouse_id = sl.warehouse_id
-  WHERE sl.quantity > 0
+    SUM(stock_value_at_cost) AS slow_dead_value,
+    SUM(CASE WHEN days_since_outbound > 180 OR last_outbound_date IS NULL THEN stock_value_at_cost ELSE 0 END) AS dead_stock_value,
+    COUNT(*) AS slow_dead_items
+  FROM reporting.v_slow_moving_stock
 )
 SELECT
-  SUM(CASE WHEN movement_category IN ('Dead', 'Very Slow', 'Slow') THEN holding_cost ELSE 0 END) AS slow_dead_value,
-  SUM(CASE WHEN movement_category = 'Dead' THEN holding_cost ELSE 0 END) AS dead_stock_value,
-  SUM(holding_cost) AS total_inventory_value,
-  ROUND(100.0 * SUM(CASE WHEN movement_category IN ('Dead', 'Very Slow', 'Slow') THEN holding_cost ELSE 0 END)
-    / NULLIF(SUM(holding_cost), 0), 1) AS pct_slow_dead,
-  COUNT(CASE WHEN movement_category IN ('Dead', 'Very Slow', 'Slow') THEN 1 END) AS slow_dead_items,
-  COUNT(*) AS total_items
-FROM stock_analysis"""
+  ss.slow_dead_value,
+  ss.dead_stock_value,
+  ast.total_inventory_value,
+  ROUND(100.0 * ss.slow_dead_value / NULLIF(ast.total_inventory_value, 0), 1) AS pct_slow_dead,
+  ss.slow_dead_items,
+  ast.total_items
+FROM slow_stock ss
+CROSS JOIN all_stock ast"""
 
     q2 = api_call("POST", "/api/queries", {
         "name": "Slow-Moving and Dead Stock - KPIs",
@@ -162,48 +125,21 @@ FROM stock_analysis"""
     # -------------------------------------------------------------------------
     # Query 3: Dead stock value by category and warehouse (for bar chart)
     # -------------------------------------------------------------------------
-    q3_sql = """WITH last_outbound AS (
-  SELECT
-    sm.product_id,
-    sm.warehouse_id,
-    MAX(sm.movement_date) AS last_movement_date
-  FROM inventory.stock_movements sm
-  WHERE sm.movement_type IN ('issue', 'transfer')
-    AND sm.quantity < 0
-  GROUP BY sm.product_id, sm.warehouse_id
-)
-SELECT
-  w.warehouse_name AS warehouse,
-  CASE
-    WHEN lo.last_movement_date IS NULL THEN 'Dead (Never Sold)'
-    WHEN CURRENT_DATE - lo.last_movement_date::DATE > 180 THEN 'Dead (180+ Days)'
-    WHEN CURRENT_DATE - lo.last_movement_date::DATE > 90 THEN 'Very Slow (90-180 Days)'
-    WHEN CURRENT_DATE - lo.last_movement_date::DATE > 60 THEN 'Slow (60-90 Days)'
-    ELSE 'Active'
-  END AS movement_category,
+    q3_sql = """SELECT
+  warehouse_name AS warehouse,
+  slow_moving_bucket AS movement_category,
   COUNT(*) AS item_count,
-  SUM(sl.quantity * COALESCE(sl.unit_cost, p.unit_cost, 0))::NUMERIC(12,2) AS total_value
-FROM inventory.stock_levels sl
-JOIN inventory.products p ON p.id = sl.product_id
-JOIN inventory.warehouses w ON w.id = sl.warehouse_id
-LEFT JOIN last_outbound lo ON lo.product_id = sl.product_id AND lo.warehouse_id = sl.warehouse_id
-WHERE sl.quantity > 0
-  AND (lo.last_movement_date IS NULL OR CURRENT_DATE - lo.last_movement_date::DATE > 60)
-  AND ('{{ warehouse }}' = '' OR w.warehouse_name = '{{ warehouse }}')
-GROUP BY w.warehouse_name,
-  CASE
-    WHEN lo.last_movement_date IS NULL THEN 'Dead (Never Sold)'
-    WHEN CURRENT_DATE - lo.last_movement_date::DATE > 180 THEN 'Dead (180+ Days)'
-    WHEN CURRENT_DATE - lo.last_movement_date::DATE > 90 THEN 'Very Slow (90-180 Days)'
-    WHEN CURRENT_DATE - lo.last_movement_date::DATE > 60 THEN 'Slow (60-90 Days)'
-    ELSE 'Active'
-  END
-ORDER BY warehouse,
-  CASE movement_category
-    WHEN 'Dead (Never Sold)' THEN 1
-    WHEN 'Dead (180+ Days)' THEN 2
-    WHEN 'Very Slow (90-180 Days)' THEN 3
-    WHEN 'Slow (60-90 Days)' THEN 4
+  SUM(stock_value_at_cost) AS total_value
+FROM reporting.v_slow_moving_stock
+WHERE ('{{ warehouse }}' = '' OR warehouse_name = '{{ warehouse }}')
+GROUP BY warehouse_name, slow_moving_bucket
+ORDER BY warehouse_name,
+  CASE slow_moving_bucket
+    WHEN 'Dead Stock (No Outbound)' THEN 1
+    WHEN '365+ Days' THEN 2
+    WHEN '181-365 Days' THEN 3
+    WHEN '91-180 Days' THEN 4
+    WHEN '61-90 Days' THEN 5
   END"""
 
     q3 = api_call("POST", "/api/queries", {
@@ -304,10 +240,11 @@ ORDER BY warehouse,
                 "movement_category": "series",
             },
             "seriesOptions": {
-                "Slow (60-90 Days)": {"type": "column", "yAxis": 0, "color": "#eab308"},
-                "Very Slow (90-180 Days)": {"type": "column", "yAxis": 0, "color": "#f97316"},
-                "Dead (180+ Days)": {"type": "column", "yAxis": 0, "color": "#dc2626"},
-                "Dead (Never Sold)": {"type": "column", "yAxis": 0, "color": "#7f1d1d"},
+                "61-90 Days": {"type": "column", "yAxis": 0, "color": "#eab308"},
+                "91-180 Days": {"type": "column", "yAxis": 0, "color": "#f97316"},
+                "181-365 Days": {"type": "column", "yAxis": 0, "color": "#dc2626"},
+                "365+ Days": {"type": "column", "yAxis": 0, "color": "#991b1b"},
+                "Dead Stock (No Outbound)": {"type": "column", "yAxis": 0, "color": "#7f1d1d"},
             },
             "series": {"stacking": "stack"},
             "sortX": True,

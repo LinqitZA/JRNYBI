@@ -47,22 +47,24 @@ def main():
     # Query 1: Aging by Warehouse (for stacked bar chart)
     # -------------------------------------------------------------------------
     q1_sql = """SELECT
-  warehouse,
+  warehouse_name,
   aging_bucket,
   COUNT(*) AS item_count,
   SUM(quantity_on_hand) AS total_quantity,
-  SUM(total_value) AS total_value
+  SUM(stock_value) AS stock_value
 FROM reporting.v_inventory_aging
-WHERE ('{{ warehouse }}' = '' OR warehouse = '{{ warehouse }}')
-GROUP BY warehouse, aging_bucket
-ORDER BY warehouse,
+WHERE ('{{ warehouse }}' = '' OR warehouse_name = '{{ warehouse }}')
+GROUP BY warehouse_name, aging_bucket
+ORDER BY warehouse_name,
   CASE aging_bucket
+    WHEN 'No Receipt' THEN 0
     WHEN '0-30 Days' THEN 1
     WHEN '31-60 Days' THEN 2
     WHEN '61-90 Days' THEN 3
     WHEN '91-180 Days' THEN 4
-    WHEN '180+ Days' THEN 5
-    ELSE 6
+    WHEN '181-365 Days' THEN 5
+    WHEN '365+ Days' THEN 6
+    ELSE 7
   END"""
 
     q1 = api_call("POST", "/api/queries", {
@@ -86,17 +88,16 @@ ORDER BY warehouse,
     q2_sql = """SELECT
   product_code,
   product_name,
-  warehouse,
+  warehouse_name,
   quantity_on_hand,
-  unit_cost,
-  total_value,
-  last_received_date,
-  days_in_stock,
-  aging_bucket,
-  months_of_supply
+  latest_unit_cost,
+  stock_value,
+  last_receipt_date,
+  days_since_receipt,
+  aging_bucket
 FROM reporting.v_inventory_aging
-WHERE ('{{ warehouse }}' = '' OR warehouse = '{{ warehouse }}')
-ORDER BY days_in_stock DESC, total_value DESC"""
+WHERE ('{{ warehouse }}' = '' OR warehouse_name = '{{ warehouse }}')
+ORDER BY days_since_receipt DESC, stock_value DESC"""
 
     q2 = api_call("POST", "/api/queries", {
         "name": "Inventory Aging per Warehouse - Detail",
@@ -116,16 +117,23 @@ ORDER BY days_in_stock DESC, total_value DESC"""
     # -------------------------------------------------------------------------
     # Query 3: KPI — Total value of stock older than 90 days
     # -------------------------------------------------------------------------
-    q3_sql = """SELECT
-  SUM(total_value) AS value_over_90_days,
-  COUNT(*) AS items_over_90_days,
-  SUM(CASE WHEN aging_bucket = '180+ Days' THEN total_value ELSE 0 END) AS value_over_180_days,
-  SUM(total_value) AS total_inventory_value,
-  ROUND(100.0 * SUM(CASE WHEN days_in_stock > 90 THEN total_value ELSE 0 END)
-    / NULLIF(SUM(total_value), 0), 1) AS pct_over_90_days
-FROM reporting.v_inventory_aging
-WHERE days_in_stock > 90
-  AND ('{{ warehouse }}' = '' OR warehouse = '{{ warehouse }}')"""
+    q3_sql = """WITH all_inventory AS (
+  SELECT
+    stock_value,
+    days_since_receipt,
+    aging_bucket,
+    warehouse_name
+  FROM reporting.v_inventory_aging
+  WHERE ('{{ warehouse }}' = '' OR warehouse_name = '{{ warehouse }}')
+)
+SELECT
+  SUM(CASE WHEN days_since_receipt > 90 THEN stock_value ELSE 0 END) AS value_over_90_days,
+  COUNT(CASE WHEN days_since_receipt > 90 THEN 1 END) AS items_over_90_days,
+  SUM(CASE WHEN aging_bucket IN ('181-365 Days', '365+ Days') THEN stock_value ELSE 0 END) AS value_over_180_days,
+  SUM(stock_value) AS total_inventory_value,
+  ROUND(100.0 * SUM(CASE WHEN days_since_receipt > 90 THEN stock_value ELSE 0 END)
+    / NULLIF(SUM(stock_value), 0), 1) AS pct_over_90_days
+FROM all_inventory"""
 
     q3 = api_call("POST", "/api/queries", {
         "name": "Inventory Aging per Warehouse - KPI",
@@ -152,16 +160,18 @@ WHERE days_in_stock > 90
         "options": {
             "globalSeriesType": "column",
             "columnMapping": {
-                "warehouse": "x",
-                "total_value": "y",
+                "warehouse_name": "x",
+                "stock_value": "y",
                 "aging_bucket": "series",
             },
             "seriesOptions": {
+                "No Receipt": {"type": "column", "yAxis": 0, "color": "#94a3b8"},
                 "0-30 Days": {"type": "column", "yAxis": 0, "color": "#16a34a"},
                 "31-60 Days": {"type": "column", "yAxis": 0, "color": "#84cc16"},
                 "61-90 Days": {"type": "column", "yAxis": 0, "color": "#eab308"},
                 "91-180 Days": {"type": "column", "yAxis": 0, "color": "#f97316"},
-                "180+ Days": {"type": "column", "yAxis": 0, "color": "#dc2626"},
+                "181-365 Days": {"type": "column", "yAxis": 0, "color": "#dc2626"},
+                "365+ Days": {"type": "column", "yAxis": 0, "color": "#7f1d1d"},
             },
             "series": {"stacking": "stack"},
             "sortX": True,
@@ -184,11 +194,11 @@ WHERE days_in_stock > 90
         "options": {
             "itemsPerPage": 25,
             "columns": [
-                {"name": "warehouse", "title": "Warehouse", "visible": True},
+                {"name": "warehouse_name", "title": "Warehouse", "visible": True},
                 {"name": "aging_bucket", "title": "Aging Bucket", "visible": True},
                 {"name": "item_count", "title": "Items", "visible": True, "alignContent": "right"},
                 {"name": "total_quantity", "title": "Qty on Hand", "visible": True, "displayAs": "number", "numberFormat": "0,0", "alignContent": "right"},
-                {"name": "total_value", "title": "Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                {"name": "stock_value", "title": "Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
             ],
         },
     })
@@ -207,14 +217,13 @@ WHERE days_in_stock > 90
             "columns": [
                 {"name": "product_code", "title": "Code", "visible": True},
                 {"name": "product_name", "title": "Product", "visible": True},
-                {"name": "warehouse", "title": "Warehouse", "visible": True},
+                {"name": "warehouse_name", "title": "Warehouse", "visible": True},
                 {"name": "quantity_on_hand", "title": "Qty", "visible": True, "displayAs": "number", "numberFormat": "0,0", "alignContent": "right"},
-                {"name": "unit_cost", "title": "Unit Cost", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
-                {"name": "total_value", "title": "Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
-                {"name": "last_received_date", "title": "Last Received", "visible": True},
-                {"name": "days_in_stock", "title": "Days in Stock", "visible": True, "alignContent": "right"},
+                {"name": "latest_unit_cost", "title": "Unit Cost", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                {"name": "stock_value", "title": "Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                {"name": "last_receipt_date", "title": "Last Received", "visible": True},
+                {"name": "days_since_receipt", "title": "Days in Stock", "visible": True, "alignContent": "right"},
                 {"name": "aging_bucket", "title": "Aging Bucket", "visible": True},
-                {"name": "months_of_supply", "title": "Months Supply", "visible": True, "displayAs": "number", "numberFormat": "0.0", "alignContent": "right"},
             ],
         },
     })
