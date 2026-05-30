@@ -45,34 +45,28 @@ def main():
     account_code,
     account_name,
     account_type,
-    account_category,
+    account_group,
     SUM(net_amount) AS current_amount
-  FROM reporting.v_pnl
-  WHERE month BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  GROUP BY account_code, account_name, account_type, account_category
+  FROM reporting.v_general_ledger
+  WHERE entry_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    AND account_type IN ('revenue', 'expense')
+  GROUP BY account_code, account_name, account_type, account_group
 ),
 prior_period AS (
   SELECT
     account_code,
     SUM(net_amount) AS prior_amount
-  FROM reporting.v_pnl
-  WHERE month BETWEEN
+  FROM reporting.v_general_ledger
+  WHERE entry_date BETWEEN
     ('{{ start_date }}'::DATE - ('{{ end_date }}'::DATE - '{{ start_date }}'::DATE + 1))
     AND ('{{ start_date }}'::DATE - INTERVAL '1 day')
+    AND account_type IN ('revenue', 'expense')
   GROUP BY account_code
 ),
 pnl_detail AS (
   SELECT
     cp.account_type,
-    CASE cp.account_category
-      WHEN 'sales'             THEN 'Revenue - Sales'
-      WHEN 'services'          THEN 'Revenue - Services'
-      WHEN 'other_income'      THEN 'Revenue - Other Income'
-      WHEN 'cost_of_sales'     THEN 'Cost of Goods Sold'
-      WHEN 'operating_expense' THEN 'Operating Expenses'
-      WHEN 'other_expense'     THEN 'Other Expenses'
-      ELSE INITCAP(REPLACE(cp.account_category, '_', ' '))
-    END AS account_group,
+    COALESCE(cp.account_group, INITCAP(cp.account_type)) AS account_group,
     cp.account_code,
     '    ' || cp.account_name AS account_name,
     cp.current_amount,
@@ -96,14 +90,7 @@ SELECT
 FROM pnl_detail
 ORDER BY
   CASE account_type WHEN 'revenue' THEN 1 WHEN 'expense' THEN 2 END,
-  CASE account_group
-    WHEN 'Revenue - Sales'       THEN 1
-    WHEN 'Revenue - Services'    THEN 2
-    WHEN 'Revenue - Other Income' THEN 3
-    WHEN 'Cost of Goods Sold'    THEN 4
-    WHEN 'Operating Expenses'    THEN 5
-    WHEN 'Other Expenses'        THEN 6
-  END,
+  account_group,
   account_code"""
 
     q1 = api_call("POST", "/api/queries", {
@@ -126,25 +113,22 @@ ORDER BY
     # Query 2: P&L Monthly Trend / Summary
     # ========================================================================
     q2_sql = """SELECT
-  month,
+  DATE_TRUNC('month', entry_date)::DATE AS month,
   SUM(CASE WHEN account_type = 'revenue' THEN net_amount ELSE 0 END) AS total_revenue,
-  SUM(CASE WHEN account_category = 'cost_of_sales' THEN net_amount ELSE 0 END) AS cost_of_sales,
+  SUM(CASE WHEN account_type = 'expense' AND account_group ILIKE '%cost%sale%' THEN net_amount ELSE 0 END) AS cost_of_sales,
   SUM(CASE WHEN account_type = 'revenue' THEN net_amount ELSE 0 END)
-    - SUM(CASE WHEN account_category = 'cost_of_sales' THEN net_amount ELSE 0 END) AS gross_profit,
-  SUM(CASE WHEN account_category = 'operating_expense' THEN net_amount ELSE 0 END) AS operating_expenses,
-  SUM(CASE WHEN account_type = 'revenue' THEN net_amount ELSE 0 END)
-    - SUM(CASE WHEN account_category = 'cost_of_sales' THEN net_amount ELSE 0 END)
-    - SUM(CASE WHEN account_category = 'operating_expense' THEN net_amount ELSE 0 END) AS operating_income,
-  SUM(CASE WHEN account_category = 'other_expense' THEN net_amount ELSE 0 END) AS other_expenses,
+    - SUM(CASE WHEN account_type = 'expense' AND account_group ILIKE '%cost%sale%' THEN net_amount ELSE 0 END) AS gross_profit,
+  SUM(CASE WHEN account_type = 'expense' AND account_group NOT ILIKE '%cost%sale%' THEN net_amount ELSE 0 END) AS operating_expenses,
   SUM(CASE WHEN account_type = 'revenue' THEN net_amount ELSE 0 END)
     - SUM(CASE WHEN account_type = 'expense' THEN net_amount ELSE 0 END) AS net_income,
   ROUND(100.0 * (
     SUM(CASE WHEN account_type = 'revenue' THEN net_amount ELSE 0 END)
     - SUM(CASE WHEN account_type = 'expense' THEN net_amount ELSE 0 END)
   ) / NULLIF(SUM(CASE WHEN account_type = 'revenue' THEN net_amount ELSE 0 END), 0), 1) AS net_margin_pct
-FROM reporting.v_pnl
-WHERE month BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-GROUP BY month
+FROM reporting.v_general_ledger
+WHERE entry_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND account_type IN ('revenue', 'expense')
+GROUP BY DATE_TRUNC('month', entry_date)
 ORDER BY month"""
 
     q2 = api_call("POST", "/api/queries", {
@@ -168,12 +152,12 @@ ORDER BY month"""
     # ========================================================================
     q3_sql = """SELECT
   SUM(CASE WHEN account_type = 'revenue' THEN net_amount ELSE 0 END) AS total_revenue,
-  SUM(CASE WHEN account_category = 'cost_of_sales' THEN net_amount ELSE 0 END) AS total_cogs,
+  SUM(CASE WHEN account_type = 'expense' AND account_group ILIKE '%cost%sale%' THEN net_amount ELSE 0 END) AS total_cogs,
   SUM(CASE WHEN account_type = 'revenue' THEN net_amount ELSE 0 END)
-    - SUM(CASE WHEN account_category = 'cost_of_sales' THEN net_amount ELSE 0 END) AS gross_profit,
+    - SUM(CASE WHEN account_type = 'expense' AND account_group ILIKE '%cost%sale%' THEN net_amount ELSE 0 END) AS gross_profit,
   ROUND(100.0 * (
     SUM(CASE WHEN account_type = 'revenue' THEN net_amount ELSE 0 END)
-    - SUM(CASE WHEN account_category = 'cost_of_sales' THEN net_amount ELSE 0 END)
+    - SUM(CASE WHEN account_type = 'expense' AND account_group ILIKE '%cost%sale%' THEN net_amount ELSE 0 END)
   ) / NULLIF(SUM(CASE WHEN account_type = 'revenue' THEN net_amount ELSE 0 END), 0), 1) AS gross_margin_pct,
   SUM(CASE WHEN account_type = 'revenue' THEN net_amount ELSE 0 END)
     - SUM(CASE WHEN account_type = 'expense' THEN net_amount ELSE 0 END) AS net_income,
@@ -181,8 +165,9 @@ ORDER BY month"""
     SUM(CASE WHEN account_type = 'revenue' THEN net_amount ELSE 0 END)
     - SUM(CASE WHEN account_type = 'expense' THEN net_amount ELSE 0 END)
   ) / NULLIF(SUM(CASE WHEN account_type = 'revenue' THEN net_amount ELSE 0 END), 0), 1) AS net_margin_pct
-FROM reporting.v_pnl
-WHERE month BETWEEN '{{ start_date }}' AND '{{ end_date }}'"""
+FROM reporting.v_general_ledger
+WHERE entry_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND account_type IN ('revenue', 'expense')"""
 
     q3 = api_call("POST", "/api/queries", {
         "name": "Profit & Loss Statement - KPIs",

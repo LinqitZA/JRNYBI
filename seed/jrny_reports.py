@@ -204,12 +204,12 @@ ORDER BY total_revenue DESC;
         "description": "Invoice aging analysis with aging buckets (current, 30, 60, 90+ days).",
         "query": """
 SELECT
-    c.customer_name,
+    inv.customer_name,
     inv.invoice_number,
     inv.invoice_date,
     inv.due_date,
-    inv.total_amount,
-    inv.balance_due,
+    inv.invoice_total,
+    inv.invoice_balance,
     CASE
         WHEN CURRENT_DATE - inv.due_date <= 0 THEN 'Current'
         WHEN CURRENT_DATE - inv.due_date BETWEEN 1 AND 30 THEN '1-30 Days'
@@ -218,8 +218,7 @@ SELECT
         ELSE '90+ Days'
     END AS aging_bucket
 FROM reporting.v_invoices inv
-JOIN reporting.v_customers c ON c.id = inv.customer_id
-WHERE inv.status = 'outstanding'
+WHERE inv.invoice_status = 'outstanding'
 ORDER BY inv.due_date ASC;
 """.strip(),
         "options": {"parameters": []},
@@ -231,9 +230,9 @@ ORDER BY inv.due_date ASC;
         "query": """
 SELECT
     DATE_TRUNC('month', transaction_date)::date AS month,
-    SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) AS inflows,
-    SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) AS outflows,
-    SUM(amount) AS net_cash_flow
+    SUM(COALESCE(debit, 0)) AS inflows,
+    SUM(COALESCE(credit, 0)) AS outflows,
+    SUM(COALESCE(debit, 0)) - SUM(COALESCE(credit, 0)) AS net_cash_flow
 FROM reporting.v_cashbook_transactions
 WHERE transaction_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
 GROUP BY DATE_TRUNC('month', transaction_date)
@@ -250,11 +249,11 @@ SELECT
     gl.account_code,
     gl.account_name,
     gl.account_type,
-    SUM(CASE WHEN gl.amount >= 0 THEN gl.amount ELSE 0 END) AS debit,
-    SUM(CASE WHEN gl.amount < 0 THEN ABS(gl.amount) ELSE 0 END) AS credit,
-    SUM(gl.amount) AS balance
+    SUM(gl.debit) AS debit,
+    SUM(gl.credit) AS credit,
+    SUM(gl.net_amount) AS balance
 FROM reporting.v_general_ledger gl
-WHERE gl.posting_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+WHERE gl.entry_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
 GROUP BY gl.account_code, gl.account_name, gl.account_type
 ORDER BY gl.account_code;
 """.strip(),
@@ -1318,11 +1317,11 @@ WITH opening AS (
         COALESCE(SUM(gl.debit - gl.credit), 0) AS opening_balance
     FROM reporting.v_general_ledger gl
     WHERE gl.account_code = '{{ account_code }}'
-      AND gl.posting_date < '{{ start_date }}'
+      AND gl.entry_date < '{{ start_date }}'
 ),
 activity AS (
     SELECT
-        gl.posting_date,
+        gl.entry_date,
         gl.account_code,
         gl.account_name,
         gl.account_type,
@@ -1331,10 +1330,10 @@ activity AS (
         gl.net_amount
     FROM reporting.v_general_ledger gl
     WHERE gl.account_code = '{{ account_code }}'
-      AND gl.posting_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+      AND gl.entry_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
 )
 SELECT
-    a.posting_date,
+    a.entry_date,
     a.account_code,
     a.account_name,
     a.account_type,
@@ -1342,10 +1341,10 @@ SELECT
     a.credit,
     a.net_amount,
     (SELECT opening_balance FROM opening)
-        + SUM(a.net_amount) OVER (ORDER BY a.posting_date, a.debit DESC ROWS UNBOUNDED PRECEDING)
+        + SUM(a.net_amount) OVER (ORDER BY a.entry_date, a.debit DESC ROWS UNBOUNDED PRECEDING)
         AS running_balance
 FROM activity a
-ORDER BY a.posting_date, a.debit DESC;
+ORDER BY a.entry_date, a.debit DESC;
 """.strip(),
         "options": {
             "parameters": [
@@ -1395,7 +1394,7 @@ LEFT JOIN LATERAL (
     SELECT SUM(debit - credit) AS opening_balance
     FROM reporting.v_general_ledger
     WHERE account_code = '{{ account_code }}'
-      AND posting_date < '{{ start_date }}'
+      AND entry_date < '{{ start_date }}'
 ) ob ON TRUE
 LEFT JOIN LATERAL (
     SELECT
@@ -1405,7 +1404,7 @@ LEFT JOIN LATERAL (
         COUNT(*) AS transaction_count
     FROM reporting.v_general_ledger
     WHERE account_code = '{{ account_code }}'
-      AND posting_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+      AND entry_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
 ) act ON TRUE;
 """.strip(),
         "options": {
@@ -1438,19 +1437,19 @@ LEFT JOIN LATERAL (
         "description": "Vendor-level aging showing amounts owed, payment terms, overdue amounts, and upcoming payments. Critical for cash flow planning and vendor relationship management.",
         "query": """
 SELECT
-    ap.supplier_name,
-    ap.bill_number,
-    ap.bill_date,
+    ap.vendor_name,
+    ap.invoice_number,
+    ap.invoice_date,
     ap.due_date,
-    ap.total_amount,
+    ap.total,
     ap.amount_paid,
-    ap.balance_due,
-    ap.status,
+    ap.balance,
+    ap.invoice_status,
     ap.aging_bucket,
     ap.days_overdue
 FROM reporting.v_ap_aging ap
 WHERE ap.due_date <= '{{ as_at_date }}'
-   OR ap.status = 'open'
+   OR ap.invoice_status = 'open'
 ORDER BY ap.days_overdue DESC, ap.balance_due DESC;
 """.strip(),
         "options": {
@@ -1471,9 +1470,9 @@ ORDER BY ap.days_overdue DESC, ap.balance_due DESC;
         "description": "Credit notes aggregated by period and reason, with credit note rate as percentage of gross revenue.",
         "query": """
 SELECT
-    cn.credit_note_month                             AS month,
+    DATE_TRUNC('month', cn.credit_note_date)::DATE    AS month,
     cn.reason,
-    COUNT(DISTINCT cn.id)                            AS credit_note_count,
+    COUNT(DISTINCT cn.credit_note_id)                AS credit_note_count,
     SUM(cn.line_total)                               AS credit_note_value,
     COALESCE(rev.gross_revenue, 0)                   AS gross_revenue,
     CASE
@@ -1481,18 +1480,18 @@ SELECT
         THEN ROUND(100.0 * SUM(cn.line_total) / rev.gross_revenue, 2)
         ELSE 0
     END                                              AS cn_rate_pct
-FROM reporting.v_credit_note_summary cn
+FROM reporting.v_credit_notes cn
 LEFT JOIN (
     SELECT
         DATE_TRUNC('month', order_date)::DATE AS month,
-        SUM(total_amount)                     AS gross_revenue
+        SUM(line_total)                       AS gross_revenue
     FROM reporting.v_sales_orders
     WHERE order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
     GROUP BY DATE_TRUNC('month', order_date)
-) rev ON rev.month = cn.credit_note_month
+) rev ON rev.month = DATE_TRUNC('month', cn.credit_note_date)::DATE
 WHERE cn.credit_note_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-GROUP BY cn.credit_note_month, cn.reason, rev.gross_revenue
-ORDER BY cn.credit_note_month, cn.reason;
+GROUP BY DATE_TRUNC('month', cn.credit_note_date)::DATE, cn.reason, rev.gross_revenue
+ORDER BY month, cn.reason;
 """.strip(),
         "options": {"parameters": DATE_PARAMS},
         "tags": ["finance", "jrny-report"],
@@ -1506,14 +1505,13 @@ SELECT
     cn.credit_note_number,
     cn.credit_note_date,
     cn.reason,
-    cn.product_category,
-    cn.product_name,
+    cn.line_description,
     cn.quantity,
     cn.unit_price,
     cn.line_total,
-    cn.original_invoice_number,
-    cn.status
-FROM reporting.v_credit_note_summary cn
+    cn.invoice_number,
+    cn.credit_note_status
+FROM reporting.v_credit_notes cn
 WHERE cn.credit_note_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
 ORDER BY cn.credit_note_date DESC, cn.customer_name;
 """.strip(),
@@ -1527,23 +1525,23 @@ ORDER BY cn.credit_note_date DESC, cn.customer_name;
         "query": """
 SELECT
     CASE
-        WHEN ptc.days_to_pay <= 7 THEN '0-7 days'
-        WHEN ptc.days_to_pay <= 14 THEN '8-14 days'
-        WHEN ptc.days_to_pay <= 21 THEN '15-21 days'
-        WHEN ptc.days_to_pay <= 30 THEN '22-30 days'
-        WHEN ptc.days_to_pay <= 45 THEN '31-45 days'
-        WHEN ptc.days_to_pay <= 60 THEN '46-60 days'
-        WHEN ptc.days_to_pay <= 90 THEN '61-90 days'
+        WHEN ptc.days_late <= 7 THEN '0-7 days'
+        WHEN ptc.days_late <= 14 THEN '8-14 days'
+        WHEN ptc.days_late <= 21 THEN '15-21 days'
+        WHEN ptc.days_late <= 30 THEN '22-30 days'
+        WHEN ptc.days_late <= 45 THEN '31-45 days'
+        WHEN ptc.days_late <= 60 THEN '46-60 days'
+        WHEN ptc.days_late <= 90 THEN '61-90 days'
         ELSE '90+ days'
     END                                        AS days_to_pay_bucket,
-    ptc.payment_status,
+    ptc.compliance_status,
     COUNT(*)                                   AS invoice_count,
-    SUM(ptc.total_amount)                      AS total_value,
-    ROUND(AVG(ptc.days_to_pay), 1)             AS avg_days_to_pay
-FROM reporting.v_payment_terms_compliance ptc
+    SUM(ptc.total)                             AS total_value,
+    ROUND(AVG(ptc.days_late), 1)               AS avg_days_to_pay
+FROM reporting.v_payment_compliance ptc
 WHERE ptc.invoice_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ptc.payment_status != 'Unpaid'
-GROUP BY 1, ptc.payment_status
+  AND ptc.compliance_status != 'Unpaid'
+GROUP BY 1, ptc.compliance_status
 ORDER BY
     CASE
         WHEN days_to_pay_bucket = '0-7 days' THEN 1
@@ -1566,19 +1564,19 @@ ORDER BY
 SELECT
     ptc.customer_name,
     COUNT(DISTINCT ptc.invoice_id)                                           AS total_invoices,
-    COUNT(DISTINCT CASE WHEN ptc.payment_status = 'On Time' THEN ptc.invoice_id END)  AS on_time_count,
-    COUNT(DISTINCT CASE WHEN ptc.payment_status = 'Late' THEN ptc.invoice_id END)     AS late_count,
-    COUNT(DISTINCT CASE WHEN ptc.payment_status = 'Unpaid' THEN ptc.invoice_id END)   AS unpaid_count,
+    COUNT(DISTINCT CASE WHEN ptc.compliance_status = 'On Time' THEN ptc.invoice_id END)  AS on_time_count,
+    COUNT(DISTINCT CASE WHEN ptc.compliance_status = 'Late' THEN ptc.invoice_id END)     AS late_count,
+    COUNT(DISTINCT CASE WHEN ptc.compliance_status = 'Unpaid' THEN ptc.invoice_id END)   AS unpaid_count,
     ROUND(
-        100.0 * COUNT(DISTINCT CASE WHEN ptc.payment_status = 'On Time' THEN ptc.invoice_id END)
-        / NULLIF(COUNT(DISTINCT CASE WHEN ptc.payment_status != 'Unpaid' THEN ptc.invoice_id END), 0),
+        100.0 * COUNT(DISTINCT CASE WHEN ptc.compliance_status = 'On Time' THEN ptc.invoice_id END)
+        / NULLIF(COUNT(DISTINCT CASE WHEN ptc.compliance_status != 'Unpaid' THEN ptc.invoice_id END), 0),
         1
     )                                                                        AS on_time_pct,
-    ROUND(AVG(ptc.days_to_pay), 1)                                           AS avg_days_to_pay,
-    ROUND(AVG(ptc.days_late), 1)                                             AS avg_days_late,
-    SUM(ptc.total_amount)                                                    AS total_invoiced,
-    SUM(ptc.balance_due)                                                     AS total_outstanding
-FROM reporting.v_payment_terms_compliance ptc
+    ROUND(AVG(ptc.days_late), 1)                                             AS avg_days_to_pay,
+    ROUND(AVG(GREATEST(ptc.days_late, 0)), 1)                                AS avg_days_late,
+    SUM(ptc.total)                                                           AS total_invoiced,
+    SUM(ptc.balance)                                                         AS total_outstanding
+FROM reporting.v_payment_compliance ptc
 WHERE ptc.invoice_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
 GROUP BY ptc.customer_name
 ORDER BY on_time_pct ASC NULLS LAST, avg_days_to_pay DESC NULLS LAST;
@@ -1591,21 +1589,35 @@ ORDER BY on_time_pct ASC NULLS LAST, avg_days_to_pay DESC NULLS LAST;
         "name": "Revenue by Dimension",
         "description": "Revenue from GL entries sliced by dimension type (cost centre, department, project, territory) with contribution percentage.",
         "query": """
+WITH dim_entries AS (
+    SELECT
+        gl.line_id,
+        gl.net_amount,
+        UNNEST(ARRAY['Entity', 'Function', 'Project']) AS dimension_type,
+        UNNEST(ARRAY[
+            gl.dim_entity_id::TEXT,
+            gl.dim_function_id::TEXT,
+            gl.dim_project_id::TEXT
+        ]) AS dimension_code
+    FROM reporting.v_general_ledger gl
+    WHERE gl.entry_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+      AND gl.account_type = 'revenue'
+)
 SELECT
-    rd.dimension_type,
-    rd.dimension_name,
-    rd.dimension_code,
-    SUM(rd.revenue_amount)                                               AS revenue,
+    de.dimension_type,
+    de.dimension_code,
+    de.dimension_code                                                    AS dimension_name,
+    SUM(de.net_amount)                                                   AS revenue,
     ROUND(
-        100.0 * SUM(rd.revenue_amount)
-        / NULLIF(SUM(SUM(rd.revenue_amount)) OVER (), 0),
+        100.0 * SUM(de.net_amount)
+        / NULLIF(SUM(SUM(de.net_amount)) OVER (), 0),
         2
     )                                                                    AS pct_of_total,
-    COUNT(DISTINCT rd.gl_entry_id)                                       AS entry_count
-FROM reporting.v_revenue_by_dimension rd
-WHERE rd.posting_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ dimension_type }}' = '' OR rd.dimension_type = '{{ dimension_type }}')
-GROUP BY rd.dimension_type, rd.dimension_name, rd.dimension_code
+    COUNT(DISTINCT de.line_id)                                           AS entry_count
+FROM dim_entries de
+WHERE de.dimension_code IS NOT NULL
+  AND ('{{ dimension_type }}' = '' OR de.dimension_type = '{{ dimension_type }}')
+GROUP BY de.dimension_type, de.dimension_code
 ORDER BY revenue DESC;
 """.strip(),
         "options": {
@@ -1624,15 +1636,29 @@ ORDER BY revenue DESC;
         "name": "Revenue by Dimension - Trend",
         "description": "Monthly revenue trend broken down by dimension member for time-series analysis.",
         "query": """
+WITH dim_entries AS (
+    SELECT
+        DATE_TRUNC('month', gl.entry_date)::DATE AS month,
+        gl.net_amount,
+        UNNEST(ARRAY['Entity', 'Function', 'Project']) AS dimension_type,
+        UNNEST(ARRAY[
+            gl.dim_entity_id::TEXT,
+            gl.dim_function_id::TEXT,
+            gl.dim_project_id::TEXT
+        ]) AS dimension_code
+    FROM reporting.v_general_ledger gl
+    WHERE gl.entry_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+      AND gl.account_type = 'revenue'
+)
 SELECT
-    rd.posting_month                                       AS month,
-    rd.dimension_name,
-    SUM(rd.revenue_amount)                                 AS revenue
-FROM reporting.v_revenue_by_dimension rd
-WHERE rd.posting_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ dimension_type }}' = '' OR rd.dimension_type = '{{ dimension_type }}')
-GROUP BY rd.posting_month, rd.dimension_name
-ORDER BY rd.posting_month, rd.dimension_name;
+    de.month,
+    de.dimension_code                                      AS dimension_name,
+    SUM(de.net_amount)                                     AS revenue
+FROM dim_entries de
+WHERE de.dimension_code IS NOT NULL
+  AND ('{{ dimension_type }}' = '' OR de.dimension_type = '{{ dimension_type }}')
+GROUP BY de.month, de.dimension_code
+ORDER BY de.month, de.dimension_code;
 """.strip(),
         "options": {
             "parameters": DATE_PARAMS + [
@@ -1652,29 +1678,29 @@ ORDER BY rd.posting_month, rd.dimension_name;
         "description": "Period-by-period comparison of budgeted amounts vs actual GL postings with variance calculation. Supports cost control and financial planning.",
         "query": """
 SELECT
-    bv.account_code,
-    bv.account_name,
+    bv.gl_account_code,
+    bv.gl_account_name,
     bv.account_type,
-    bv.account_category,
-    bv.fiscal_year,
-    bv.fiscal_month,
+    bv.account_group,
+    bv.fiscal_year_label,
+    bv.period_number,
     bv.budget_amount,
-    bv.actual_amount,
+    bv.actual_net_oc,
     bv.variance_amount,
-    bv.variance_pct,
-    bv.budget_status
+    bv.variance_percentage,
+    CASE WHEN bv.variance_amount >= 0 THEN 'Under Budget' ELSE 'Over Budget' END AS budget_status
 FROM reporting.v_budget_variance bv
-WHERE bv.fiscal_year = {{ fiscal_year }}
-  AND ('{{ department }}' = '' OR bv.account_category = '{{ department }}')
-  AND ({{ fiscal_period }} = 0 OR bv.fiscal_month = {{ fiscal_period }})
-ORDER BY bv.account_type, bv.account_code, bv.fiscal_month;
+WHERE bv.fiscal_year_label = '{{ fiscal_year }}'
+  AND ('{{ department }}' = '' OR bv.account_group = '{{ department }}')
+  AND ({{ fiscal_period }} = 0 OR bv.period_number = {{ fiscal_period }})
+ORDER BY bv.account_type, bv.gl_account_code, bv.period_number;
 """.strip(),
         "options": {
             "parameters": [
                 {
                     "name": "fiscal_year",
                     "title": "Fiscal Year",
-                    "type": "number",
+                    "type": "text",
                     "value": "2024",
                 },
                 {
@@ -1699,30 +1725,30 @@ ORDER BY bv.account_type, bv.account_code, bv.fiscal_month;
         "query": """
 SELECT
     bv.account_type,
-    bv.account_category,
+    bv.account_group,
     SUM(bv.budget_amount) AS total_budget,
-    SUM(bv.actual_amount) AS total_actual,
+    SUM(bv.actual_net_oc) AS total_actual,
     SUM(bv.variance_amount) AS total_variance,
     CASE
         WHEN SUM(bv.budget_amount) <> 0
-            THEN ROUND(((SUM(bv.actual_amount) - SUM(bv.budget_amount)) / ABS(SUM(bv.budget_amount))) * 100, 2)
+            THEN ROUND(((SUM(bv.actual_net_oc) - SUM(bv.budget_amount)) / ABS(SUM(bv.budget_amount))) * 100, 2)
         ELSE 0
     END AS variance_pct,
-    COUNT(*) FILTER (WHERE bv.budget_status = 'Over Budget') AS over_budget_count,
-    COUNT(*) FILTER (WHERE bv.budget_status = 'Under Budget') AS under_budget_count,
-    COUNT(*) FILTER (WHERE ABS(bv.variance_pct) > 10) AS significant_variances
+    COUNT(*) FILTER (WHERE bv.variance_amount < 0) AS over_budget_count,
+    COUNT(*) FILTER (WHERE bv.variance_amount >= 0) AS under_budget_count,
+    COUNT(*) FILTER (WHERE ABS(bv.variance_percentage) > 10) AS significant_variances
 FROM reporting.v_budget_variance bv
-WHERE bv.fiscal_year = {{ fiscal_year }}
-  AND ({{ fiscal_period }} = 0 OR bv.fiscal_month = {{ fiscal_period }})
-GROUP BY bv.account_type, bv.account_category
-ORDER BY bv.account_type, bv.account_category;
+WHERE bv.fiscal_year_label = '{{ fiscal_year }}'
+  AND ({{ fiscal_period }} = 0 OR bv.period_number = {{ fiscal_period }})
+GROUP BY bv.account_type, bv.account_group
+ORDER BY bv.account_type, bv.account_group;
 """.strip(),
         "options": {
             "parameters": [
                 {
                     "name": "fiscal_year",
                     "title": "Fiscal Year",
-                    "type": "number",
+                    "type": "text",
                     "value": "2024",
                 },
                 {
@@ -1742,13 +1768,13 @@ ORDER BY bv.account_type, bv.account_category;
 SELECT
     ap.aging_bucket,
     COUNT(*) AS bill_count,
-    SUM(ap.balance_due) AS total_balance_due,
-    SUM(ap.total_amount) AS total_invoiced,
+    SUM(ap.balance) AS total_balance_due,
+    SUM(ap.total) AS total_invoiced,
     SUM(ap.amount_paid) AS total_paid,
     ROUND(AVG(ap.days_overdue), 0) AS avg_days_overdue
 FROM reporting.v_ap_aging ap
 WHERE ap.due_date <= '{{ as_at_date }}'
-   OR ap.status = 'open'
+   OR ap.invoice_status = 'open'
 GROUP BY ap.aging_bucket
 ORDER BY
     CASE ap.aging_bucket
@@ -1776,21 +1802,43 @@ ORDER BY
         "name": "Tax/VAT Summary",
         "description": "VAT collected vs paid by tax code and period. Supports VAT return filing preparation with output tax, input tax, and net liability calculation.",
         "query": """
+WITH vat_data AS (
+    SELECT
+        DATE_TRUNC('month', inv.invoice_date)::DATE AS tax_period,
+        inv.tax_code,
+        inv.line_vat_rate AS tax_rate,
+        'output' AS vat_type,
+        inv.line_total AS taxable_amount,
+        inv.line_vat_amount AS vat_amount
+    FROM reporting.v_invoices inv
+    WHERE inv.invoice_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+      AND inv.line_vat_amount IS NOT NULL
+    UNION ALL
+    SELECT
+        DATE_TRUNC('month', po.order_date)::DATE AS tax_period,
+        po.tax_code,
+        po.line_vat_rate AS tax_rate,
+        'input' AS vat_type,
+        po.line_total AS taxable_amount,
+        po.line_vat_amount AS vat_amount
+    FROM reporting.v_purchase_orders po
+    WHERE po.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+      AND po.line_vat_amount IS NOT NULL
+)
 SELECT
-    vs.tax_period                                         AS period,
-    vs.tax_code,
-    vs.tax_rate,
-    SUM(CASE WHEN vs.vat_type = 'output' THEN vs.taxable_amount ELSE 0 END) AS output_taxable,
-    SUM(CASE WHEN vs.vat_type = 'output' THEN vs.vat_amount ELSE 0 END)     AS output_vat,
-    SUM(CASE WHEN vs.vat_type = 'input' THEN vs.taxable_amount ELSE 0 END)  AS input_taxable,
-    SUM(CASE WHEN vs.vat_type = 'input' THEN vs.vat_amount ELSE 0 END)      AS input_vat,
-    SUM(CASE WHEN vs.vat_type = 'output' THEN vs.vat_amount ELSE 0 END)
-      - SUM(CASE WHEN vs.vat_type = 'input' THEN vs.vat_amount ELSE 0 END)  AS net_vat_payable,
-    SUM(vs.line_count)                                                       AS total_lines
-FROM reporting.v_vat_summary vs
-WHERE vs.tax_period BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-GROUP BY vs.tax_period, vs.tax_code, vs.tax_rate
-ORDER BY vs.tax_period, vs.tax_code;
+    vd.tax_period                                                            AS period,
+    vd.tax_code,
+    vd.tax_rate,
+    SUM(CASE WHEN vd.vat_type = 'output' THEN vd.taxable_amount ELSE 0 END) AS output_taxable,
+    SUM(CASE WHEN vd.vat_type = 'output' THEN vd.vat_amount ELSE 0 END)     AS output_vat,
+    SUM(CASE WHEN vd.vat_type = 'input' THEN vd.taxable_amount ELSE 0 END)  AS input_taxable,
+    SUM(CASE WHEN vd.vat_type = 'input' THEN vd.vat_amount ELSE 0 END)      AS input_vat,
+    SUM(CASE WHEN vd.vat_type = 'output' THEN vd.vat_amount ELSE 0 END)
+      - SUM(CASE WHEN vd.vat_type = 'input' THEN vd.vat_amount ELSE 0 END)  AS net_vat_payable,
+    COUNT(*)                                                                 AS total_lines
+FROM vat_data vd
+GROUP BY vd.tax_period, vd.tax_code, vd.tax_rate
+ORDER BY vd.tax_period, vd.tax_code;
 """.strip(),
         "options": {"parameters": DATE_PARAMS},
         "tags": ["finance", "jrny-report"],
@@ -1799,16 +1847,32 @@ ORDER BY vs.tax_period, vs.tax_code;
         "name": "Tax/VAT Summary - Monthly Liability Trend",
         "description": "Monthly VAT liability trend showing output VAT, input VAT, and net payable over time.",
         "query": """
+WITH vat_data AS (
+    SELECT
+        DATE_TRUNC('month', inv.invoice_date)::DATE AS month,
+        'output' AS vat_type,
+        inv.line_vat_amount AS vat_amount
+    FROM reporting.v_invoices inv
+    WHERE inv.invoice_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+      AND inv.line_vat_amount IS NOT NULL
+    UNION ALL
+    SELECT
+        DATE_TRUNC('month', po.order_date)::DATE AS month,
+        'input' AS vat_type,
+        po.line_vat_amount AS vat_amount
+    FROM reporting.v_purchase_orders po
+    WHERE po.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+      AND po.line_vat_amount IS NOT NULL
+)
 SELECT
-    vs.tax_period                                         AS month,
-    SUM(CASE WHEN vs.vat_type = 'output' THEN vs.vat_amount ELSE 0 END) AS output_vat,
-    SUM(CASE WHEN vs.vat_type = 'input' THEN vs.vat_amount ELSE 0 END)  AS input_vat,
-    SUM(CASE WHEN vs.vat_type = 'output' THEN vs.vat_amount ELSE 0 END)
-      - SUM(CASE WHEN vs.vat_type = 'input' THEN vs.vat_amount ELSE 0 END)  AS net_vat_payable
-FROM reporting.v_vat_summary vs
-WHERE vs.tax_period BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-GROUP BY vs.tax_period
-ORDER BY vs.tax_period;
+    vd.month,
+    SUM(CASE WHEN vd.vat_type = 'output' THEN vd.vat_amount ELSE 0 END) AS output_vat,
+    SUM(CASE WHEN vd.vat_type = 'input' THEN vd.vat_amount ELSE 0 END)  AS input_vat,
+    SUM(CASE WHEN vd.vat_type = 'output' THEN vd.vat_amount ELSE 0 END)
+      - SUM(CASE WHEN vd.vat_type = 'input' THEN vd.vat_amount ELSE 0 END)  AS net_vat_payable
+FROM vat_data vd
+GROUP BY vd.month
+ORDER BY vd.month;
 """.strip(),
         "options": {"parameters": DATE_PARAMS},
         "tags": ["finance", "jrny-report"],
@@ -1821,18 +1885,16 @@ ORDER BY vs.tax_period;
 SELECT
     account_name,
     bank_name,
-    current_balance,
-    total_lines,
-    matched_count,
-    unmatched_count,
-    pct_reconciled,
-    matched_value,
-    unmatched_value,
-    oldest_unmatched_date,
-    oldest_unmatched_days,
-    last_reconciliation_date,
-    last_reconciliation_status
+    COUNT(*) AS total_lines,
+    COUNT(*) FILTER (WHERE match_status = 'Matched') AS matched_count,
+    COUNT(*) FILTER (WHERE match_status != 'Matched') AS unmatched_count,
+    ROUND(100.0 * COUNT(*) FILTER (WHERE match_status = 'Matched') / NULLIF(COUNT(*), 0), 1) AS pct_reconciled,
+    SUM(COALESCE(debit, 0) + COALESCE(credit, 0)) FILTER (WHERE match_status = 'Matched') AS matched_value,
+    SUM(COALESCE(debit, 0) + COALESCE(credit, 0)) FILTER (WHERE match_status != 'Matched') AS unmatched_value,
+    MIN(transaction_date) FILTER (WHERE match_status != 'Matched') AS oldest_unmatched_date,
+    CURRENT_DATE - MIN(transaction_date) FILTER (WHERE match_status != 'Matched') AS oldest_unmatched_days
 FROM reporting.v_bank_reconciliation_status
+GROUP BY bank_account_id, account_name, bank_name
 ORDER BY unmatched_count DESC, account_name;
 """.strip(),
         "options": {"parameters": []},
@@ -1843,40 +1905,31 @@ ORDER BY unmatched_count DESC, account_name;
         "description": "Detail of unmatched statement lines sorted by age, for reconciliation follow-up.",
         "query": """
 SELECT
-    bank_account,
-    statement_date,
+    account_name AS bank_account,
+    transaction_date,
     description,
-    amount,
+    COALESCE(debit, 0) - COALESCE(credit, 0) AS amount,
     reference,
-    days_outstanding,
+    days_unmatched,
     aging_bucket,
-    direction
-FROM reporting.v_unmatched_statement_lines
-ORDER BY days_outstanding DESC, bank_account;
+    CASE WHEN debit > 0 THEN 'Debit' ELSE 'Credit' END AS direction
+FROM reporting.v_unmatched_transactions
+ORDER BY days_unmatched DESC, account_name;
 """.strip(),
         "options": {"parameters": []},
         "tags": ["cashbook", "jrny-report"],
     },
     "cash_position_summary": {
         "name": "Cash Position Summary",
-        "description": "Current cash position across all bank accounts with projected inflows and outflows over 30/60/90 days.",
+        "description": "Current cash position across all active bank accounts showing opening and current balances.",
         "query": """
 SELECT
     account_name,
     bank_name,
-    current_balance,
-    projected_inflows,
-    projected_outflows,
-    projected_balance,
-    inflows_30d,
-    outflows_30d,
-    balance_30d,
-    inflows_60d,
-    outflows_60d,
-    balance_60d,
-    inflows_90d,
-    outflows_90d,
-    balance_90d
+    account_type,
+    currency,
+    opening_balance,
+    current_balance
 FROM reporting.v_cash_position
 ORDER BY current_balance DESC;
 """.strip(),
@@ -1884,40 +1937,16 @@ ORDER BY current_balance DESC;
         "tags": ["cashbook", "jrny-report"],
     },
     "cash_position_projection": {
-        "name": "Cash Position - 30/60/90 Day Projection",
-        "description": "Projected cash balance over next 30, 60, and 90 days for treasury planning.",
+        "name": "Cash Position - Current Totals",
+        "description": "Total cash position across all active bank accounts. v_cash_position provides current snapshot only (no projection data available).",
         "query": """
 SELECT
-    period,
-    SUM(balance) AS projected_balance,
-    SUM(inflows) AS total_inflows,
-    SUM(outflows) AS total_outflows
-FROM (
-    SELECT 'Now' AS period, 0 AS sort_order,
-           SUM(current_balance) AS balance,
-           0 AS inflows, 0 AS outflows
-    FROM reporting.v_cash_position
-    UNION ALL
-    SELECT '30 Days' AS period, 1 AS sort_order,
-           SUM(balance_30d) AS balance,
-           SUM(inflows_30d) AS inflows,
-           SUM(outflows_30d) AS outflows
-    FROM reporting.v_cash_position
-    UNION ALL
-    SELECT '60 Days' AS period, 2 AS sort_order,
-           SUM(balance_60d) AS balance,
-           SUM(inflows_60d) AS inflows,
-           SUM(outflows_60d) AS outflows
-    FROM reporting.v_cash_position
-    UNION ALL
-    SELECT '90 Days' AS period, 3 AS sort_order,
-           SUM(balance_90d) AS balance,
-           SUM(inflows_90d) AS inflows,
-           SUM(outflows_90d) AS outflows
-    FROM reporting.v_cash_position
-) sub
-GROUP BY period, sort_order
-ORDER BY sort_order;
+    'Current' AS period,
+    SUM(current_balance) AS total_balance,
+    SUM(opening_balance) AS total_opening_balance,
+    SUM(current_balance) - SUM(opening_balance) AS net_change,
+    COUNT(*) AS account_count
+FROM reporting.v_cash_position;
 """.strip(),
         "options": {"parameters": []},
         "tags": ["cashbook", "jrny-report"],
@@ -1927,18 +1956,18 @@ ORDER BY sort_order;
         "description": "Bank statement lines not yet matched to any source document, sorted by oldest first.",
         "query": """
 SELECT
-    bank_account,
+    account_name AS bank_account,
     bank_name,
-    statement_date,
+    transaction_date,
     description,
-    amount,
+    COALESCE(debit, 0) - COALESCE(credit, 0) AS amount,
     reference,
-    days_outstanding,
+    days_unmatched,
     aging_bucket,
-    direction
-FROM reporting.v_unmatched_statement_lines
-WHERE ('{{ bank_account }}' = '' OR bank_account = '{{ bank_account }}')
-ORDER BY days_outstanding DESC;
+    CASE WHEN debit > 0 THEN 'Debit' ELSE 'Credit' END AS direction
+FROM reporting.v_unmatched_transactions
+WHERE ('{{ bank_account }}' = '' OR account_name = '{{ bank_account }}')
+ORDER BY days_unmatched DESC;
 """.strip(),
         "options": {"parameters": [
             {
@@ -1955,15 +1984,15 @@ ORDER BY days_outstanding DESC;
         "description": "Summary of unmatched transaction value grouped by bank account.",
         "query": """
 SELECT
-    bank_account,
+    account_name AS bank_account,
     COUNT(*) AS unmatched_count,
-    SUM(ABS(amount)) AS total_unmatched_value,
-    SUM(CASE WHEN amount >= 0 THEN amount ELSE 0 END) AS unmatched_credits,
-    SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) AS unmatched_debits,
-    MIN(statement_date) AS oldest_item_date,
-    CURRENT_DATE - MIN(statement_date) AS oldest_item_age
-FROM reporting.v_unmatched_statement_lines
-GROUP BY bank_account
+    SUM(COALESCE(debit, 0) + COALESCE(credit, 0)) AS total_unmatched_value,
+    SUM(COALESCE(credit, 0)) AS unmatched_credits,
+    SUM(COALESCE(debit, 0)) AS unmatched_debits,
+    MIN(transaction_date) AS oldest_item_date,
+    CURRENT_DATE - MIN(transaction_date) AS oldest_item_age
+FROM reporting.v_unmatched_transactions
+GROUP BY account_name
 ORDER BY total_unmatched_value DESC;
 """.strip(),
         "options": {"parameters": []},
@@ -1972,99 +2001,60 @@ ORDER BY total_unmatched_value DESC;
     # ---- CRM / Sales ----
     "customer_master_summary": {
         "name": "Customer Master Summary",
-        "description": "Active customers by group with credit limit utilization, payment behavior, and account health. CRM overview for account management and credit control teams.",
+        "description": "Active customers with credit limit utilization, payment behavior, and account health using v_customers and v_payment_compliance views.",
         "query": """
-WITH customer_outstanding AS (
-    SELECT
-        inv.customer_id,
-        SUM(inv.balance_due) AS total_outstanding,
-        COUNT(*) FILTER (WHERE inv.status = 'overdue') AS overdue_invoice_count,
-        MAX(CASE WHEN inv.status = 'overdue' THEN CURRENT_DATE - inv.due_date ELSE 0 END) AS max_days_overdue
-    FROM finance.invoices inv
-    WHERE inv.balance_due > 0
-    GROUP BY inv.customer_id
-),
-customer_payments AS (
-    SELECT
-        cp.customer_id,
-        COUNT(*) AS payment_count,
-        MAX(cp.payment_date) AS last_payment_date
-    FROM finance.customer_payments cp
-    GROUP BY cp.customer_id
-),
-payment_behavior AS (
-    SELECT
-        inv.customer_id,
-        AVG(CASE WHEN inv.status = 'paid' THEN
-            GREATEST(0, (SELECT MIN(cp2.payment_date) FROM finance.customer_payments cp2
-                WHERE cp2.customer_id = inv.customer_id AND cp2.payment_date >= inv.invoice_date)
-                - inv.due_date)
-            ELSE NULL END
-        ) AS avg_days_to_pay
-    FROM finance.invoices inv
-    WHERE inv.status IN ('paid', 'overdue')
-    GROUP BY inv.customer_id
-),
-customer_orders AS (
-    SELECT
-        so.customer_id,
-        COUNT(*) AS order_count,
-        SUM(so.total_amount) AS total_order_value,
-        MAX(so.order_date) AS last_order_date
-    FROM sales.sales_orders so
-    GROUP BY so.customer_id
-)
 SELECT
-    c.first_name || ' ' || c.last_name AS customer_name,
-    COALESCE(bg.group_name, 'Ungrouped') AS customer_group,
-    COALESCE(c.credit_limit, 0) AS credit_limit,
-    COALESCE(co.total_outstanding, 0) AS total_outstanding,
+    cust.customer_name,
+    COALESCE(cust.customer_type, 'Ungrouped') AS customer_group,
+    COALESCE(cust.credit_limit, 0) AS credit_limit,
+    COALESCE(cust.outstanding_balance, 0) AS total_outstanding,
     CASE
-        WHEN COALESCE(c.credit_limit, 0) > 0
-        THEN ROUND(100.0 * COALESCE(co.total_outstanding, 0) / c.credit_limit, 1)
+        WHEN COALESCE(cust.credit_limit, 0) > 0
+        THEN ROUND(100.0 * COALESCE(cust.outstanding_balance, 0) / cust.credit_limit, 1)
         ELSE 0
     END AS credit_utilization_pct,
-    COALESCE(cp.payment_count, 0) AS payment_count,
-    ROUND(COALESCE(pb.avg_days_to_pay, 0), 0) AS avg_days_to_pay,
-    cp.last_payment_date,
-    COALESCE(cor.order_count, 0) AS order_count,
-    COALESCE(cor.total_order_value, 0) AS total_order_value,
-    cor.last_order_date,
+    COALESCE(pc_agg.payment_count, 0) AS payment_count,
+    ROUND(COALESCE(pc_agg.avg_days_late, 0), 0) AS avg_days_to_pay,
+    pc_agg.last_payment_date,
+    COALESCE(cust.total_orders, 0) AS order_count,
+    COALESCE(cust.total_order_value, 0) AS total_order_value,
+    cust.last_order_date,
     CASE
-        WHEN COALESCE(co.max_days_overdue, 0) > 60
-             OR (c.credit_limit > 0 AND COALESCE(co.total_outstanding, 0) > c.credit_limit)
+        WHEN COALESCE(cust.outstanding_balance, 0) > COALESCE(NULLIF(cust.credit_limit, 0), cust.outstanding_balance + 1)
+             OR COALESCE(pc_agg.max_days_late, 0) > 60
             THEN 'Risk'
-        WHEN COALESCE(co.max_days_overdue, 0) > 30
-             OR (c.credit_limit > 0 AND COALESCE(co.total_outstanding, 0) > c.credit_limit * 0.8)
-             OR COALESCE(pb.avg_days_to_pay, 0) > 45
+        WHEN (cust.credit_limit > 0 AND cust.outstanding_balance > cust.credit_limit * 0.8)
+             OR COALESCE(pc_agg.avg_days_late, 0) > 45
+             OR COALESCE(pc_agg.max_days_late, 0) > 30
             THEN 'Watch'
         ELSE 'Good'
     END AS account_health
-FROM core.contacts c
-LEFT JOIN crm.customer_buying_groups cbg ON cbg.customer_id = c.id
-LEFT JOIN crm.buying_groups bg ON bg.id = cbg.buying_group_id
-LEFT JOIN customer_outstanding co ON co.customer_id = c.id
-LEFT JOIN customer_payments cp ON cp.customer_id = c.id
-LEFT JOIN payment_behavior pb ON pb.customer_id = c.id
-LEFT JOIN customer_orders cor ON cor.customer_id = c.id
-WHERE EXISTS (
-    SELECT 1 FROM sales.sales_orders so2 WHERE so2.customer_id = c.id
-    UNION ALL
-    SELECT 1 FROM finance.invoices inv2 WHERE inv2.customer_id = c.id
-)
-AND ('{{ customer_group }}' = '' OR COALESCE(bg.group_name, 'Ungrouped') = '{{ customer_group }}')
-AND ('{{ health_status }}' = '' OR
+FROM reporting.v_customers cust
+LEFT JOIN (
+    SELECT
+        customer_id,
+        SUM(total_payments) AS payment_count,
+        AVG(days_late) FILTER (WHERE days_late IS NOT NULL) AS avg_days_late,
+        MAX(days_late) AS max_days_late,
+        MAX(last_payment_date) AS last_payment_date
+    FROM reporting.v_payment_compliance
+    GROUP BY customer_id
+) pc_agg ON pc_agg.customer_id = cust.customer_id
+WHERE cust.is_active = true
+  AND (COALESCE(cust.total_orders, 0) > 0 OR COALESCE(cust.total_invoices, 0) > 0)
+  AND ('{{ customer_group }}' = '' OR COALESCE(cust.customer_type, 'Ungrouped') = '{{ customer_group }}')
+  AND ('{{ health_status }}' = '' OR
     CASE
-        WHEN COALESCE(co.max_days_overdue, 0) > 60
-             OR (c.credit_limit > 0 AND COALESCE(co.total_outstanding, 0) > c.credit_limit)
+        WHEN COALESCE(cust.outstanding_balance, 0) > COALESCE(NULLIF(cust.credit_limit, 0), cust.outstanding_balance + 1)
+             OR COALESCE(pc_agg.max_days_late, 0) > 60
             THEN 'Risk'
-        WHEN COALESCE(co.max_days_overdue, 0) > 30
-             OR (c.credit_limit > 0 AND COALESCE(co.total_outstanding, 0) > c.credit_limit * 0.8)
-             OR COALESCE(pb.avg_days_to_pay, 0) > 45
+        WHEN (cust.credit_limit > 0 AND cust.outstanding_balance > cust.credit_limit * 0.8)
+             OR COALESCE(pc_agg.avg_days_late, 0) > 45
+             OR COALESCE(pc_agg.max_days_late, 0) > 30
             THEN 'Watch'
         ELSE 'Good'
     END = '{{ health_status }}'
-)
+  )
 ORDER BY total_outstanding DESC NULLS LAST;
 """.strip(),
         "options": {
@@ -2088,7 +2078,7 @@ ORDER BY total_outstanding DESC NULLS LAST;
     # ---- Sales Pipeline / Opportunity Funnel ----
     "pipeline_funnel": {
         "name": "Sales Pipeline - Funnel by Stage",
-        "description": "Opportunity funnel showing count and total value per pipeline stage, ordered from prospecting to negotiation (excludes closed).",
+        "description": "Opportunity funnel showing count and total value per pipeline stage, ordered from prospecting to negotiation (excludes closed). Note: requires CRM module (crm.opportunities table).",
         "query": """
 SELECT
     stage,
@@ -2140,7 +2130,7 @@ END;
     },
     "pipeline_detail": {
         "name": "Sales Pipeline - Opportunity Detail",
-        "description": "Full detail of all open opportunities with stage, amount, close date, and assigned rep.",
+        "description": "Full detail of all open opportunities with stage, amount, close date, and assigned rep. Note: requires CRM module (crm.opportunities table).",
         "query": """
 SELECT
     o.opportunity_name,
@@ -2193,7 +2183,7 @@ ORDER BY
     },
     "pipeline_win_loss": {
         "name": "Sales Pipeline - Win/Loss Summary",
-        "description": "Summary of closed opportunities showing win rate, total won/lost value, and average deal size.",
+        "description": "Summary of closed opportunities showing win rate, total won/lost value, and average deal size. Note: requires CRM module (crm.opportunities table).",
         "query": """
 SELECT
     stage AS outcome,
@@ -2236,7 +2226,7 @@ ORDER BY stage DESC;
     # ---- Customer Activity Log ----
     "activity_customer_summary": {
         "name": "Customer Activity Log - Account Summary",
-        "description": "Summary of customer engagement showing last activity date, activity counts by type, and dormancy status (no activity in 30+ days).",
+        "description": "Summary of customer engagement showing last activity date, activity counts by type, and dormancy status (no activity in 30+ days). Note: requires CRM module (crm.activities table).",
         "query": """
 SELECT
     c.first_name || ' ' || c.last_name AS customer_name,
@@ -2287,7 +2277,7 @@ ORDER BY days_since_last_activity DESC;
     },
     "activity_volume_by_type": {
         "name": "Customer Activity Log - Volume by Type",
-        "description": "Activity count grouped by week and type for trend visualization.",
+        "description": "Activity count grouped by week and type for trend visualization. Note: requires CRM module (crm.activities table).",
         "query": """
 SELECT
     DATE_TRUNC('week', a.activity_date)::date AS week_start,
@@ -2326,7 +2316,7 @@ ORDER BY week_start;
     },
     "activity_detail": {
         "name": "Customer Activity Log - Detail",
-        "description": "Full activity log showing all interactions with customer, type, subject, and notes.",
+        "description": "Full activity log showing all interactions with customer, type, subject, and notes. Note: requires CRM module (crm.activities table).",
         "query": """
 SELECT
     a.activity_date::date AS activity_date,
@@ -2371,51 +2361,32 @@ ORDER BY a.activity_date DESC;
     },
     "customer_master_health_summary": {
         "name": "Customer Master Summary - Health Distribution",
-        "description": "Aggregated customer count by health status for pie chart visualization.",
+        "description": "Aggregated customer count by health status using v_customers and v_payment_compliance views.",
         "query": """
-WITH customer_outstanding AS (
+WITH customer_health AS (
     SELECT
-        inv.customer_id,
-        SUM(inv.balance_due) AS total_outstanding,
-        MAX(CASE WHEN inv.status = 'overdue' THEN CURRENT_DATE - inv.due_date ELSE 0 END) AS max_days_overdue
-    FROM finance.invoices inv
-    WHERE inv.balance_due > 0
-    GROUP BY inv.customer_id
-),
-payment_behavior AS (
-    SELECT
-        inv.customer_id,
-        AVG(CASE WHEN inv.status = 'paid' THEN
-            GREATEST(0, (SELECT MIN(cp2.payment_date) FROM finance.customer_payments cp2
-                WHERE cp2.customer_id = inv.customer_id AND cp2.payment_date >= inv.invoice_date)
-                - inv.due_date)
-            ELSE NULL END
-        ) AS avg_days_to_pay
-    FROM finance.invoices inv
-    WHERE inv.status IN ('paid', 'overdue')
-    GROUP BY inv.customer_id
-),
-customer_health AS (
-    SELECT
-        c.id,
+        cust.customer_id,
         CASE
-            WHEN COALESCE(co.max_days_overdue, 0) > 60
-                 OR (c.credit_limit > 0 AND COALESCE(co.total_outstanding, 0) > c.credit_limit)
+            WHEN COALESCE(cust.outstanding_balance, 0) > COALESCE(NULLIF(cust.credit_limit, 0), cust.outstanding_balance + 1)
+                 OR COALESCE(pc_agg.max_days_late, 0) > 60
                 THEN 'Risk'
-            WHEN COALESCE(co.max_days_overdue, 0) > 30
-                 OR (c.credit_limit > 0 AND COALESCE(co.total_outstanding, 0) > c.credit_limit * 0.8)
-                 OR COALESCE(pb.avg_days_to_pay, 0) > 45
+            WHEN (cust.credit_limit > 0 AND cust.outstanding_balance > cust.credit_limit * 0.8)
+                 OR COALESCE(pc_agg.avg_days_late, 0) > 45
+                 OR COALESCE(pc_agg.max_days_late, 0) > 30
                 THEN 'Watch'
             ELSE 'Good'
         END AS account_health
-    FROM core.contacts c
-    LEFT JOIN customer_outstanding co ON co.customer_id = c.id
-    LEFT JOIN payment_behavior pb ON pb.customer_id = c.id
-    WHERE EXISTS (
-        SELECT 1 FROM sales.sales_orders so2 WHERE so2.customer_id = c.id
-        UNION ALL
-        SELECT 1 FROM finance.invoices inv2 WHERE inv2.customer_id = c.id
-    )
+    FROM reporting.v_customers cust
+    LEFT JOIN (
+        SELECT
+            customer_id,
+            AVG(days_late) FILTER (WHERE days_late IS NOT NULL) AS avg_days_late,
+            MAX(days_late) AS max_days_late
+        FROM reporting.v_payment_compliance
+        GROUP BY customer_id
+    ) pc_agg ON pc_agg.customer_id = cust.customer_id
+    WHERE cust.is_active = true
+      AND (COALESCE(cust.total_orders, 0) > 0 OR COALESCE(cust.total_invoices, 0) > 0)
 )
 SELECT
     account_health,
@@ -2525,7 +2496,7 @@ VISUALIZATIONS = {
                 "globalSeriesType": "pie",
                 "columnMapping": {
                     "aging_bucket": "x",
-                    "balance_due": "y",
+                    "invoice_balance": "y",
                 },
                 "legend": {"enabled": True},
                 "series": {"stacking": None},
@@ -2541,8 +2512,8 @@ VISUALIZATIONS = {
                     {"name": "invoice_number", "title": "Invoice #", "visible": True},
                     {"name": "invoice_date", "title": "Invoice Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
                     {"name": "due_date", "title": "Due Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
-                    {"name": "total_amount", "title": "Amount", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
-                    {"name": "balance_due", "title": "Balance Due", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "invoice_total", "title": "Amount", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "invoice_balance", "title": "Balance Due", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                     {"name": "aging_bucket", "title": "Aging", "visible": True},
                 ],
             },
@@ -3796,7 +3767,7 @@ VISUALIZATIONS = {
             "options": {
                 "itemsPerPage": 50,
                 "columns": [
-                    {"name": "posting_date", "title": "Posting Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "entry_date", "title": "Entry Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
                     {"name": "account_code", "title": "Account Code", "visible": True},
                     {"name": "account_name", "title": "Account Name", "visible": True},
                     {"name": "account_type", "title": "Type", "visible": True},
@@ -4033,14 +4004,14 @@ VISUALIZATIONS = {
             "options": {
                 "itemsPerPage": 25,
                 "columns": [
-                    {"name": "supplier_name", "title": "Supplier", "visible": True},
-                    {"name": "bill_number", "title": "Bill #", "visible": True},
-                    {"name": "bill_date", "title": "Bill Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "vendor_name", "title": "Vendor", "visible": True},
+                    {"name": "invoice_number", "title": "Invoice #", "visible": True},
+                    {"name": "invoice_date", "title": "Invoice Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
                     {"name": "due_date", "title": "Due Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
-                    {"name": "total_amount", "title": "Total Amount", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "total", "title": "Total Amount", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                     {"name": "amount_paid", "title": "Paid", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
-                    {"name": "balance_due", "title": "Balance Due", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
-                    {"name": "status", "title": "Status", "visible": True},
+                    {"name": "balance", "title": "Balance Due", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                    {"name": "invoice_status", "title": "Status", "visible": True},
                     {"name": "aging_bucket", "title": "Aging", "visible": True},
                     {"name": "days_overdue", "title": "Days Overdue", "visible": True, "alignContent": "right"},
                 ],
@@ -4158,14 +4129,12 @@ VISUALIZATIONS = {
                 "columns": [
                     {"name": "account_name", "title": "Account", "visible": True},
                     {"name": "bank_name", "title": "Bank", "visible": True},
-                    {"name": "current_balance", "title": "Balance", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                     {"name": "total_lines", "title": "Total Lines", "visible": True, "alignContent": "right"},
                     {"name": "matched_count", "title": "Matched", "visible": True, "alignContent": "right"},
                     {"name": "unmatched_count", "title": "Unmatched", "visible": True, "alignContent": "right"},
                     {"name": "pct_reconciled", "title": "% Reconciled", "visible": True, "displayAs": "number", "numberFormat": "0.0", "alignContent": "right"},
                     {"name": "unmatched_value", "title": "Unmatched Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                     {"name": "oldest_unmatched_days", "title": "Oldest (Days)", "visible": True, "alignContent": "right"},
-                    {"name": "last_reconciliation_date", "title": "Last Recon Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
                 ],
             },
         },
@@ -4200,11 +4169,11 @@ VISUALIZATIONS = {
                 "itemsPerPage": 25,
                 "columns": [
                     {"name": "bank_account", "title": "Bank Account", "visible": True},
-                    {"name": "statement_date", "title": "Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "transaction_date", "title": "Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
                     {"name": "description", "title": "Description", "visible": True},
                     {"name": "amount", "title": "Amount", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                     {"name": "reference", "title": "Reference", "visible": True},
-                    {"name": "days_outstanding", "title": "Days Outstanding", "visible": True, "alignContent": "right"},
+                    {"name": "days_unmatched", "title": "Days Outstanding", "visible": True, "alignContent": "right"},
                     {"name": "aging_bucket", "title": "Age Bucket", "visible": True},
                     {"name": "direction", "title": "Direction", "visible": True},
                 ],
@@ -4221,48 +4190,20 @@ VISUALIZATIONS = {
                 "columns": [
                     {"name": "account_name", "title": "Account", "visible": True},
                     {"name": "bank_name", "title": "Bank", "visible": True},
+                    {"name": "account_type", "title": "Type", "visible": True},
+                    {"name": "currency", "title": "Currency", "visible": True},
+                    {"name": "opening_balance", "title": "Opening Balance", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                     {"name": "current_balance", "title": "Current Balance", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
-                    {"name": "projected_inflows", "title": "AR Inflows", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
-                    {"name": "projected_outflows", "title": "AP Outflows", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
-                    {"name": "projected_balance", "title": "Projected Balance", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
-                    {"name": "balance_30d", "title": "30-Day Balance", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
-                    {"name": "balance_60d", "title": "60-Day Balance", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
-                    {"name": "balance_90d", "title": "90-Day Balance", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                 ],
             },
         },
     ],
     "cash_position_projection": [
         {
-            "name": "Cash Projection Chart",
-            "type": "CHART",
-            "options": {
-                "globalSeriesType": "area",
-                "columnMapping": {
-                    "period": "x",
-                    "projected_balance": "y",
-                    "total_inflows": "y",
-                    "total_outflows": "y",
-                },
-                "seriesOptions": {
-                    "projected_balance": {"type": "area", "yAxis": 0, "name": "Projected Balance", "color": "#2563eb"},
-                    "total_inflows": {"type": "line", "yAxis": 0, "name": "Inflows (AR)", "color": "#2ecc71"},
-                    "total_outflows": {"type": "line", "yAxis": 0, "name": "Outflows (AP)", "color": "#e74c3c"},
-                },
-                "yAxis": [
-                    {"type": "linear", "title": {"text": "Amount"}},
-                ],
-                "xAxis": {"type": "category", "labels": {"enabled": True}},
-                "series": {"stacking": None},
-                "legend": {"enabled": True},
-                "sortX": True,
-            },
-        },
-        {
-            "name": "Total Cash Now",
+            "name": "Total Cash Position",
             "type": "COUNTER",
             "options": {
-                "counterColName": "projected_balance",
+                "counterColName": "total_balance",
                 "rowNumber": 1,
                 "targetRowNumber": 1,
                 "stringDecimal": 2,
@@ -4270,22 +4211,22 @@ VISUALIZATIONS = {
                 "stringThouSep": ",",
                 "tooltipFormat": "0,0.00",
                 "defaultColumns": 2,
-                "counterLabel": "Total Cash Now",
+                "counterLabel": "Total Cash Position",
             },
         },
         {
-            "name": "Projected Balance (30 Days)",
+            "name": "Net Change from Opening",
             "type": "COUNTER",
             "options": {
-                "counterColName": "projected_balance",
-                "rowNumber": 2,
+                "counterColName": "net_change",
+                "rowNumber": 1,
                 "targetRowNumber": 1,
                 "stringDecimal": 2,
                 "stringDecChar": ".",
                 "stringThouSep": ",",
                 "tooltipFormat": "0,0.00",
                 "defaultColumns": 2,
-                "counterLabel": "Projected in 30 Days",
+                "counterLabel": "Net Change from Opening",
             },
         },
     ],
@@ -4299,11 +4240,11 @@ VISUALIZATIONS = {
                 "columns": [
                     {"name": "bank_account", "title": "Bank Account", "visible": True},
                     {"name": "bank_name", "title": "Bank", "visible": True},
-                    {"name": "statement_date", "title": "Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "transaction_date", "title": "Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
                     {"name": "description", "title": "Description", "visible": True},
                     {"name": "amount", "title": "Amount", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                     {"name": "reference", "title": "Reference", "visible": True},
-                    {"name": "days_outstanding", "title": "Days", "visible": True, "alignContent": "right"},
+                    {"name": "days_unmatched", "title": "Days", "visible": True, "alignContent": "right"},
                     {"name": "aging_bucket", "title": "Age Bucket", "visible": True},
                     {"name": "direction", "title": "Direction", "visible": True},
                 ],
@@ -4862,9 +4803,8 @@ DASHBOARDS = {
         "name": "Cash Position Summary",
         "tags": ["cashbook", "jrny-report", "report:cashbook"],
         "widgets": [
-            {"query_key": "cash_position_projection", "vis_index": 1, "width": 3},  # KPI: Total Cash Now
-            {"query_key": "cash_position_projection", "vis_index": 2, "width": 3},  # KPI: Projected 30 Days
-            {"query_key": "cash_position_projection", "vis_index": 0, "width": 6},  # Area chart projection
+            {"query_key": "cash_position_projection", "vis_index": 0, "width": 3},  # KPI: Total Cash Position
+            {"query_key": "cash_position_projection", "vis_index": 1, "width": 3},  # KPI: Net Change from Opening
             {"query_key": "cash_position_summary", "vis_index": 0, "width": 6},     # Per-account table
         ],
     },

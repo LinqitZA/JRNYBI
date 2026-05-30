@@ -43,11 +43,13 @@ def main():
     q1_sql = """WITH invoice_aging AS (
   SELECT
     i.customer_id,
+    i.customer_name,
+    i.customer_email,
     i.invoice_number,
     i.invoice_date,
     i.due_date,
-    i.total_amount,
-    i.balance_due,
+    i.invoice_total,
+    i.invoice_balance,
     ('{{ as_at_date }}'::DATE - i.due_date) AS days_overdue,
     CASE
       WHEN i.due_date >= '{{ as_at_date }}'::DATE THEN 'Current'
@@ -55,48 +57,40 @@ def main():
       WHEN ('{{ as_at_date }}'::DATE - i.due_date) BETWEEN 31 AND 60 THEN '31-60 Days'
       WHEN ('{{ as_at_date }}'::DATE - i.due_date) BETWEEN 61 AND 90 THEN '61-90 Days'
       ELSE '90+ Days'
-    END AS aging_bucket,
-    i.org_id
-  FROM finance.invoices i
-  WHERE i.balance_due > 0
-    AND i.status != 'paid'
+    END AS aging_bucket
+  FROM reporting.v_invoices i
+  WHERE i.invoice_balance > 0
+    AND i.invoice_status != 'paid'
 ),
 customer_aging AS (
   SELECT
     ia.customer_id,
-    c.first_name || ' ' || c.last_name AS customer_name,
-    c.email AS customer_email,
-    COALESCE(c.credit_limit, 0) AS credit_limit,
-    SUM(ia.balance_due) AS total_outstanding,
-    SUM(CASE WHEN ia.aging_bucket = 'Current'   THEN ia.balance_due ELSE 0 END) AS current_amount,
-    SUM(CASE WHEN ia.aging_bucket = '1-30 Days'  THEN ia.balance_due ELSE 0 END) AS days_1_30,
-    SUM(CASE WHEN ia.aging_bucket = '31-60 Days' THEN ia.balance_due ELSE 0 END) AS days_31_60,
-    SUM(CASE WHEN ia.aging_bucket = '61-90 Days' THEN ia.balance_due ELSE 0 END) AS days_61_90,
-    SUM(CASE WHEN ia.aging_bucket = '90+ Days'   THEN ia.balance_due ELSE 0 END) AS days_90_plus,
-    COUNT(*) AS open_invoices
+    ia.customer_name,
+    ia.customer_email,
+    SUM(ia.invoice_balance) AS total_outstanding,
+    SUM(CASE WHEN ia.aging_bucket = 'Current'   THEN ia.invoice_balance ELSE 0 END) AS current_amount,
+    SUM(CASE WHEN ia.aging_bucket = '1-30 Days'  THEN ia.invoice_balance ELSE 0 END) AS days_1_30,
+    SUM(CASE WHEN ia.aging_bucket = '31-60 Days' THEN ia.invoice_balance ELSE 0 END) AS days_31_60,
+    SUM(CASE WHEN ia.aging_bucket = '61-90 Days' THEN ia.invoice_balance ELSE 0 END) AS days_61_90,
+    SUM(CASE WHEN ia.aging_bucket = '90+ Days'   THEN ia.invoice_balance ELSE 0 END) AS days_90_plus,
+    COUNT(DISTINCT ia.invoice_number) AS open_invoices
   FROM invoice_aging ia
-  JOIN core.contacts c ON c.id = ia.customer_id
-  GROUP BY ia.customer_id, c.first_name, c.last_name, c.email, c.credit_limit
+  GROUP BY ia.customer_id, ia.customer_name, ia.customer_email
 ),
 last_payments AS (
   SELECT DISTINCT ON (customer_id)
     customer_id,
-    payment_date AS last_payment_date,
-    amount AS last_payment_amount
-  FROM finance.customer_payments
-  WHERE payment_date <= '{{ as_at_date }}'::DATE
-  ORDER BY customer_id, payment_date DESC
+    last_payment_date,
+    total_payment_amount AS last_payment_amount
+  FROM reporting.v_payment_compliance
+  WHERE last_payment_date IS NOT NULL
+    AND last_payment_date <= '{{ as_at_date }}'::DATE
+  ORDER BY customer_id, last_payment_date DESC
 )
 SELECT
   ca.customer_name,
   ca.customer_email,
-  ca.credit_limit,
   ca.total_outstanding,
-  CASE
-    WHEN ca.credit_limit > 0
-    THEN ROUND(100.0 * ca.total_outstanding / ca.credit_limit, 1)
-    ELSE NULL
-  END AS credit_utilization_pct,
   ca.current_amount,
   ca.days_1_30,
   ca.days_31_60,
@@ -129,8 +123,8 @@ ORDER BY ca.total_outstanding DESC"""
     # ========================================================================
     q2_sql = """SELECT
   aging_bucket,
-  SUM(balance_due) AS bucket_total,
-  COUNT(*) AS invoice_count,
+  SUM(invoice_balance) AS bucket_total,
+  COUNT(DISTINCT invoice_number) AS invoice_count,
   CASE aging_bucket
     WHEN 'Current'   THEN 1
     WHEN '1-30 Days'  THEN 2
@@ -140,7 +134,8 @@ ORDER BY ca.total_outstanding DESC"""
   END AS sort_order
 FROM (
   SELECT
-    i.balance_due,
+    i.invoice_number,
+    i.invoice_balance,
     CASE
       WHEN i.due_date >= '{{ as_at_date }}'::DATE THEN 'Current'
       WHEN ('{{ as_at_date }}'::DATE - i.due_date) BETWEEN 1 AND 30 THEN '1-30 Days'
@@ -148,9 +143,9 @@ FROM (
       WHEN ('{{ as_at_date }}'::DATE - i.due_date) BETWEEN 61 AND 90 THEN '61-90 Days'
       ELSE '90+ Days'
     END AS aging_bucket
-  FROM finance.invoices i
-  WHERE i.balance_due > 0
-    AND i.status != 'paid'
+  FROM reporting.v_invoices i
+  WHERE i.invoice_balance > 0
+    AND i.invoice_status != 'paid'
 ) sub
 GROUP BY aging_bucket
 ORDER BY sort_order"""
@@ -174,15 +169,15 @@ ORDER BY sort_order"""
     # Query 3: AR KPIs
     # ========================================================================
     q3_sql = """SELECT
-  SUM(balance_due) AS total_ar,
-  SUM(CASE WHEN due_date < '{{ as_at_date }}'::DATE THEN balance_due ELSE 0 END) AS overdue_amount,
-  ROUND(100.0 * SUM(CASE WHEN due_date < '{{ as_at_date }}'::DATE THEN balance_due ELSE 0 END)
-    / NULLIF(SUM(balance_due), 0), 1) AS pct_overdue,
-  COUNT(*) AS total_open_invoices,
+  SUM(invoice_balance) AS total_ar,
+  SUM(CASE WHEN due_date < '{{ as_at_date }}'::DATE THEN invoice_balance ELSE 0 END) AS overdue_amount,
+  ROUND(100.0 * SUM(CASE WHEN due_date < '{{ as_at_date }}'::DATE THEN invoice_balance ELSE 0 END)
+    / NULLIF(SUM(invoice_balance), 0), 1) AS pct_overdue,
+  COUNT(DISTINCT invoice_id) AS total_open_invoices,
   COUNT(DISTINCT customer_id) AS customers_with_ar
-FROM finance.invoices
-WHERE balance_due > 0
-  AND status != 'paid'"""
+FROM reporting.v_invoices
+WHERE invoice_balance > 0
+  AND invoice_status != 'paid'"""
 
     q3 = api_call("POST", "/api/queries", {
         "name": "Accounts Receivable Aging - KPIs",
@@ -213,12 +208,8 @@ WHERE balance_due > 0
             "columns": [
                 {"name": "customer_name", "title": "Customer", "visible": True},
                 {"name": "customer_email", "title": "Email", "visible": True},
-                {"name": "credit_limit", "title": "Credit Limit", "visible": True,
-                 "displayAs": "number", "numberFormat": "0,0", "alignContent": "right"},
                 {"name": "total_outstanding", "title": "Total Outstanding", "visible": True,
                  "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
-                {"name": "credit_utilization_pct", "title": "Credit Util. %", "visible": True,
-                 "displayAs": "number", "numberFormat": "0.0", "alignContent": "right"},
                 {"name": "current_amount", "title": "Current", "visible": True,
                  "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                 {"name": "days_1_30", "title": "1-30 Days", "visible": True,

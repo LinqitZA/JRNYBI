@@ -45,11 +45,12 @@ def main():
     account_code,
     account_name,
     account_type,
-    account_category,
-    SUM(balance) AS balance
-  FROM reporting.v_balance_sheet
-  WHERE as_at_month <= '{{ as_at_date }}'
-  GROUP BY account_code, account_name, account_type, account_category
+    account_group,
+    SUM(debit - credit) AS balance
+  FROM reporting.v_general_ledger
+  WHERE entry_date <= '{{ as_at_date }}'
+    AND account_type IN ('asset', 'liability', 'equity')
+  GROUP BY account_code, account_name, account_type, account_group
 ),
 categorized AS (
   SELECT
@@ -58,14 +59,7 @@ categorized AS (
       WHEN 'liability' THEN 'Liabilities'
       WHEN 'equity' THEN 'Equity'
     END AS section,
-    CASE account_category
-      WHEN 'current_asset'       THEN 'Current Assets'
-      WHEN 'non_current_asset'   THEN 'Non-Current Assets'
-      WHEN 'current_liability'   THEN 'Current Liabilities'
-      WHEN 'non_current_liability' THEN 'Non-Current Liabilities'
-      WHEN 'equity'              THEN 'Equity'
-      ELSE INITCAP(REPLACE(account_category, '_', ' '))
-    END AS account_group,
+    COALESCE(account_group, INITCAP(account_type)) AS account_group,
     account_code,
     '    ' || account_name AS account_name,
     balance,
@@ -90,13 +84,7 @@ FROM categorized c
 JOIN section_totals st ON st.section = c.section
 ORDER BY
   CASE c.account_type WHEN 'asset' THEN 1 WHEN 'liability' THEN 2 WHEN 'equity' THEN 3 END,
-  CASE c.account_category
-    WHEN 'current_asset' THEN 1
-    WHEN 'non_current_asset' THEN 2
-    WHEN 'current_liability' THEN 1
-    WHEN 'non_current_liability' THEN 2
-    WHEN 'equity' THEN 1
-  END,
+  c.account_group,
   c.account_code"""
 
     q1 = api_call("POST", "/api/queries", {
@@ -117,24 +105,30 @@ ORDER BY
     # ========================================================================
     # Query 2: Balance Sheet Summary KPIs
     # ========================================================================
-    q2_sql = """SELECT
+    q2_sql = """WITH balances AS (
+  SELECT account_type, account_group, SUM(debit - credit) AS balance
+  FROM reporting.v_general_ledger
+  WHERE entry_date <= '{{ as_at_date }}'
+    AND account_type IN ('asset', 'liability', 'equity')
+  GROUP BY account_type, account_group
+)
+SELECT
   SUM(CASE WHEN account_type = 'asset' THEN balance ELSE 0 END) AS total_assets,
   SUM(CASE WHEN account_type = 'liability' THEN balance ELSE 0 END) AS total_liabilities,
   SUM(CASE WHEN account_type = 'equity' THEN balance ELSE 0 END) AS total_equity,
   SUM(CASE WHEN account_type = 'liability' THEN balance ELSE 0 END)
     + SUM(CASE WHEN account_type = 'equity' THEN balance ELSE 0 END) AS liabilities_plus_equity,
-  SUM(CASE WHEN account_category = 'current_asset' THEN balance ELSE 0 END) AS current_assets,
-  SUM(CASE WHEN account_category = 'current_liability' THEN balance ELSE 0 END) AS current_liabilities,
+  SUM(CASE WHEN account_type = 'asset' AND account_group ILIKE '%current%' AND account_group NOT ILIKE '%non%' THEN balance ELSE 0 END) AS current_assets,
+  SUM(CASE WHEN account_type = 'liability' AND account_group ILIKE '%current%' AND account_group NOT ILIKE '%non%' THEN balance ELSE 0 END) AS current_liabilities,
   ROUND(
-    SUM(CASE WHEN account_category = 'current_asset' THEN balance ELSE 0 END)::NUMERIC
-    / NULLIF(SUM(CASE WHEN account_category = 'current_liability' THEN balance ELSE 0 END), 0), 2
+    SUM(CASE WHEN account_type = 'asset' AND account_group ILIKE '%current%' AND account_group NOT ILIKE '%non%' THEN balance ELSE 0 END)::NUMERIC
+    / NULLIF(SUM(CASE WHEN account_type = 'liability' AND account_group ILIKE '%current%' AND account_group NOT ILIKE '%non%' THEN balance ELSE 0 END), 0), 2
   ) AS current_ratio,
   ROUND(
     SUM(CASE WHEN account_type = 'liability' THEN balance ELSE 0 END)::NUMERIC
     / NULLIF(SUM(CASE WHEN account_type = 'equity' THEN balance ELSE 0 END), 0), 2
   ) AS debt_to_equity
-FROM reporting.v_balance_sheet
-WHERE as_at_month <= '{{ as_at_date }}'"""
+FROM balances"""
 
     q2 = api_call("POST", "/api/queries", {
         "name": "Balance Sheet - KPIs",
@@ -155,22 +149,16 @@ WHERE as_at_month <= '{{ as_at_date }}'"""
     # Query 3: Balance Sheet Composition (for pie charts)
     # ========================================================================
     q3_sql = """SELECT
-  CASE account_category
-    WHEN 'current_asset'       THEN 'Current Assets'
-    WHEN 'non_current_asset'   THEN 'Non-Current Assets'
-    WHEN 'current_liability'   THEN 'Current Liabilities'
-    WHEN 'non_current_liability' THEN 'Non-Current Liabilities'
-    WHEN 'equity'              THEN 'Equity'
-    ELSE INITCAP(REPLACE(account_category, '_', ' '))
-  END AS category,
+  COALESCE(account_group, INITCAP(account_type)) AS category,
   account_type,
-  SUM(balance) AS total_balance
-FROM reporting.v_balance_sheet
-WHERE as_at_month <= '{{ as_at_date }}'
-GROUP BY account_category, account_type
+  SUM(debit - credit) AS total_balance
+FROM reporting.v_general_ledger
+WHERE entry_date <= '{{ as_at_date }}'
+  AND account_type IN ('asset', 'liability', 'equity')
+GROUP BY account_group, account_type
 ORDER BY
   CASE account_type WHEN 'asset' THEN 1 WHEN 'liability' THEN 2 WHEN 'equity' THEN 3 END,
-  account_category"""
+  account_group"""
 
     q3 = api_call("POST", "/api/queries", {
         "name": "Balance Sheet - Composition",
