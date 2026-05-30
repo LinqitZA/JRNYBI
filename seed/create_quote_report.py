@@ -39,17 +39,17 @@ def main():
 
     # Query 1: Monthly Conversion Rate Trend
     q1_sql = """SELECT
-  quote_month AS month,
+  DATE_TRUNC('month', quotation_date)::date AS month,
   COUNT(*) AS total_quotes,
-  SUM(CASE WHEN converted THEN 1 ELSE 0 END) AS converted_quotes,
-  ROUND(100.0 * SUM(CASE WHEN converted THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS conversion_rate_pct,
-  ROUND(AVG(CASE WHEN converted THEN days_to_close ELSE NULL END), 1) AS avg_days_to_close,
-  SUM(quote_amount) AS total_pipeline_value,
-  SUM(CASE WHEN converted THEN order_amount ELSE 0 END) AS converted_value
-FROM reporting.v_quote_to_order_conversion
-WHERE quote_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-GROUP BY quote_month
-ORDER BY quote_month"""
+  SUM(CASE WHEN is_converted THEN 1 ELSE 0 END) AS converted_quotes,
+  ROUND(100.0 * SUM(CASE WHEN is_converted THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS conversion_rate_pct,
+  ROUND(AVG(validity_days), 1) AS avg_validity_days,
+  SUM(total) AS total_pipeline_value,
+  SUM(CASE WHEN is_converted THEN total ELSE 0 END) AS converted_value
+FROM reporting.v_quote_conversion
+WHERE quotation_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+GROUP BY DATE_TRUNC('month', quotation_date)
+ORDER BY month"""
 
     q1 = api_call("POST", "/api/queries", {
         "name": "Quote-to-Order Conversion - Monthly Trend",
@@ -69,18 +69,18 @@ ORDER BY quote_month"""
 
     # Query 2: Rep-Level Conversion Stats
     q2_sql = """SELECT
-  sales_rep,
+  sales_rep_name AS sales_rep,
   COUNT(*) AS total_quotes,
-  SUM(CASE WHEN converted THEN 1 ELSE 0 END) AS converted_quotes,
-  ROUND(100.0 * SUM(CASE WHEN converted THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS conversion_rate_pct,
-  ROUND(AVG(CASE WHEN converted THEN days_to_close ELSE NULL END), 1) AS avg_days_to_close,
-  SUM(quote_amount) AS total_pipeline_value,
-  SUM(CASE WHEN converted THEN order_amount ELSE 0 END) AS converted_value,
-  SUM(CASE WHEN quote_status = 'rejected' THEN 1 ELSE 0 END) AS rejected_quotes,
-  SUM(CASE WHEN quote_status = 'expired' THEN 1 ELSE 0 END) AS expired_quotes
-FROM reporting.v_quote_to_order_conversion
-WHERE quote_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-GROUP BY sales_rep
+  SUM(CASE WHEN is_converted THEN 1 ELSE 0 END) AS converted_quotes,
+  ROUND(100.0 * SUM(CASE WHEN is_converted THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS conversion_rate_pct,
+  ROUND(AVG(validity_days), 1) AS avg_validity_days,
+  SUM(total) AS total_pipeline_value,
+  SUM(CASE WHEN is_converted THEN total ELSE 0 END) AS converted_value,
+  SUM(CASE WHEN quotation_status = 'Rejected' THEN 1 ELSE 0 END) AS rejected_quotes,
+  SUM(CASE WHEN is_expired THEN 1 ELSE 0 END) AS expired_quotes
+FROM reporting.v_quote_conversion
+WHERE quotation_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+GROUP BY sales_rep_name
 ORDER BY conversion_rate_pct DESC"""
 
     q2 = api_call("POST", "/api/queries", {
@@ -109,16 +109,16 @@ ORDER BY conversion_rate_pct DESC"""
             "columnMapping": {
                 "month": "x",
                 "conversion_rate_pct": "y",
-                "avg_days_to_close": "y",
+                "avg_validity_days": "y",
             },
             "seriesOptions": {
                 "conversion_rate_pct": {"type": "line", "yAxis": 0, "name": "Conversion Rate (%)", "color": "#2563eb"},
-                "avg_days_to_close": {"type": "line", "yAxis": 1, "name": "Avg Days to Close", "color": "#16a34a"},
+                "avg_validity_days": {"type": "line", "yAxis": 1, "name": "Avg Validity (Days)", "color": "#16a34a"},
             },
             "xAxis": {"type": "datetime", "labels": {"enabled": True}},
             "yAxis": [
                 {"type": "linear", "title": {"text": "Conversion Rate (%)"}},
-                {"type": "linear", "title": {"text": "Days to Close"}, "opposite": True},
+                {"type": "linear", "title": {"text": "Validity (Days)"}, "opposite": True},
             ],
             "sortX": True,
             "legend": {"enabled": True},
@@ -166,7 +166,7 @@ ORDER BY conversion_rate_pct DESC"""
                 {"name": "total_quotes", "title": "Total Quotes", "visible": True, "alignContent": "right"},
                 {"name": "converted_quotes", "title": "Converted", "visible": True, "alignContent": "right"},
                 {"name": "conversion_rate_pct", "title": "Conversion %", "visible": True, "displayAs": "number", "numberFormat": "0.0", "alignContent": "right"},
-                {"name": "avg_days_to_close", "title": "Avg Days to Close", "visible": True, "displayAs": "number", "numberFormat": "0.0", "alignContent": "right"},
+                {"name": "avg_validity_days", "title": "Avg Validity (Days)", "visible": True, "displayAs": "number", "numberFormat": "0.0", "alignContent": "right"},
                 {"name": "total_pipeline_value", "title": "Pipeline Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                 {"name": "converted_value", "title": "Converted Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                 {"name": "rejected_quotes", "title": "Rejected", "visible": True, "alignContent": "right"},

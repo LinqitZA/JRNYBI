@@ -149,9 +149,9 @@ QUERIES = {
         "query": """
 SELECT
     DATE_TRUNC('month', order_date)::date AS month,
-    COUNT(*) AS order_count,
-    SUM(total_amount) AS revenue,
-    SUM(total_amount) / NULLIF(COUNT(*), 0) AS avg_order_value
+    COUNT(DISTINCT order_id) AS order_count,
+    SUM(line_total) AS revenue,
+    SUM(line_total) / NULLIF(COUNT(DISTINCT order_id), 0) AS avg_order_value
 FROM reporting.v_sales_orders
 WHERE order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
 GROUP BY DATE_TRUNC('month', order_date)
@@ -165,15 +165,14 @@ ORDER BY month;
         "description": "Top customers ranked by total revenue in the selected period.",
         "query": """
 SELECT
-    c.customer_name,
-    c.customer_code,
-    COUNT(DISTINCT so.id) AS order_count,
-    SUM(so.total_amount) AS total_revenue,
-    MAX(so.order_date) AS last_order_date
-FROM reporting.v_sales_orders so
-JOIN reporting.v_customers c ON c.id = so.customer_id
-WHERE so.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-GROUP BY c.customer_name, c.customer_code
+    customer_name,
+    customer_code,
+    COUNT(DISTINCT order_id) AS order_count,
+    SUM(line_total) AS total_revenue,
+    MAX(order_date) AS last_order_date
+FROM reporting.v_sales_orders
+WHERE order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+GROUP BY customer_name, customer_code
 ORDER BY total_revenue DESC
 LIMIT 50;
 """.strip(),
@@ -185,17 +184,15 @@ LIMIT 50;
         "description": "Product sales performance showing top and bottom performers.",
         "query": """
 SELECT
-    p.product_name,
-    p.product_code,
-    p.category,
-    SUM(sol.quantity) AS total_qty_sold,
-    SUM(sol.line_total) AS total_revenue,
-    COUNT(DISTINCT sol.sales_order_id) AS num_orders
-FROM reporting.v_sales_orders so
-JOIN reporting.v_sales_orders sol ON sol.sales_order_id = so.id
-JOIN reporting.v_product_catalogue p ON p.id = sol.product_id
-WHERE so.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-GROUP BY p.product_name, p.product_code, p.category
+    product_name,
+    product_code,
+    product_category AS category,
+    SUM(quantity) AS total_qty_sold,
+    SUM(line_total) AS total_revenue,
+    COUNT(DISTINCT order_id) AS num_orders
+FROM reporting.v_sales_orders
+WHERE order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+GROUP BY product_name, product_code, product_category
 ORDER BY total_revenue DESC;
 """.strip(),
         "options": {"parameters": DATE_PARAMS},
@@ -320,7 +317,7 @@ WITH preferred_suppliers AS (
         po.supplier_id
     FROM procurement.purchase_order_lines pol
     JOIN procurement.purchase_orders po ON po.id = pol.po_id
-    JOIN reporting.v_suppliers s ON s.id = po.supplier_id
+    JOIN reporting.v_suppliers s ON s.supplier_id = po.vendor_id
     ORDER BY pol.product_id, po.order_date DESC
 )
 SELECT
@@ -629,16 +626,16 @@ ORDER BY pp.delivery_date DESC, pp.delivery_number;
         "description": "Purchase order pipeline grouped by status.",
         "query": """
 SELECT
-    po.status,
-    COUNT(*) AS po_count,
-    SUM(po.total_amount) AS total_value,
-    MIN(po.order_date) AS earliest_order,
-    MAX(po.order_date) AS latest_order
+    po.po_status AS status,
+    COUNT(DISTINCT po.po_id) AS po_count,
+    SUM(po.po_total)::numeric(12,2) AS total_value,
+    MIN(po.po_date) AS earliest_order,
+    MAX(po.po_date) AS latest_order
 FROM reporting.v_purchase_orders po
-WHERE po.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ status }}' = '' OR po.status = '{{ status }}')
-GROUP BY po.status
-ORDER BY po.status;
+WHERE po.po_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ status }}' = '' OR po.po_status = '{{ status }}')
+GROUP BY po.po_status
+ORDER BY po.po_status;
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [STATUS_PARAM]},
         "tags": ["procurement", "jrny-report"],
@@ -648,16 +645,15 @@ ORDER BY po.status;
         "description": "Supplier spending ranked by total purchase value.",
         "query": """
 SELECT
-    s.supplier_name,
-    s.supplier_code,
-    COUNT(DISTINCT po.id) AS po_count,
-    SUM(po.total_amount) AS total_spend,
-    AVG(po.total_amount) AS avg_po_value,
-    MAX(po.order_date) AS last_order_date
+    po.supplier_name,
+    po.supplier_code,
+    COUNT(DISTINCT po.po_id) AS po_count,
+    SUM(po.po_total)::numeric(12,2) AS total_spend,
+    AVG(po.po_total)::numeric(12,2) AS avg_po_value,
+    MAX(po.po_date) AS last_order_date
 FROM reporting.v_purchase_orders po
-JOIN reporting.v_suppliers s ON s.id = po.supplier_id
-WHERE po.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-GROUP BY s.supplier_name, s.supplier_code
+WHERE po.po_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+GROUP BY po.supplier_name, po.supplier_code
 ORDER BY total_spend DESC
 LIMIT 50;
 """.strip(),
@@ -674,10 +670,12 @@ SELECT
     ROUND(100.0 * SUM(CASE WHEN is_on_time THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS on_time_pct,
     ROUND(100.0 * SUM(CASE WHEN is_in_full THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS in_full_pct,
     ROUND(100.0 * SUM(CASE WHEN is_otif THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS otif_pct,
-    ROUND(AVG(CASE WHEN days_late > 0 THEN days_late ELSE 0 END), 1) AS avg_days_late
-FROM reporting.v_procurement_otif
-WHERE receipt_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%');
+    ROUND(AVG(CASE WHEN last_received_date > expected_delivery_date
+        THEN (last_received_date - expected_delivery_date)
+        ELSE 0 END), 1) AS avg_days_late
+FROM reporting.v_otif
+WHERE po_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ supplier_name }}' = '' OR vendor_name ILIKE '%' || '{{ supplier_name }}' || '%');
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
             {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
@@ -689,7 +687,7 @@ WHERE receipt_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
         "description": "Supplier OTIF scores ranked by delivery performance.",
         "query": """
 SELECT
-    supplier_name,
+    vendor_name AS supplier_name,
     COUNT(*) AS total_lines,
     SUM(CASE WHEN is_on_time THEN 1 ELSE 0 END) AS on_time_count,
     ROUND(100.0 * SUM(CASE WHEN is_on_time THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS on_time_pct,
@@ -697,11 +695,13 @@ SELECT
     ROUND(100.0 * SUM(CASE WHEN is_in_full THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS in_full_pct,
     SUM(CASE WHEN is_otif THEN 1 ELSE 0 END) AS otif_count,
     ROUND(100.0 * SUM(CASE WHEN is_otif THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS otif_pct,
-    ROUND(AVG(CASE WHEN days_late > 0 THEN days_late ELSE 0 END), 1) AS avg_days_late
-FROM reporting.v_procurement_otif
-WHERE receipt_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%')
-GROUP BY supplier_name
+    ROUND(AVG(CASE WHEN last_received_date > expected_delivery_date
+        THEN (last_received_date - expected_delivery_date)
+        ELSE 0 END), 1) AS avg_days_late
+FROM reporting.v_otif
+WHERE po_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ supplier_name }}' = '' OR vendor_name ILIKE '%' || '{{ supplier_name }}' || '%')
+GROUP BY vendor_name
 ORDER BY otif_pct DESC;
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
@@ -714,15 +714,15 @@ ORDER BY otif_pct DESC;
         "description": "Monthly OTIF trend showing on-time, in-full, and combined OTIF percentages over time.",
         "query": """
 SELECT
-    DATE_TRUNC('month', receipt_date)::date AS month,
+    DATE_TRUNC('month', po_date)::date AS month,
     COUNT(*) AS total_lines,
     ROUND(100.0 * SUM(CASE WHEN is_on_time THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS on_time_pct,
     ROUND(100.0 * SUM(CASE WHEN is_in_full THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS in_full_pct,
     ROUND(100.0 * SUM(CASE WHEN is_otif THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS otif_pct
-FROM reporting.v_procurement_otif
-WHERE receipt_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%')
-GROUP BY DATE_TRUNC('month', receipt_date)
+FROM reporting.v_otif
+WHERE po_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ supplier_name }}' = '' OR vendor_name ILIKE '%' || '{{ supplier_name }}' || '%')
+GROUP BY DATE_TRUNC('month', po_date)
 ORDER BY month;
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
@@ -737,16 +737,18 @@ ORDER BY month;
         "query": """
 SELECT
     COUNT(*) AS total_lines,
-    ROUND(SUM(ppv_amount), 2) AS total_ppv,
-    ROUND(AVG(ppv_pct), 2) AS avg_ppv_pct,
-    SUM(CASE WHEN ppv_amount > 0 THEN ppv_amount ELSE 0 END)::numeric(12,2) AS unfavourable_total,
-    SUM(CASE WHEN ppv_amount < 0 THEN ABS(ppv_amount) ELSE 0 END)::numeric(12,2) AS favourable_total,
-    SUM(po_line_value)::numeric(12,2) AS total_po_value,
-    SUM(grn_line_value)::numeric(12,2) AS total_grn_value
-FROM reporting.v_purchase_price_variance
-WHERE receipt_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%')
-  AND ('{{ product_code }}' = '' OR product_code ILIKE '%' || '{{ product_code }}' || '%')
+    ROUND(SUM((grn.unit_cost - po.unit_cost) * grn.received_quantity), 2) AS total_ppv,
+    ROUND(AVG(CASE WHEN po.unit_cost > 0 THEN 100.0 * (grn.unit_cost - po.unit_cost) / po.unit_cost ELSE 0 END), 2) AS avg_ppv_pct,
+    SUM(CASE WHEN grn.unit_cost > po.unit_cost THEN (grn.unit_cost - po.unit_cost) * grn.received_quantity ELSE 0 END)::numeric(12,2) AS unfavourable_total,
+    SUM(CASE WHEN grn.unit_cost < po.unit_cost THEN (po.unit_cost - grn.unit_cost) * grn.received_quantity ELSE 0 END)::numeric(12,2) AS favourable_total,
+    SUM(po.unit_cost * grn.received_quantity)::numeric(12,2) AS total_po_value,
+    SUM(grn.unit_cost * grn.received_quantity)::numeric(12,2) AS total_grn_value
+FROM reporting.v_grn_summary grn
+JOIN reporting.v_purchase_orders po
+  ON po.po_id = grn.po_id AND po.product_id = grn.product_id
+WHERE grn.received_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ supplier_name }}' = '' OR grn.vendor_name ILIKE '%' || '{{ supplier_name }}' || '%')
+  AND ('{{ product_code }}' = '' OR grn.product_code ILIKE '%' || '{{ product_code }}' || '%')
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
             {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
@@ -759,20 +761,22 @@ WHERE receipt_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
         "description": "Purchase Price Variance breakdown by supplier showing favourable and unfavourable variances.",
         "query": """
 SELECT
-    supplier_name,
+    grn.vendor_name AS supplier_name,
     COUNT(*) AS receipt_lines,
-    SUM(po_line_value)::numeric(12,2) AS total_po_value,
-    SUM(grn_line_value)::numeric(12,2) AS total_grn_value,
-    ROUND(SUM(ppv_amount), 2) AS total_ppv,
-    ROUND(AVG(ppv_pct), 2) AS avg_ppv_pct,
-    SUM(CASE WHEN ppv_amount > 0 THEN ppv_amount ELSE 0 END)::numeric(12,2) AS unfavourable,
-    SUM(CASE WHEN ppv_amount < 0 THEN ABS(ppv_amount) ELSE 0 END)::numeric(12,2) AS favourable
-FROM reporting.v_purchase_price_variance
-WHERE receipt_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%')
-  AND ('{{ product_code }}' = '' OR product_code ILIKE '%' || '{{ product_code }}' || '%')
-GROUP BY supplier_name
-ORDER BY ABS(SUM(ppv_amount)) DESC
+    SUM(po.unit_cost * grn.received_quantity)::numeric(12,2) AS total_po_value,
+    SUM(grn.unit_cost * grn.received_quantity)::numeric(12,2) AS total_grn_value,
+    ROUND(SUM((grn.unit_cost - po.unit_cost) * grn.received_quantity), 2) AS total_ppv,
+    ROUND(AVG(CASE WHEN po.unit_cost > 0 THEN 100.0 * (grn.unit_cost - po.unit_cost) / po.unit_cost ELSE 0 END), 2) AS avg_ppv_pct,
+    SUM(CASE WHEN grn.unit_cost > po.unit_cost THEN (grn.unit_cost - po.unit_cost) * grn.received_quantity ELSE 0 END)::numeric(12,2) AS unfavourable,
+    SUM(CASE WHEN grn.unit_cost < po.unit_cost THEN (po.unit_cost - grn.unit_cost) * grn.received_quantity ELSE 0 END)::numeric(12,2) AS favourable
+FROM reporting.v_grn_summary grn
+JOIN reporting.v_purchase_orders po
+  ON po.po_id = grn.po_id AND po.product_id = grn.product_id
+WHERE grn.received_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ supplier_name }}' = '' OR grn.vendor_name ILIKE '%' || '{{ supplier_name }}' || '%')
+  AND ('{{ product_code }}' = '' OR grn.product_code ILIKE '%' || '{{ product_code }}' || '%')
+GROUP BY grn.vendor_name
+ORDER BY ABS(SUM((grn.unit_cost - po.unit_cost) * grn.received_quantity)) DESC
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
             {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
@@ -785,21 +789,23 @@ ORDER BY ABS(SUM(ppv_amount)) DESC
         "description": "Purchase Price Variance breakdown by product showing average PO vs GRN prices and total variance.",
         "query": """
 SELECT
-    product_code,
-    product_name,
+    grn.product_code,
+    grn.product_name,
     COUNT(*) AS receipt_lines,
-    ROUND(AVG(po_unit_cost), 2) AS avg_po_price,
-    ROUND(AVG(grn_unit_cost), 2) AS avg_grn_price,
-    ROUND(AVG(ppv_per_unit), 2) AS avg_ppv_per_unit,
-    ROUND(SUM(ppv_amount), 2) AS total_ppv,
-    ROUND(AVG(ppv_pct), 2) AS avg_ppv_pct,
-    SUM(received_qty)::numeric(12,2) AS total_received_qty
-FROM reporting.v_purchase_price_variance
-WHERE receipt_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%')
-  AND ('{{ product_code }}' = '' OR product_code ILIKE '%' || '{{ product_code }}' || '%')
-GROUP BY product_code, product_name
-ORDER BY ABS(SUM(ppv_amount)) DESC
+    ROUND(AVG(po.unit_cost), 2) AS avg_po_price,
+    ROUND(AVG(grn.unit_cost), 2) AS avg_grn_price,
+    ROUND(AVG(grn.unit_cost - po.unit_cost), 2) AS avg_ppv_per_unit,
+    ROUND(SUM((grn.unit_cost - po.unit_cost) * grn.received_quantity), 2) AS total_ppv,
+    ROUND(AVG(CASE WHEN po.unit_cost > 0 THEN 100.0 * (grn.unit_cost - po.unit_cost) / po.unit_cost ELSE 0 END), 2) AS avg_ppv_pct,
+    SUM(grn.received_quantity)::numeric(12,2) AS total_received_qty
+FROM reporting.v_grn_summary grn
+JOIN reporting.v_purchase_orders po
+  ON po.po_id = grn.po_id AND po.product_id = grn.product_id
+WHERE grn.received_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ supplier_name }}' = '' OR grn.vendor_name ILIKE '%' || '{{ supplier_name }}' || '%')
+  AND ('{{ product_code }}' = '' OR grn.product_code ILIKE '%' || '{{ product_code }}' || '%')
+GROUP BY grn.product_code, grn.product_name
+ORDER BY ABS(SUM((grn.unit_cost - po.unit_cost) * grn.received_quantity)) DESC
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
             {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
@@ -812,25 +818,34 @@ ORDER BY ABS(SUM(ppv_amount)) DESC
         "description": "Purchase Price Variance at individual receipt line level showing PO vs GRN unit costs.",
         "query": """
 SELECT
-    po_number,
-    grn_number,
-    supplier_name,
-    product_code,
-    product_name,
-    receipt_date,
-    ordered_qty,
-    received_qty,
-    po_unit_cost,
-    grn_unit_cost,
-    ppv_per_unit,
-    ppv_amount,
-    ppv_pct,
-    variance_type
-FROM reporting.v_purchase_price_variance
-WHERE receipt_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%')
-  AND ('{{ product_code }}' = '' OR product_code ILIKE '%' || '{{ product_code }}' || '%')
-ORDER BY ABS(ppv_amount) DESC
+    po.po_number,
+    grn.grn_number,
+    grn.vendor_name AS supplier_name,
+    grn.product_code,
+    grn.product_name,
+    grn.received_date,
+    grn.ordered_quantity,
+    grn.received_quantity,
+    po.unit_cost AS po_unit_cost,
+    grn.unit_cost AS grn_unit_cost,
+    ROUND(grn.unit_cost - po.unit_cost, 2) AS ppv_per_unit,
+    ROUND((grn.unit_cost - po.unit_cost) * grn.received_quantity, 2) AS ppv_amount,
+    CASE WHEN po.unit_cost > 0
+        THEN ROUND(100.0 * (grn.unit_cost - po.unit_cost) / po.unit_cost, 2)
+        ELSE 0
+    END AS ppv_pct,
+    CASE
+        WHEN grn.unit_cost > po.unit_cost THEN 'Unfavourable'
+        WHEN grn.unit_cost < po.unit_cost THEN 'Favourable'
+        ELSE 'No Variance'
+    END AS variance_type
+FROM reporting.v_grn_summary grn
+JOIN reporting.v_purchase_orders po
+  ON po.po_id = grn.po_id AND po.product_id = grn.product_id
+WHERE grn.received_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ supplier_name }}' = '' OR grn.vendor_name ILIKE '%' || '{{ supplier_name }}' || '%')
+  AND ('{{ product_code }}' = '' OR grn.product_code ILIKE '%' || '{{ product_code }}' || '%')
+ORDER BY ABS((grn.unit_cost - po.unit_cost) * grn.received_quantity) DESC
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
             {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
@@ -845,14 +860,14 @@ ORDER BY ABS(ppv_amount) DESC
         "query": """
 SELECT
     COUNT(*) AS open_po_count,
-    SUM(total_amount)::numeric(12,2) AS total_open_value,
+    SUM(po_total)::numeric(12,2) AS total_open_value,
     SUM(CASE WHEN days_overdue > 0 THEN 1 ELSE 0 END) AS overdue_count,
-    SUM(CASE WHEN days_overdue > 0 THEN total_amount ELSE 0 END)::numeric(12,2) AS overdue_value,
+    SUM(CASE WHEN days_overdue > 0 THEN po_total ELSE 0 END)::numeric(12,2) AS overdue_value,
     ROUND(100.0 * SUM(CASE WHEN days_overdue > 0 THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS overdue_pct,
-    ROUND(AVG(days_open), 0) AS avg_days_open
+    ROUND(AVG(CURRENT_DATE - po_date), 0) AS avg_days_open
 FROM reporting.v_open_po_aging
-WHERE order_date >= '{{ start_date }}'
-  AND order_date <= '{{ end_date }}'
+WHERE po_date >= '{{ start_date }}'
+  AND po_date <= '{{ end_date }}'
   AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%')
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
@@ -867,19 +882,22 @@ WHERE order_date >= '{{ start_date }}'
 SELECT
     aging_bucket,
     COUNT(*) AS po_count,
-    SUM(total_amount)::numeric(12,2) AS total_value
+    SUM(po_total)::numeric(12,2) AS total_value
 FROM reporting.v_open_po_aging
-WHERE order_date >= '{{ start_date }}'
-  AND order_date <= '{{ end_date }}'
+WHERE po_date >= '{{ start_date }}'
+  AND po_date <= '{{ end_date }}'
   AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%')
 GROUP BY aging_bucket
 ORDER BY
   CASE aging_bucket
+    WHEN 'No Date' THEN 0
     WHEN 'Not Due' THEN 1
-    WHEN '0-14 Days Overdue' THEN 2
-    WHEN '15-30 Days Overdue' THEN 3
-    WHEN '31-60 Days Overdue' THEN 4
-    WHEN '60+ Days Overdue' THEN 5
+    WHEN '1-7 Days' THEN 2
+    WHEN '8-14 Days' THEN 3
+    WHEN '15-30 Days' THEN 4
+    WHEN '31-60 Days' THEN 5
+    WHEN '61-90 Days' THEN 6
+    WHEN '90+ Days' THEN 7
   END
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
@@ -894,22 +912,17 @@ ORDER BY
 SELECT
     po_number,
     supplier_name,
-    status,
-    order_date,
-    expected_date,
-    total_amount,
-    line_count,
-    total_ordered_qty,
-    total_received_qty,
-    days_open,
+    po_status AS status,
+    po_date,
+    expected_delivery_date,
+    po_total,
     days_overdue,
-    aging_bucket,
-    delivery_status
+    aging_bucket
 FROM reporting.v_open_po_aging
-WHERE order_date >= '{{ start_date }}'
-  AND order_date <= '{{ end_date }}'
+WHERE po_date >= '{{ start_date }}'
+  AND po_date <= '{{ end_date }}'
   AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%')
-ORDER BY days_overdue DESC, total_amount DESC
+ORDER BY days_overdue DESC, po_total DESC
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
             {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
@@ -923,16 +936,16 @@ ORDER BY days_overdue DESC, total_amount DESC
 SELECT
     supplier_name,
     COUNT(*) AS po_count,
-    SUM(total_amount)::numeric(12,2) AS total_value,
-    SUM(CASE WHEN days_overdue > 0 THEN total_amount ELSE 0 END)::numeric(12,2) AS overdue_value,
-    ROUND(AVG(days_open), 0) AS avg_days_open,
+    SUM(po_total)::numeric(12,2) AS total_value,
+    SUM(CASE WHEN days_overdue > 0 THEN po_total ELSE 0 END)::numeric(12,2) AS overdue_value,
+    ROUND(AVG(CURRENT_DATE - po_date), 0) AS avg_days_open,
     MAX(days_overdue) AS max_days_overdue
 FROM reporting.v_open_po_aging
-WHERE order_date >= '{{ start_date }}'
-  AND order_date <= '{{ end_date }}'
+WHERE po_date >= '{{ start_date }}'
+  AND po_date <= '{{ end_date }}'
   AND ('{{ supplier_name }}' = '' OR supplier_name ILIKE '%' || '{{ supplier_name }}' || '%')
 GROUP BY supplier_name
-ORDER BY SUM(total_amount) DESC
+ORDER BY SUM(po_total) DESC
 """.strip(),
         "options": {"parameters": DATE_PARAMS + [
             {"name": "supplier_name", "title": "Supplier Name", "type": "text", "value": ""},
@@ -944,31 +957,70 @@ ORDER BY SUM(total_amount) DESC
         "name": "Vendor Scorecard - Performance Rankings",
         "description": "Composite vendor performance scores combining OTIF, quality (inspection pass rate), price variance, and delivery timeliness. Supports vendor rationalization and negotiation.",
         "query": """
+WITH otif_scores AS (
+    SELECT
+        vendor_id,
+        vendor_name,
+        COUNT(*) AS total_lines,
+        ROUND(100.0 * SUM(CASE WHEN is_otif THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS otif_pct,
+        ROUND(100.0 * SUM(CASE WHEN is_on_time THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS delivery_score
+    FROM reporting.v_otif
+    WHERE po_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    GROUP BY vendor_id, vendor_name
+),
+lead_times AS (
+    SELECT
+        vendor_id,
+        supplier_name,
+        supplier_code,
+        COUNT(*) AS total_receipts,
+        ROUND(AVG(lead_time_days), 1) AS avg_lead_time_days
+    FROM reporting.v_procurement_lead_time
+    WHERE po_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    GROUP BY vendor_id, supplier_name, supplier_code
+),
+quality_scores AS (
+    SELECT
+        vendor_id,
+        COUNT(*) AS total_grn_lines,
+        ROUND(100.0 * SUM(CASE WHEN quantity_variance >= 0 THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS quality_pct
+    FROM reporting.v_grn_summary
+    WHERE received_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    GROUP BY vendor_id
+),
+price_scores AS (
+    SELECT
+        grn.vendor_id,
+        ROUND(AVG(CASE WHEN po.unit_cost > 0 THEN 100.0 * (grn.unit_cost - po.unit_cost) / po.unit_cost ELSE 0 END), 2) AS price_variance_pct
+    FROM reporting.v_grn_summary grn
+    JOIN reporting.v_purchase_orders po ON po.po_id = grn.po_id AND po.product_id = grn.product_id
+    WHERE grn.received_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    GROUP BY grn.vendor_id
+)
 SELECT
-    supplier_name,
-    supplier_code,
-    vendor_group,
-    period_label,
-    total_pos,
-    total_lines,
-    otif_pct,
-    quality_pct,
-    ROUND(100 - ABS(price_variance_pct), 2) AS price_score,
-    delivery_score,
-    composite_score,
-    composite_rank,
-    COALESCE(prior_composite_score, 0) AS prior_composite_score,
-    COALESCE(score_trend, 0) AS score_trend,
+    COALESCE(o.vendor_name, lt.supplier_name) AS supplier_name,
+    COALESCE(lt.supplier_code, '') AS supplier_code,
+    COALESCE(o.total_lines, 0) AS total_lines,
+    COALESCE(o.otif_pct, 0) AS otif_pct,
+    COALESCE(q.quality_pct, 100) AS quality_pct,
+    ROUND(100 - ABS(COALESCE(ps.price_variance_pct, 0)), 2) AS price_score,
+    COALESCE(o.delivery_score, 0) AS delivery_score,
+    ROUND((COALESCE(o.otif_pct, 0) * 0.35
+         + COALESCE(q.quality_pct, 100) * 0.25
+         + (100 - ABS(COALESCE(ps.price_variance_pct, 0))) * 0.20
+         + COALESCE(o.delivery_score, 0) * 0.20), 1) AS composite_score,
     CASE
-        WHEN composite_score >= 90 THEN 'Preferred'
-        WHEN composite_score >= 70 THEN 'Approved'
-        WHEN composite_score >= 50 THEN 'Conditional'
+        WHEN ROUND((COALESCE(o.otif_pct, 0) * 0.35 + COALESCE(q.quality_pct, 100) * 0.25 + (100 - ABS(COALESCE(ps.price_variance_pct, 0))) * 0.20 + COALESCE(o.delivery_score, 0) * 0.20), 1) >= 90 THEN 'Preferred'
+        WHEN ROUND((COALESCE(o.otif_pct, 0) * 0.35 + COALESCE(q.quality_pct, 100) * 0.25 + (100 - ABS(COALESCE(ps.price_variance_pct, 0))) * 0.20 + COALESCE(o.delivery_score, 0) * 0.20), 1) >= 70 THEN 'Approved'
+        WHEN ROUND((COALESCE(o.otif_pct, 0) * 0.35 + COALESCE(q.quality_pct, 100) * 0.25 + (100 - ABS(COALESCE(ps.price_variance_pct, 0))) * 0.20 + COALESCE(o.delivery_score, 0) * 0.20), 1) >= 50 THEN 'Conditional'
         ELSE 'Under Review'
     END AS vendor_tier,
-    avg_lead_time_days
-FROM reporting.v_vendor_scorecards
-WHERE period BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ vendor_group }}' = '' OR vendor_group = '{{ vendor_group }}')
+    COALESCE(lt.avg_lead_time_days, 0) AS avg_lead_time_days
+FROM otif_scores o
+FULL OUTER JOIN lead_times lt ON lt.vendor_id = o.vendor_id
+LEFT JOIN quality_scores q ON q.vendor_id = COALESCE(o.vendor_id, lt.vendor_id)
+LEFT JOIN price_scores ps ON ps.vendor_id = COALESCE(o.vendor_id, lt.vendor_id)
+WHERE ('{{ vendor_group }}' = '' OR TRUE)
 ORDER BY composite_score DESC;
 """.strip(),
         "options": {
@@ -987,44 +1039,38 @@ ORDER BY composite_score DESC;
         "name": "Vendor Scorecard - Dimension Comparison",
         "description": "Vendor scores across individual performance dimensions for radar-style comparison.",
         "query": """
-SELECT
-    supplier_name,
-    'OTIF' AS dimension,
-    otif_pct AS score
-FROM reporting.v_vendor_scorecards
-WHERE period BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ vendor_group }}' = '' OR vendor_group = '{{ vendor_group }}')
-
+WITH vendor_scores AS (
+    SELECT
+        o.vendor_name AS supplier_name,
+        o.vendor_id,
+        ROUND(100.0 * SUM(CASE WHEN o.is_otif THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS otif_pct,
+        ROUND(100.0 * SUM(CASE WHEN o.is_on_time THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS delivery_score
+    FROM reporting.v_otif o
+    WHERE o.po_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    GROUP BY o.vendor_name, o.vendor_id
+),
+quality AS (
+    SELECT vendor_id,
+        ROUND(100.0 * SUM(CASE WHEN quantity_variance >= 0 THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS quality_pct
+    FROM reporting.v_grn_summary
+    WHERE received_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    GROUP BY vendor_id
+),
+price AS (
+    SELECT grn.vendor_id,
+        ROUND(100 - ABS(AVG(CASE WHEN po.unit_cost > 0 THEN 100.0 * (grn.unit_cost - po.unit_cost) / po.unit_cost ELSE 0 END)), 2) AS price_score
+    FROM reporting.v_grn_summary grn
+    JOIN reporting.v_purchase_orders po ON po.po_id = grn.po_id AND po.product_id = grn.product_id
+    WHERE grn.received_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    GROUP BY grn.vendor_id
+)
+SELECT supplier_name, 'OTIF' AS dimension, otif_pct AS score FROM vendor_scores
 UNION ALL
-
-SELECT
-    supplier_name,
-    'Quality' AS dimension,
-    quality_pct AS score
-FROM reporting.v_vendor_scorecards
-WHERE period BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ vendor_group }}' = '' OR vendor_group = '{{ vendor_group }}')
-
+SELECT vs.supplier_name, 'Quality', COALESCE(q.quality_pct, 100) FROM vendor_scores vs LEFT JOIN quality q ON q.vendor_id = vs.vendor_id
 UNION ALL
-
-SELECT
-    supplier_name,
-    'Price' AS dimension,
-    ROUND(100 - ABS(price_variance_pct), 2) AS score
-FROM reporting.v_vendor_scorecards
-WHERE period BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ vendor_group }}' = '' OR vendor_group = '{{ vendor_group }}')
-
+SELECT vs.supplier_name, 'Price', COALESCE(p.price_score, 100) FROM vendor_scores vs LEFT JOIN price p ON p.vendor_id = vs.vendor_id
 UNION ALL
-
-SELECT
-    supplier_name,
-    'Delivery' AS dimension,
-    delivery_score AS score
-FROM reporting.v_vendor_scorecards
-WHERE period BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ vendor_group }}' = '' OR vendor_group = '{{ vendor_group }}')
-
+SELECT supplier_name, 'Delivery', delivery_score FROM vendor_scores
 ORDER BY supplier_name, dimension;
 """.strip(),
         "options": {
@@ -1043,14 +1089,43 @@ ORDER BY supplier_name, dimension;
         "name": "Vendor Scorecard - KPIs",
         "description": "Summary KPIs for vendor scorecard: average composite score, best vendor, worst vendor.",
         "query": """
+WITH otif_scores AS (
+    SELECT vendor_id,
+        ROUND(100.0 * SUM(CASE WHEN is_otif THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS otif_pct,
+        ROUND(100.0 * SUM(CASE WHEN is_on_time THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS delivery_score
+    FROM reporting.v_otif
+    WHERE po_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    GROUP BY vendor_id
+),
+quality_scores AS (
+    SELECT vendor_id,
+        ROUND(100.0 * SUM(CASE WHEN quantity_variance >= 0 THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS quality_pct
+    FROM reporting.v_grn_summary
+    WHERE received_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    GROUP BY vendor_id
+),
+price_scores AS (
+    SELECT grn.vendor_id,
+        ROUND(AVG(CASE WHEN po.unit_cost > 0 THEN 100.0 * (grn.unit_cost - po.unit_cost) / po.unit_cost ELSE 0 END), 2) AS price_variance_pct
+    FROM reporting.v_grn_summary grn
+    JOIN reporting.v_purchase_orders po ON po.po_id = grn.po_id AND po.product_id = grn.product_id
+    WHERE grn.received_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    GROUP BY grn.vendor_id
+),
+composites AS (
+    SELECT
+        o.vendor_id,
+        ROUND((o.otif_pct * 0.35 + COALESCE(q.quality_pct, 100) * 0.25 + (100 - ABS(COALESCE(ps.price_variance_pct, 0))) * 0.20 + o.delivery_score * 0.20), 1) AS composite_score
+    FROM otif_scores o
+    LEFT JOIN quality_scores q ON q.vendor_id = o.vendor_id
+    LEFT JOIN price_scores ps ON ps.vendor_id = o.vendor_id
+)
 SELECT
-    COUNT(DISTINCT supplier_id) AS total_vendors,
+    COUNT(DISTINCT vendor_id) AS total_vendors,
     ROUND(AVG(composite_score), 1) AS avg_composite_score,
     MAX(composite_score) AS best_score,
     MIN(composite_score) AS worst_score
-FROM reporting.v_vendor_scorecards
-WHERE period BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ vendor_group }}' = '' OR vendor_group = '{{ vendor_group }}');
+FROM composites;
 """.strip(),
         "options": {
             "parameters": DATE_PARAMS + [
@@ -1089,7 +1164,7 @@ WITH rfq_invites AS (
         END AS response_days
     FROM procurement.rfq_responses r
     JOIN procurement.rfq_requests rfq ON rfq.id = r.rfq_id
-    JOIN reporting.v_suppliers s ON s.id = r.supplier_id
+    JOIN reporting.v_suppliers s ON s.supplier_id = r.supplier_id
     WHERE rfq.rfq_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
 )
 SELECT
@@ -1132,7 +1207,7 @@ FROM procurement.rfq_response_lines rrl
 JOIN procurement.rfq_responses r ON r.id = rrl.response_id
 JOIN procurement.rfq_lines rl ON rl.id = rrl.rfq_line_id
 JOIN procurement.rfq_requests rfq ON rfq.id = r.rfq_id
-JOIN reporting.v_suppliers s ON s.id = r.supplier_id
+JOIN reporting.v_suppliers s ON s.supplier_id = r.supplier_id
 WHERE rfq.rfq_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
   AND r.status = 'received'
 ORDER BY rfq.rfq_number, rl.description, rrl.quoted_price;
@@ -1165,22 +1240,16 @@ WHERE rfq.rfq_date BETWEEN '{{ start_date }}' AND '{{ end_date }}';
         "description": "Average, min, and max lead time (PO order date to goods receipt date) by vendor. Identifies slow suppliers and on-time delivery performance.",
         "query": """
 SELECT
-    s.supplier_name,
-    s.supplier_code,
-    COUNT(gr.id) AS total_receipts,
-    ROUND(AVG(gr.receipt_date - po.order_date), 1) AS avg_lead_time_days,
-    MIN(gr.receipt_date - po.order_date) AS min_lead_time_days,
-    MAX(gr.receipt_date - po.order_date) AS max_lead_time_days,
-    ROUND(STDDEV(gr.receipt_date - po.order_date)::numeric, 1) AS stddev_lead_time,
-    SUM(CASE WHEN gr.receipt_date <= po.expected_date THEN 1 ELSE 0 END) AS on_time_count,
-    SUM(CASE WHEN gr.receipt_date > po.expected_date THEN 1 ELSE 0 END) AS late_count,
-    ROUND(100.0 * SUM(CASE WHEN gr.receipt_date <= po.expected_date THEN 1 ELSE 0 END)
-        / NULLIF(COUNT(gr.id), 0), 1) AS on_time_pct
-FROM inventory.goods_receipts gr
-JOIN procurement.purchase_orders po ON po.id = gr.po_id
-JOIN reporting.v_suppliers s ON s.id = gr.supplier_id
-WHERE po.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-GROUP BY s.supplier_name, s.supplier_code
+    supplier_name,
+    supplier_code,
+    COUNT(*) AS total_receipts,
+    ROUND(AVG(lead_time_days), 1) AS avg_lead_time_days,
+    MIN(lead_time_days) AS min_lead_time_days,
+    MAX(lead_time_days) AS max_lead_time_days,
+    ROUND(STDDEV(lead_time_days::numeric), 1) AS stddev_lead_time
+FROM reporting.v_procurement_lead_time
+WHERE po_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+GROUP BY supplier_name, supplier_code
 ORDER BY avg_lead_time_days DESC;
 """.strip(),
         "options": {"parameters": DATE_PARAMS},
@@ -1191,21 +1260,16 @@ ORDER BY avg_lead_time_days DESC;
         "description": "Lead time statistics by product category to identify which categories take longest to receive and support safety stock calculations.",
         "query": """
 SELECT
-    p.category AS product_category,
-    COUNT(DISTINCT gr.id) AS total_receipts,
-    COUNT(grl.id) AS total_lines,
-    ROUND(AVG(gr.receipt_date - po.order_date), 1) AS avg_lead_time_days,
-    MIN(gr.receipt_date - po.order_date) AS min_lead_time_days,
-    MAX(gr.receipt_date - po.order_date) AS max_lead_time_days,
-    ROUND(STDDEV(gr.receipt_date - po.order_date)::numeric, 1) AS stddev_lead_time,
-    ROUND(AVG(gr.receipt_date - po.order_date)
-        + 2 * COALESCE(STDDEV(gr.receipt_date - po.order_date), 0), 0) AS safety_lead_time_days
-FROM inventory.goods_receipt_lines grl
-JOIN inventory.goods_receipts gr ON gr.id = grl.grn_id
-JOIN procurement.purchase_orders po ON po.id = gr.po_id
-JOIN inventory.products p ON p.id = grl.product_id
-WHERE po.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-GROUP BY p.category
+    product_category,
+    COUNT(*) AS total_receipts,
+    ROUND(AVG(lead_time_days), 1) AS avg_lead_time_days,
+    MIN(lead_time_days) AS min_lead_time_days,
+    MAX(lead_time_days) AS max_lead_time_days,
+    ROUND(STDDEV(lead_time_days::numeric), 1) AS stddev_lead_time,
+    ROUND(AVG(lead_time_days) + 2 * COALESCE(STDDEV(lead_time_days::numeric), 0), 0) AS safety_lead_time_days
+FROM reporting.v_procurement_lead_time
+WHERE po_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+GROUP BY product_category
 ORDER BY avg_lead_time_days DESC;
 """.strip(),
         "options": {"parameters": DATE_PARAMS},
@@ -1216,18 +1280,14 @@ ORDER BY avg_lead_time_days DESC;
         "description": "Monthly trend of average lead time by vendor, showing how delivery performance changes over time.",
         "query": """
 SELECT
-    TO_CHAR(DATE_TRUNC('month', po.order_date), 'YYYY-MM') AS order_month,
-    s.supplier_name,
-    COUNT(gr.id) AS receipts,
-    ROUND(AVG(gr.receipt_date - po.order_date), 1) AS avg_lead_time_days,
-    ROUND(AVG(po.expected_date - po.order_date), 1) AS avg_expected_days,
-    ROUND(AVG(gr.receipt_date - po.expected_date), 1) AS avg_days_variance
-FROM inventory.goods_receipts gr
-JOIN procurement.purchase_orders po ON po.id = gr.po_id
-JOIN reporting.v_suppliers s ON s.id = gr.supplier_id
-WHERE po.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-GROUP BY DATE_TRUNC('month', po.order_date), TO_CHAR(DATE_TRUNC('month', po.order_date), 'YYYY-MM'), s.supplier_name
-ORDER BY order_month, s.supplier_name;
+    TO_CHAR(DATE_TRUNC('month', po_date), 'YYYY-MM') AS order_month,
+    supplier_name,
+    COUNT(*) AS receipts,
+    ROUND(AVG(lead_time_days), 1) AS avg_lead_time_days
+FROM reporting.v_procurement_lead_time
+WHERE po_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+GROUP BY DATE_TRUNC('month', po_date), TO_CHAR(DATE_TRUNC('month', po_date), 'YYYY-MM'), supplier_name
+ORDER BY order_month, supplier_name;
 """.strip(),
         "options": {"parameters": DATE_PARAMS},
         "tags": ["procurement", "jrny-report", "report:procurement"],
@@ -1237,16 +1297,13 @@ ORDER BY order_month, s.supplier_name;
         "description": "Summary KPIs for procurement lead times: overall average, on-time delivery rate, total receipts.",
         "query": """
 SELECT
-    COUNT(gr.id) AS total_receipts,
-    ROUND(AVG(gr.receipt_date - po.order_date), 1) AS avg_lead_time_days,
-    MIN(gr.receipt_date - po.order_date) AS fastest_lead_time,
-    MAX(gr.receipt_date - po.order_date) AS slowest_lead_time,
-    ROUND(100.0 * SUM(CASE WHEN gr.receipt_date <= po.expected_date THEN 1 ELSE 0 END)
-        / NULLIF(COUNT(gr.id), 0), 1) AS on_time_delivery_pct,
-    COUNT(DISTINCT gr.supplier_id) AS total_vendors
-FROM inventory.goods_receipts gr
-JOIN procurement.purchase_orders po ON po.id = gr.po_id
-WHERE po.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}';
+    COUNT(*) AS total_receipts,
+    ROUND(AVG(lead_time_days), 1) AS avg_lead_time_days,
+    MIN(lead_time_days) AS fastest_lead_time,
+    MAX(lead_time_days) AS slowest_lead_time,
+    COUNT(DISTINCT vendor_id) AS total_vendors
+FROM reporting.v_procurement_lead_time
+WHERE po_date BETWEEN '{{ start_date }}' AND '{{ end_date }}';
 """.strip(),
         "options": {"parameters": DATE_PARAMS},
         "tags": ["procurement", "jrny-report", "report:procurement"],
@@ -3173,8 +3230,8 @@ VISUALIZATIONS = {
                     {"name": "grn_number", "title": "GRN #", "visible": True},
                     {"name": "supplier_name", "title": "Supplier", "visible": True},
                     {"name": "product_code", "title": "Product", "visible": True},
-                    {"name": "receipt_date", "title": "Receipt Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
-                    {"name": "received_qty", "title": "Qty", "visible": True, "alignContent": "right"},
+                    {"name": "received_date", "title": "Receipt Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "received_quantity", "title": "Qty", "visible": True, "alignContent": "right"},
                     {"name": "po_unit_cost", "title": "PO Price", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                     {"name": "grn_unit_cost", "title": "GRN Price", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                     {"name": "ppv_per_unit", "title": "PPV/Unit", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
@@ -3262,14 +3319,11 @@ VISUALIZATIONS = {
                     {"name": "po_number", "title": "PO #", "visible": True},
                     {"name": "supplier_name", "title": "Supplier", "visible": True},
                     {"name": "status", "title": "Status", "visible": True},
-                    {"name": "order_date", "title": "Order Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
-                    {"name": "expected_date", "title": "Expected Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
-                    {"name": "total_amount", "title": "Value (R)", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
-                    {"name": "line_count", "title": "Lines", "visible": True, "alignContent": "right"},
-                    {"name": "days_open", "title": "Days Open", "visible": True, "alignContent": "right"},
+                    {"name": "po_date", "title": "Order Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "expected_delivery_date", "title": "Expected Date", "visible": True, "displayAs": "datetime", "dateTimeFormat": "YYYY-MM-DD"},
+                    {"name": "po_total", "title": "Value (R)", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                     {"name": "days_overdue", "title": "Days Overdue", "visible": True, "alignContent": "right"},
                     {"name": "aging_bucket", "title": "Aging Bucket", "visible": True},
-                    {"name": "delivery_status", "title": "Status", "visible": True},
                 ],
             },
         },
@@ -3642,17 +3696,16 @@ VISUALIZATIONS = {
             },
         },
         {
-            "name": "On-Time Delivery Rate",
+            "name": "Total Vendors",
             "type": "COUNTER",
             "options": {
-                "counterColName": "on_time_delivery_pct",
+                "counterColName": "total_vendors",
                 "rowNumber": 1,
                 "targetRowNumber": 1,
-                "stringDecimal": 1,
-                "stringSuffix": "%",
+                "stringDecimal": 0,
                 "stringDecChar": ".",
                 "stringThouSep": ",",
-                "tooltipFormat": "0,0.0",
+                "tooltipFormat": "0,0",
             },
         },
     ],
@@ -4722,7 +4775,7 @@ DASHBOARDS = {
         "widgets": [
             {"query_key": "procurement_lead_time_kpi", "vis_index": 0, "width": 2},              # Total Receipts KPI
             {"query_key": "procurement_lead_time_kpi", "vis_index": 1, "width": 2},              # Avg Lead Time KPI
-            {"query_key": "procurement_lead_time_kpi", "vis_index": 2, "width": 2},              # On-Time Delivery Rate KPI
+            {"query_key": "procurement_lead_time_kpi", "vis_index": 2, "width": 2},              # Total Vendors KPI
             {"query_key": "procurement_lead_time_vendor", "vis_index": 1, "width": 6},           # Lead time by vendor bar chart
             {"query_key": "procurement_lead_time_category", "vis_index": 1, "width": 6},         # Lead time by category bar chart
             {"query_key": "procurement_lead_time_trend", "vis_index": 0, "width": 6},            # Monthly trend line chart

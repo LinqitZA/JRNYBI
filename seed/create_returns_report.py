@@ -37,14 +37,14 @@ def main():
 
     # Query 1: Returns by Reason (bar chart)
     q1_sql = """SELECT
-  return_reason,
-  COUNT(DISTINCT return_id) AS return_count,
-  SUM(return_line_value) AS total_return_value,
+  reason AS return_reason,
+  COUNT(DISTINCT rma_id) AS return_count,
+  SUM(line_total) AS total_return_value,
   COUNT(DISTINCT line_id) AS line_count
-FROM reporting.v_sales_returns_analysis
-WHERE return_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ product_category }}' = '' OR product_category = '{{ product_category }}')
-GROUP BY return_reason
+FROM reporting.v_sales_returns
+WHERE rma_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ product_code }}' = '' OR product_code ILIKE '%' || '{{ product_code }}' || '%')
+GROUP BY reason
 ORDER BY total_return_value DESC"""
 
     q1 = api_call("POST", "/api/queries", {
@@ -56,7 +56,7 @@ ORDER BY total_return_value DESC"""
             "parameters": [
                 {"name": "start_date", "title": "Start Date", "type": "date", "value": "2024-01-01"},
                 {"name": "end_date", "title": "End Date", "type": "date", "value": "2024-12-31"},
-                {"name": "product_category", "title": "Product Category", "type": "text", "value": ""},
+                {"name": "product_code", "title": "Product Code", "type": "text", "value": ""},
             ]
         },
         "tags": ["sales", "jrny-report"],
@@ -66,28 +66,28 @@ ORDER BY total_return_value DESC"""
 
     # Query 2: Return Rate Trend Over Time
     q2_sql = """SELECT
-  return_month AS month,
-  COUNT(DISTINCT return_id) AS return_count,
-  SUM(return_line_value) AS return_value,
-  (SELECT SUM(total_amount)
+  DATE_TRUNC('month', rma_date)::date AS month,
+  COUNT(DISTINCT rma_id) AS return_count,
+  SUM(line_total) AS return_value,
+  (SELECT SUM(so.line_total)
    FROM reporting.v_sales_orders so
-   WHERE DATE_TRUNC('month', so.order_date)::DATE = return_month
+   WHERE DATE_TRUNC('month', so.order_date)::date = DATE_TRUNC('month', r.rma_date)::date
      AND so.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
   ) AS sales_value,
   ROUND(
-    100.0 * SUM(return_line_value) / NULLIF(
-      (SELECT SUM(total_amount)
+    100.0 * SUM(line_total) / NULLIF(
+      (SELECT SUM(so.line_total)
        FROM reporting.v_sales_orders so
-       WHERE DATE_TRUNC('month', so.order_date)::DATE = return_month
+       WHERE DATE_TRUNC('month', so.order_date)::date = DATE_TRUNC('month', r.rma_date)::date
          AND so.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
       ), 0
     ), 2
   ) AS return_rate_pct
-FROM reporting.v_sales_returns_analysis
-WHERE return_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ product_category }}' = '' OR product_category = '{{ product_category }}')
-GROUP BY return_month
-ORDER BY return_month"""
+FROM reporting.v_sales_returns r
+WHERE rma_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ product_code }}' = '' OR product_code ILIKE '%' || '{{ product_code }}' || '%')
+GROUP BY DATE_TRUNC('month', rma_date)
+ORDER BY month"""
 
     q2 = api_call("POST", "/api/queries", {
         "name": "Sales Returns - Rate Trend",
@@ -98,7 +98,7 @@ ORDER BY return_month"""
             "parameters": [
                 {"name": "start_date", "title": "Start Date", "type": "date", "value": "2024-01-01"},
                 {"name": "end_date", "title": "End Date", "type": "date", "value": "2024-12-31"},
-                {"name": "product_category", "title": "Product Category", "type": "text", "value": ""},
+                {"name": "product_code", "title": "Product Code", "type": "text", "value": ""},
             ]
         },
         "tags": ["sales", "jrny-report"],
@@ -108,23 +108,23 @@ ORDER BY return_month"""
 
     # Query 3: Detail Table with Individual Return Records
     q3_sql = """SELECT
-  return_number,
+  rma_number AS return_number,
   customer_name,
-  return_date,
-  return_reason,
-  return_status,
-  order_number,
+  rma_date AS return_date,
+  reason AS return_reason,
+  rma_status AS return_status,
+  sales_order_number AS order_number,
   product_code,
   product_name,
-  product_category,
-  return_qty,
+  line_disposition,
+  quantity_returned AS return_qty,
   unit_price,
-  return_line_value,
-  line_reason
-FROM reporting.v_sales_returns_analysis
-WHERE return_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-  AND ('{{ product_category }}' = '' OR product_category = '{{ product_category }}')
-ORDER BY return_date DESC, return_number"""
+  line_total AS return_line_value,
+  reason_details AS line_reason
+FROM reporting.v_sales_returns
+WHERE rma_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  AND ('{{ product_code }}' = '' OR product_code ILIKE '%' || '{{ product_code }}' || '%')
+ORDER BY rma_date DESC, rma_number"""
 
     q3 = api_call("POST", "/api/queries", {
         "name": "Sales Returns - Detail Records",
@@ -135,7 +135,7 @@ ORDER BY return_date DESC, return_number"""
             "parameters": [
                 {"name": "start_date", "title": "Start Date", "type": "date", "value": "2024-01-01"},
                 {"name": "end_date", "title": "End Date", "type": "date", "value": "2024-12-31"},
-                {"name": "product_category", "title": "Product Category", "type": "text", "value": ""},
+                {"name": "product_code", "title": "Product Code", "type": "text", "value": ""},
             ]
         },
         "tags": ["sales", "jrny-report"],
@@ -209,7 +209,7 @@ ORDER BY return_date DESC, return_number"""
                 {"name": "order_number", "title": "Order #", "visible": True},
                 {"name": "product_code", "title": "Product", "visible": True},
                 {"name": "product_name", "title": "Product Name", "visible": True},
-                {"name": "product_category", "title": "Category", "visible": True},
+                {"name": "line_disposition", "title": "Disposition", "visible": True},
                 {"name": "return_qty", "title": "Qty", "visible": True, "alignContent": "right"},
                 {"name": "unit_price", "title": "Unit Price", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                 {"name": "return_line_value", "title": "Return Value", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},

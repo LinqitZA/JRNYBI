@@ -36,17 +36,18 @@ def main():
         return
 
     # Query 1: Category Summary (for bar chart + % contribution)
+    # v_revenue_by_category is pre-aggregated; use v_sales_orders for date-filtered analysis
     q1_sql = """SELECT
   product_category,
   COUNT(DISTINCT order_id) AS order_count,
   SUM(quantity) AS total_qty_sold,
   COUNT(*) AS line_count,
-  SUM(revenue) AS total_revenue,
-  SUM(cost_of_goods) AS total_cogs,
-  SUM(contribution_margin) AS total_margin,
-  ROUND(AVG(margin_pct), 1) AS avg_margin_pct,
-  ROUND(100.0 * SUM(revenue) / NULLIF(SUM(SUM(revenue)) OVER (), 0), 1) AS pct_of_total_revenue
-FROM reporting.v_revenue_by_category
+  SUM(line_total) AS total_revenue,
+  SUM(quantity * cost_price) AS total_cogs,
+  SUM(line_total) - SUM(quantity * cost_price) AS total_margin,
+  ROUND(AVG(line_gp_margin), 1) AS avg_margin_pct,
+  ROUND(100.0 * SUM(line_total) / NULLIF(SUM(SUM(line_total)) OVER (), 0), 1) AS pct_of_total_revenue
+FROM reporting.v_sales_orders
 WHERE order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
 GROUP BY product_category
 ORDER BY total_revenue DESC"""
@@ -68,17 +69,18 @@ ORDER BY total_revenue DESC"""
     sys.stderr.write(f"Query 1 created: id={q1_id}\n")
 
     # Query 2: Category Detail with Product Drill-down
+    # v_sales_orders has product_category, product_code, product_name at line level
     q2_sql = """SELECT
   product_category,
   product_code,
   product_name,
   COUNT(DISTINCT order_id) AS order_count,
   SUM(quantity) AS total_qty_sold,
-  SUM(revenue) AS total_revenue,
-  SUM(contribution_margin) AS total_margin,
-  ROUND(AVG(margin_pct), 1) AS avg_margin_pct,
-  ROUND(100.0 * SUM(revenue) / NULLIF(SUM(SUM(revenue)) OVER (), 0), 1) AS pct_of_total_revenue
-FROM reporting.v_revenue_by_category
+  SUM(line_total) AS total_revenue,
+  SUM(line_total) - SUM(quantity * cost_price) AS total_margin,
+  ROUND(AVG(line_gp_margin), 1) AS avg_margin_pct,
+  ROUND(100.0 * SUM(line_total) / NULLIF(SUM(SUM(line_total)) OVER (), 0), 1) AS pct_of_total_revenue
+FROM reporting.v_sales_orders
 WHERE order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
 GROUP BY product_category, product_code, product_name
 ORDER BY product_category, total_revenue DESC"""
