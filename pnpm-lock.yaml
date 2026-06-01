@@ -348,6 +348,12 @@ importers:
       '@ant-design/icons':
         specifier: '>=4.0.0'
         version: 4.8.3(react-dom@16.14.0(react@16.14.0))(react@16.14.0)
+      ag-grid-community:
+        specifier: 31.3.4
+        version: 31.3.4
+      ag-grid-react:
+        specifier: 31.3.4
+        version: 31.3.4(react-dom@16.14.0(react@16.14.0))(react@16.14.0)
       antd:
         specifier: '>=4.0.0'
         version: 4.4.3(dayjs@1.11.19)(react-dom@16.14.0(react@16.14.0))(react@16.14.0)
@@ -2618,6 +2624,15 @@ packages:
 
   add-dom-event-listener@1.1.0:
     resolution: {integrity: sha512-WCxx1ixHT0GQU9hb0KI/mhgRQhnU+U3GvwY6ZvVjYq8rsihIGoaIOUbY0yMPBxLH5MDtr0kz3fisWGNcbWW7Jw==}
+
+  ag-grid-community@31.3.4:
+    resolution: {integrity: sha512-jOxQO86C6eLnk1GdP24HB6aqaouFzMWizgfUwNY5MnetiWzz9ZaAmOGSnW/XBvdjXvC5Fpk3gSbvVKKQ7h9kBw==}
+
+  ag-grid-react@31.3.4:
+    resolution: {integrity: sha512-WmPASHRFGSTxCMRStWG5bRtln0Ugsdqbb3+Y8sEyGHeLw4hXqfpqie3lT9kqCOl7wPWUjCpwmFdXzRnWPmyyeg==}
+    peerDependencies:
+      react: ^16.3.0 || ^17.0.0 || ^18.0.0
+      react-dom: ^16.3.0 || ^17.0.0 || ^18.0.0
 
   agent-base@5.1.1:
     resolution: {integrity: sha512-TMeqbNl2fMW0nMjTEPOwe3J/PRFP4vqeoNuQMG0HlMrtm5QxKqdvAkZ1pRBQ/ulIyDD5Yq0nJ7YbdD8ey0TO3g==}
@@ -11388,6 +11403,15 @@ snapshots:
   add-dom-event-listener@1.1.0:
     dependencies:
       object-assign: 4.1.1
+
+  ag-grid-community@31.3.4: {}
+
+  ag-grid-react@31.3.4(react-dom@16.14.0(react@16.14.0))(react@16.14.0):
+    dependencies:
+      ag-grid-community: 31.3.4
+      prop-types: 15.8.1
+      react: 16.14.0
+      react-dom: 16.14.0(react@16.14.0)
 
   agent-base@5.1.1: {}
 

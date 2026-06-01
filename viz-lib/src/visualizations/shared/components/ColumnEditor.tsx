@@ -14,6 +14,7 @@ type Column = {
   displayAs?: any;
   description?: string;
   allowSearch?: boolean;
+  pinned?: "none" | "left" | "right";
 };
 
 type ColumnEditorProps = {
@@ -79,6 +80,32 @@ export default function ColumnEditor({
           </Checkbox>
         </Section>
       )}
+
+      {variant === "table" &&
+        // Feature #209 — pin column to the left or right edge of the grid
+        (() => {
+          const SelectAny = Select as any;
+          return (
+            // @ts-expect-error ts-migrate(2745) FIXME: This JSX tag's 'children' prop expects type 'never... Remove this comment to see the full error message
+            <Section>
+              <SelectAny
+                label="Pinned"
+                data-test={`${dataTestPrefix}.Pinned`}
+                defaultValue={column.pinned || "none"}
+                onChange={(pinned: any) => handleChange({ pinned })}>
+                <SelectAny.Option key="none" value="none" data-test={`${dataTestPrefix}.Pinned.none`}>
+                  None
+                </SelectAny.Option>
+                <SelectAny.Option key="left" value="left" data-test={`${dataTestPrefix}.Pinned.left`}>
+                  Left
+                </SelectAny.Option>
+                <SelectAny.Option key="right" value="right" data-test={`${dataTestPrefix}.Pinned.right`}>
+                  Right
+                </SelectAny.Option>
+              </SelectAny>
+            </Section>
+          );
+        })()}
 
       {/* @ts-expect-error ts-migrate(2745) FIXME: This JSX tag's 'children' prop expects type 'never... Remove this comment to see the full error message */}
       <Section>

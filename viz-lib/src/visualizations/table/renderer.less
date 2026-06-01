@@ -1,131 +1,12 @@
 @import "../variables";
 
+// ---------------------------------------------------------------------------
+// Legacy container styles — kept so existing dashboards rendering inside the
+// .dashboard-widget-wrapper / .query-fixed-layout absolute-positioning shells
+// keep working.
+// ---------------------------------------------------------------------------
+
 .table-visualization-container {
-  .ant-pagination.ant-table-pagination {
-    float: none;
-    display: block;
-    text-align: center;
-    margin-bottom: 0;
-  }
-
-  .ant-table {
-    overflow-x: auto;
-  }
-
-  .table-fixed-header {
-    table {
-      border-top: 0;
-
-      th:not(.table-visualization-search) {
-        position: sticky !important;
-        left: 0;
-        top: 0;
-        border-top: 0;
-        z-index: 1;
-        background: #fafafa !important;
-      }
-    }
-  }
-
-  table {
-    border-top: @border-width-base @border-style-base @border-color-split;
-    border-bottom: 0;
-
-    .display-as-number,
-    .display-as-boolean,
-    .display-as-datetime,
-    .display-as-image {
-      width: 1%;
-      white-space: nowrap;
-    }
-
-    .display-as-null {
-      font-style: italic;
-      color: @text-muted;
-    }
-
-    .table-visualization-spacer {
-      padding-left: 0;
-      padding-right: 0;
-
-      & > div:before {
-        content: none !important;
-      }
-    }
-
-    tbody tr:last-child td {
-      border-bottom: 0;
-    }
-
-    thead {
-      .ant-table-column-sorter-up,
-      .ant-table-column-sorter-down {
-        opacity: 0;
-        transition: opacity 0.3s;
-      }
-
-      &:hover,
-      .table-visualization-column-is-sorted {
-        .ant-table-column-sorter-up,
-        .ant-table-column-sorter-down {
-          opacity: 1;
-        }
-      }
-
-      th {
-        white-space: nowrap;
-
-        &.table-visualization-search {
-          padding-bottom: 0;
-
-          .ant-table-header-column {
-            display: block;
-          }
-        }
-
-        .ant-input-search {
-          font-weight: normal;
-
-          .ant-input-suffix .anticon {
-            cursor: auto;
-          }
-        }
-
-        // optimize room for th content
-        &.ant-table-column-has-actions.ant-table-column-has-sorters {
-          padding-right: 3px;
-        }
-
-        .table-visualization-heading {
-          display: inline-block;
-          max-width: 200px;
-          vertical-align: middle;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-
-          &[data-sort-column-index]:before {
-            @size: 12px;
-
-            content: attr(data-sort-column-index);
-            display: inline-block;
-            vertical-align: middle;
-            min-width: @size;
-            height: @size;
-            font-size: @size * 3/4;
-            border-radius: @size / 2;
-            background: #c0c0c0;
-            text-align: center;
-            line-height: @size;
-            color: #fff;
-            padding: 0 @size * 1/4;
-            margin: 0 5px 0 0;
-          }
-        }
-      }
-    }
-  }
-
   /* START table x scroll */
   .dashboard-widget-wrapper:not(.widget-auto-height-enabled) &,
   .query-fixed-layout & {
@@ -134,19 +15,6 @@
     top: 0;
     width: 100%;
     height: 100%;
-
-    & div {
-      height: inherit;
-    }
-
-    .ant-spin-container {
-      display: flex;
-      flex-direction: column;
-
-      .ant-table {
-        flex-grow: 1;
-      }
-    }
   }
   /* END */
 }
@@ -160,5 +28,170 @@
 
   &:not(:hover):not(:active) {
     color: @text-color-secondary;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AG Grid (Alpine) theming for JRNYBI — Inter typography + Ant Design 4.x
+// spacing so the AG Grid-backed Table viz blends with the rest of the UI.
+// ---------------------------------------------------------------------------
+
+.ag-jrnybi-table-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+.ag-jrnybi-table-toolbar {
+  padding: 4px 0 8px 0;
+  display: flex;
+  justify-content: flex-end;
+
+  .ant-input-search {
+    max-width: 320px;
+  }
+}
+
+.ag-theme-alpine.ag-jrnybi-theme {
+  --ag-font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --ag-font-size: 13px;
+  --ag-header-foreground-color: #1f2937;
+  --ag-header-background-color: #f5f7fa;
+  --ag-row-hover-color: #f0f5ff;
+  --ag-selected-row-background-color: #e6f0ff;
+  --ag-border-color: #e5e7eb;
+  --ag-secondary-border-color: #eef0f3;
+  --ag-row-border-color: #eef0f3;
+  --ag-header-column-separator-color: transparent;
+  --ag-cell-horizontal-padding: 12px;
+  --ag-grid-size: 6px;
+  --ag-list-item-height: 32px;
+  --ag-foreground-color: #1f2937;
+  --ag-data-color: #1f2937;
+  --ag-control-panel-background-color: #ffffff;
+  --ag-odd-row-background-color: #ffffff;
+  --ag-background-color: #ffffff;
+
+  .ag-header {
+    border-bottom: 1px solid var(--ag-border-color);
+    font-weight: 600;
+  }
+
+  .ag-header-cell-label {
+    font-weight: 600;
+  }
+
+  // Pinned columns: subtle shadow so they read as floating above the
+  // horizontally-scrolling centre region.
+  .ag-pinned-left-cols-container,
+  .ag-pinned-left-header {
+    box-shadow: 2px 0 4px rgba(0, 0, 0, 0.04);
+  }
+  .ag-pinned-right-cols-container,
+  .ag-pinned-right-header {
+    box-shadow: -2px 0 4px rgba(0, 0, 0, 0.04);
+  }
+
+  // Align-content support (matches options.alignContent: left/center/right)
+  .jrnybi-cell-align-right .ag-cell-wrapper,
+  .jrnybi-cell-align-right {
+    text-align: right;
+    justify-content: flex-end;
+  }
+  .jrnybi-cell-align-center .ag-cell-wrapper,
+  .jrnybi-cell-align-center {
+    text-align: center;
+    justify-content: center;
+  }
+  .jrnybi-header-align-right .ag-header-cell-label {
+    justify-content: flex-end;
+  }
+  .jrnybi-header-align-center .ag-header-cell-label {
+    justify-content: center;
+  }
+
+  // Display-as classes carried over from the old renderer
+  .display-as-number,
+  .display-as-boolean,
+  .display-as-datetime {
+    font-variant-numeric: tabular-nums;
+  }
+  .display-as-null {
+    font-style: italic;
+    color: @text-muted;
+  }
+
+  // Expand chevron column (feature #210)
+  .ag-jrnybi-expand-cell {
+    padding: 0 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .ag-jrnybi-expand-header {
+    padding: 0;
+  }
+}
+
+.jrnybi-table-expand-btn {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: #2563eb;
+  font-size: 14px;
+  line-height: 1;
+
+  &:hover {
+    background: #e6f0ff;
+  }
+
+  &.is-expanded {
+    color: #1e40af;
+  }
+}
+
+.jrnybi-table-expand-chevron {
+  display: inline-block;
+  font-weight: 700;
+}
+
+// Detail panel (rendered as an AG Grid full-width row, feature #210)
+.jrnybi-detail-panel {
+  padding: 12px 16px;
+  background: #fafbfd;
+  border-top: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: 12px;
+  color: #1f2937;
+  overflow: auto;
+  max-height: 220px;
+
+  &-loading {
+    font-style: italic;
+    color: @text-muted;
+  }
+  &-error {
+    color: #b91c1c;
+  }
+}
+
+.jrnybi-detail-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+
+  th,
+  td {
+    padding: 4px 8px;
+    border-bottom: 1px solid #e5e7eb;
+    text-align: left;
+  }
+  th {
+    font-weight: 600;
+    color: #4b5563;
+    background: #f5f7fa;
   }
 }
