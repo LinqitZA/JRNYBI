@@ -2,6 +2,13 @@ import { isNil, extend, each, includes, map, sortBy, toString } from "lodash";
 import chooseTextColorForBackground from "@/lib/chooseTextColorForBackground";
 import { AllColorPaletteArrays, ColorPaletteTypes } from "@/visualizations/ColorPalette";
 import { cleanNumber, normalizeValue, getSeriesAxis } from "./utils";
+// Feature #187: contextual tooltip (delta + sparkline) generator.
+import {
+  buildCustomData,
+  buildHovertemplate,
+  isContextualTooltipApplicable,
+  ContextualTooltipConfig,
+} from "./contextualTooltip";
 
 function getSeriesColor(options: any, seriesOptions: any, seriesIndex: any, numSeries: any) {
   // @ts-expect-error ts-migrate(7053) FIXME: Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
@@ -93,6 +100,25 @@ function prepareSeries(series: any, options: any, numSeries: any, additionalOpti
   const { hoverInfoPattern, index } = additionalOptions;
 
   const seriesOptions = extend({ type: options.globalSeriesType, yAxis: 0 }, options.seriesOptions[series.name]);
+
+  // Feature #205: Combo preset — when the global type is 'combo' and the user
+  // hasn't overridden this series' type yet, fall back to a sensible default:
+  // first series renders as a bar (left axis), subsequent series render as
+  // lines on the right axis. The user can change either via the Series tab.
+  if (seriesOptions.type === "combo") {
+    if (index === 0) {
+      seriesOptions.type = "column";
+      if (seriesOptions.yAxis === undefined || seriesOptions.yAxis === null) {
+        seriesOptions.yAxis = 0;
+      }
+    } else {
+      seriesOptions.type = "line";
+      if (seriesOptions.yAxis === undefined || seriesOptions.yAxis === null) {
+        seriesOptions.yAxis = 1;
+      }
+    }
+  }
+
   const seriesColor = getSeriesColor(options, seriesOptions, index, numSeries);
   const seriesYAxis = getSeriesAxis(series, options);
 
@@ -153,7 +179,7 @@ function prepareSeries(series: any, options: any, numSeries: any, additionalOpti
     yErrorValues.push(yError);
   });
 
-  const plotlySeries = {
+  const plotlySeries: any = {
     visible: true,
     hoverinfo: hoverInfoPattern,
     x: xValues,
@@ -170,6 +196,31 @@ function prepareSeries(series: any, options: any, numSeries: any, additionalOpti
     yaxis: seriesYAxis,
     sourceData,
   };
+
+  // Feature #187: smart contextual tooltips — only meaningful for line / area
+  // / column charts on a datetime axis. The applicability check guards both
+  // the global toggle AND the chart type so other series types fall back to
+  // Plotly's stock tooltip without surprise.
+  if (
+    isContextualTooltipApplicable(options) &&
+    includes(["line", "area", "column"], seriesOptions.type)
+  ) {
+    const cfg: ContextualTooltipConfig = {
+      enabled: true,
+      comparisonPeriod: options.contextualTooltip.comparisonPeriod || "auto",
+      sparklineWindow: options.contextualTooltip.sparklineWindow || 8,
+      seriesColor,
+      seriesName: plotlySeries.name,
+    };
+    const customdata = buildCustomData(xValues, yValues, cfg);
+    if (customdata.length > 0) {
+      plotlySeries.customdata = customdata;
+      plotlySeries.hovertemplate = buildHovertemplate();
+      // Plotly ignores hoverinfo when hovertemplate is set — explicit "skip"
+      // keeps the default trace info out of our custom card.
+      plotlySeries.hoverinfo = "skip" as any;
+    }
+  }
 
   additionalOptions = { ...additionalOptions, seriesColor, data };
 
