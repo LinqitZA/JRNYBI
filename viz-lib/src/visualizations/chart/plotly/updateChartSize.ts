@@ -1,5 +1,49 @@
 import { find, pick, extend } from "lodash";
 
+// ---------------------------------------------------------------------------
+// Mobile reflow thresholds (feature #191)
+// ---------------------------------------------------------------------------
+// Below NARROW_WIDTH a chart switches to legend-below mode (handled by
+// placeLegendAuto already) AND we rotate x-axis tick labels so long category
+// labels don't overlap. Below VERY_NARROW_WIDTH we additionally drop the
+// axis title text — the surrounding widget title carries the same info.
+const NARROW_WIDTH = 600;
+const VERY_NARROW_WIDTH = 380;
+
+function applyResponsiveAxisOptions(layout: any) {
+  const width = layout.width || 0;
+  const responsiveAxis: any = {};
+
+  if (width <= NARROW_WIDTH) {
+    // Rotate x-axis tick labels so long categorical labels read on a narrow
+    // viewport. Plotly's tickangle is in degrees; -45 leans the labels down
+    // and to the right which matches how Tableau / Looker render the same
+    // case. automargin lets plotly grow the bottom margin to fit the slant.
+    responsiveAxis.tickangle = -45;
+    responsiveAxis.automargin = true;
+  }
+
+  if (width <= VERY_NARROW_WIDTH) {
+    // Hide axis titles on phone widths — they shave precious vertical space
+    // and the widget title already conveys the same meaning. Secondary y-axis
+    // annotations follow the same rule.
+    responsiveAxis.title = null;
+  }
+
+  if (Object.keys(responsiveAxis).length === 0) return;
+
+  if (layout.xaxis) {
+    layout.xaxis = extend({}, layout.xaxis, responsiveAxis);
+  }
+
+  if (width <= VERY_NARROW_WIDTH) {
+    // Only hide y-axis title at very narrow widths — tickangle on Y looks
+    // weird (numeric labels stay horizontal everywhere).
+    if (layout.yaxis) layout.yaxis = extend({}, layout.yaxis, { title: null });
+    if (layout.yaxis2) layout.yaxis2 = extend({}, layout.yaxis2, { title: null });
+  }
+}
+
 function fixLegendContainer(plotlyElement: any) {
   const legend = plotlyElement.querySelector(".legend");
   if (legend) {
@@ -36,7 +80,7 @@ function placeLegendNextToPlot(plotlyElement: any, layout: any) {
     legend.style[transformName] = null;
   }
 
-  return [pick(layout, ["width", "height", "legend"]), null]; // no further updates
+  return [pick(layout, ["width", "height", "legend", "xaxis", "yaxis", "yaxis2"]), null]; // no further updates
 }
 
 function placeLegendBelowPlot(plotlyElement: any, layout: any) {
@@ -73,7 +117,7 @@ function placeLegendBelowPlot(plotlyElement: any, layout: any) {
   fixLegendContainer(plotlyElement);
 
   return [
-    pick(layout, ["width", "height", "legend"]),
+    pick(layout, ["width", "height", "legend", "xaxis", "yaxis", "yaxis2"]),
     () => {
       const legend = plotlyElement.querySelector(".legend"); // eslint-disable-line no-shadow
       if (legend) {
@@ -120,6 +164,11 @@ export default function updateChartSize(plotlyElement: any, layout: any, options
 
   plotlyElement.__previousSize = [layout.width, layout.height];
 
+  // Apply mobile-responsive axis tweaks before computing legend placement so
+  // the picked-keys helpers below carry the new xaxis/yaxis settings back to
+  // Plotly.relayout(). Feature #191.
+  applyResponsiveAxisOptions(layout);
+
   if (options.legend.enabled) {
     switch (options.legend.placement) {
       case "auto":
@@ -131,6 +180,6 @@ export default function updateChartSize(plotlyElement: any, layout: any, options
       // no default
     }
   } else {
-    return [pick(layout, ["width", "height"]), null]; // no further updates
+    return [pick(layout, ["width", "height", "xaxis", "yaxis", "yaxis2"]), null]; // no further updates
   }
 }

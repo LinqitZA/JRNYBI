@@ -195,3 +195,142 @@
     background: #f5f7fa;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Mobile card view (feature #191)
+// ---------------------------------------------------------------------------
+// When the surrounding widget is narrower than the mobile breakpoint, the
+// React renderer swaps the AG Grid for a vertical list of cards. Each card
+// shows one row's columns as label / value pairs so nothing slides off behind
+// a horizontal scrollbar. The .jrnybi-table-mobile class is added by the
+// renderer at the container level — no other selectors need to change.
+.jrnybi-table-mobile {
+  // Drop AG-Grid's min-height since the cards are dom-flow.
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.jrnybi-table-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+  // Allow horizontal padding on narrow widgets — values can be long URLs etc.
+  word-break: break-word;
+}
+
+.jrnybi-table-card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.jrnybi-table-card-row {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  line-height: 1.35;
+
+  // Stack vertically on very small phones so long labels keep readable.
+  @media (max-width: 360px) {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+}
+
+.jrnybi-table-card-label {
+  color: #64748b;
+  font-weight: 500;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+  max-width: 45%;
+}
+
+.jrnybi-table-card-value {
+  color: #0f172a;
+  font-weight: 500;
+  text-align: right;
+  flex-grow: 1;
+  min-width: 0;
+
+  // Inherit display-as-number tabular nums so numbers line up across cards.
+  &.display-as-number,
+  &.display-as-datetime,
+  &.display-as-boolean {
+    font-variant-numeric: tabular-nums;
+  }
+
+  // Keep links readable on the card layout
+  a {
+    color: #2563eb;
+    text-decoration: none;
+    &:hover { text-decoration: underline; }
+  }
+
+  @media (max-width: 360px) {
+    text-align: left;
+    width: 100%;
+  }
+}
+
+.jrnybi-table-card-empty {
+  padding: 24px 12px;
+  text-align: center;
+  color: #64748b;
+  font-style: italic;
+  font-size: 13px;
+}
+
+.jrnybi-table-card-more {
+  margin: 12px auto;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #2563eb;
+  font-weight: 500;
+
+  &:hover {
+    background: #f0f5ff;
+    border-color: #2563eb;
+  }
+}
+
+// Dark theme card surfaces — pulls from the same tokens the rest of the app
+// uses so the cards stay legible when .jrny-theme-dark is active.
+.jrny-theme-dark .jrnybi-table-card {
+  background: var(--jrny-surface-1, #0f172a);
+  border-color: var(--jrny-surface-3, #334155);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+.jrny-theme-dark .jrnybi-table-card-label {
+  color: var(--jrny-text-3, #94a3b8);
+}
+.jrny-theme-dark .jrnybi-table-card-value {
+  color: var(--jrny-text-1, #f8fafc);
+}
+.jrny-theme-dark .jrnybi-table-card-more {
+  background: var(--jrny-surface-2, #1e293b);
+  border-color: var(--jrny-surface-3, #334155);
+  color: var(--jrny-info, #60a5fa);
+  &:hover {
+    background: var(--jrny-surface-3, #334155);
+  }
+}
+.jrny-theme-dark .jrnybi-table-card-empty {
+  color: var(--jrny-text-3, #94a3b8);
+}

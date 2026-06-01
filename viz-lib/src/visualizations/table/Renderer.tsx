@@ -31,6 +31,141 @@ import "./renderer.less";
 const KEY_COLUMN_PARAM = "row_key";
 
 // ---------------------------------------------------------------------------
+// Mobile breakpoint (feature #191)
+// ---------------------------------------------------------------------------
+// Below this container width, the Table viz stacks each row into a card so
+// columns aren't sliced off behind a horizontal scrollbar. Matches the
+// @jrny-breakpoint-mobile token defined in jrny-theme.less — kept in sync
+// here because this component doesn't import LESS variables at runtime.
+const MOBILE_BREAKPOINT = 480;
+
+// Custom hook: report whether the given element is narrower than `threshold`.
+// Uses ResizeObserver so the card view kicks in when the surrounding widget
+// is resized (dashboard edit mode, browser zoom, device rotation) without a
+// full re-mount.
+function useIsNarrow(threshold: number) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [isNarrow, setIsNarrow] = useState(false);
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+
+    const evaluate = (width: number) => {
+      const next = width > 0 && width < threshold;
+      // Functional setter avoids a stale-closure re-render loop when the
+      // observer fires repeatedly with the same width.
+      setIsNarrow(prev => (prev === next ? prev : next));
+    };
+
+    // Seed with the current width so card view applies on first paint when
+    // the widget was already narrow at mount time.
+    evaluate(node.getBoundingClientRect().width);
+
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        evaluate(entry.contentRect.width);
+      }
+    });
+    ro.observe(node);
+    return () => ro.disconnect();
+  }, [threshold]);
+
+  return [ref, isNarrow] as const;
+}
+
+// Card view for mobile: each row becomes a vertical stack of (label, value)
+// pairs so all columns stay readable on a phone-width viewport. Hidden columns
+// and the expand chevron from feature #210 are skipped. Cells delegate to the
+// shared ColumnTypes renderer so number / datetime / link formatting matches
+// the desktop grid exactly.
+function MobileCardView({
+  options,
+  data,
+  searchTerm,
+  itemsPerPage,
+}: {
+  options: any;
+  data: any;
+  searchTerm: string;
+  itemsPerPage: number;
+}) {
+  const visibleColumns = useMemo(
+    () => sortBy(filter(options.columns || [], (c: any) => c.visible !== false), "order"),
+    [options.columns]
+  );
+
+  // Pre-build cell renderer components per column so we don't re-init on
+  // every row. ColumnTypes[displayAs] returns a factory; calling it with the
+  // column produces the actual React component.
+  const cellComponents = useMemo(
+    () =>
+      visibleColumns.map((column: any) => {
+        const init = (ColumnTypes as any)[column.displayAs] || (ColumnTypes as any).string;
+        return { column, Component: init(column) };
+      }),
+    [visibleColumns]
+  );
+
+  // Simple text-based quick filter — matches AG Grid's quickFilterText
+  // behaviour: any visible column with allowSearch === true contributes.
+  const searchableNames = useMemo(
+    () => filter(options.columns || [], (c: any) => c.allowSearch).map((c: any) => c.name),
+    [options.columns]
+  );
+
+  const filteredRows = useMemo(() => {
+    const allRows = data.rows || [];
+    const trimmed = (searchTerm || "").trim().toLowerCase();
+    if (!trimmed || searchableNames.length === 0) return allRows;
+    return allRows.filter((row: any) =>
+      searchableNames.some((name: string) => {
+        const v = row[name];
+        return v != null && String(v).toLowerCase().includes(trimmed);
+      })
+    );
+  }, [data.rows, searchTerm, searchableNames]);
+
+  // Single-shot pagination: phones rarely benefit from page jumps, so we
+  // expose a simple "Load more" button instead of a numeric paginator.
+  const [shown, setShown] = useState(itemsPerPage);
+  useEffect(() => {
+    setShown(itemsPerPage);
+  }, [itemsPerPage, filteredRows.length, searchTerm]);
+
+  const visibleRows = filteredRows.slice(0, shown);
+
+  if (filteredRows.length === 0) {
+    return <div className="jrnybi-table-card-empty">No matching rows.</div>;
+  }
+
+  return (
+    <div className="jrnybi-table-card-list" data-test="TableVisualizationCardList">
+      {visibleRows.map((row: any, idx: number) => (
+        <div className="jrnybi-table-card" key={idx} data-test="TableVisualizationCard">
+          {cellComponents.map(({ column, Component }) => (
+            <div className="jrnybi-table-card-row" key={column.name}>
+              <div className="jrnybi-table-card-label">{column.title || column.name}</div>
+              <div className={`jrnybi-table-card-value display-as-${column.displayAs || "string"}`}>
+                <Component row={row} />
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+      {shown < filteredRows.length && (
+        <button
+          type="button"
+          className="jrnybi-table-card-more"
+          onClick={() => setShown(s => s + itemsPerPage)}>
+          Show more ({filteredRows.length - shown} remaining)
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -339,8 +474,16 @@ export default function Renderer({ options, data }: any) {
   const showSearch = searchColumns.length > 0;
   const itemsPerPage = options.itemsPerPage || 25;
 
+  // Mobile card-view detection (feature #191). Watches the outer container so
+  // the layout adapts when the surrounding widget is resized — dashboard edit
+  // mode, browser narrowing, or phone rotation.
+  const [containerRef, isNarrow] = useIsNarrow(MOBILE_BREAKPOINT);
+
   return (
-    <div className="table-visualization-container ag-jrnybi-table-container" data-test="TableVisualization">
+    <div
+      ref={containerRef}
+      className={`table-visualization-container ag-jrnybi-table-container${isNarrow ? " jrnybi-table-mobile" : ""}`}
+      data-test="TableVisualization">
       {showSearch && (
         <div className="ag-jrnybi-table-toolbar">
           <Input.Search
@@ -351,6 +494,14 @@ export default function Renderer({ options, data }: any) {
           />
         </div>
       )}
+      {isNarrow ? (
+        <MobileCardView
+          options={options}
+          data={data}
+          searchTerm={searchTerm}
+          itemsPerPage={itemsPerPage}
+        />
+      ) : (
       <div className="ag-theme-alpine ag-jrnybi-theme" style={{ width: "100%", height: "100%", minHeight: 240 }}>
         <AgGridReact
           ref={gridRef}
@@ -370,6 +521,7 @@ export default function Renderer({ options, data }: any) {
           animateRows={false}
         />
       </div>
+      )}
     </div>
   );
 }
