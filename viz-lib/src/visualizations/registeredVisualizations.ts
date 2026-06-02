@@ -2,18 +2,23 @@ import { find, flatten, each } from "lodash";
 import PropTypes from "prop-types";
 
 import boxPlotVisualization from "./box-plot";
+import calendarHeatmapVisualization from "./calendar-heatmap";
 import chartVisualization from "./chart";
 import choroplethVisualization from "./choropleth";
 import cohortVisualization from "./cohort";
 import counterVisualization from "./counter";
 import detailsVisualization from "./details";
 import funnelVisualization from "./funnel";
+import ganttVisualization from "./gantt";
 import mapVisualization from "./map";
+import networkVisualization from "./network";
 import pivotVisualization from "./pivot";
+import radarVisualization from "./radar";
 import sankeyVisualization from "./sankey";
 import sunburstVisualization from "./sunburst";
 import tableVisualization from "./table";
 import reportVisualization from "./report";
+import treemapVisualization from "./treemap";
 import wordCloudVisualization from "./word-cloud";
 
 type VisualizationConfig = {
@@ -80,18 +85,23 @@ function registerVisualization(config: any) {
 each(
   flatten([
     boxPlotVisualization,
+    calendarHeatmapVisualization,
     chartVisualization,
     choroplethVisualization,
     cohortVisualization,
     counterVisualization,
     detailsVisualization,
     funnelVisualization,
+    ganttVisualization,
     mapVisualization,
+    networkVisualization,
     pivotVisualization,
+    radarVisualization,
     reportVisualization,
     sankeyVisualization,
     sunburstVisualization,
     tableVisualization,
+    treemapVisualization,
     wordCloudVisualization,
   ]),
   registerVisualization

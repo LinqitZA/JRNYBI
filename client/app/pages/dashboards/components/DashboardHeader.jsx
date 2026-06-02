@@ -9,6 +9,7 @@ import EllipsisOutlinedIcon from "@ant-design/icons/EllipsisOutlined";
 import Modal from "antd/lib/modal";
 import Tooltip from "@/components/Tooltip";
 import FavoritesControl from "@/components/FavoritesControl";
+import DigestSubscribeButton from "@/components/DigestSubscribeButton";
 import EditInPlace from "@/components/EditInPlace";
 import PlainButton from "@/components/PlainButton";
 import { DashboardTagsControl } from "@/components/tags-control/TagsControl";
@@ -225,6 +226,14 @@ function DashboardControl({ dashboardConfiguration, headerExtra }) {
             </Tooltip>
           )}
           {headerExtra}
+          {/* Feature #219: Subscribe to digest email (Tableau-Pulse-style). */}
+          {!dashboard.is_draft && (
+            <DigestSubscribeButton
+              targetType="dashboard"
+              targetId={dashboard.id}
+              className="m-l-5 hidden-xs"
+            />
+          )}
           {showShareButton && (
             <Tooltip title="Dashboard Sharing Options">
               <Button

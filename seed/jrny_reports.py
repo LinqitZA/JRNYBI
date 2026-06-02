@@ -3416,6 +3416,33 @@ VISUALIZATIONS = {
         },
     ],
     "vendor_scorecard_dimensions": [
+        # Feature #197: Radar chart is the default viz for vendor scorecards —
+        # multi-axis comparison reads at a glance and is the canonical shape
+        # for supplier performance across delivery, quality, price, OTIF.
+        {
+            "name": "Vendor Dimension Comparison (Radar)",
+            "type": "ECHARTS_RADAR",
+            "options": {
+                "title": "Vendor Performance Radar",
+                "subtitle": "",
+                "showLegend": True,
+                "showTooltip": True,
+                "theme": "jrny-light",
+                "columnMapping": {
+                    "series": "supplier_name",
+                    "axes": [],
+                    "dimension": "dimension_name",
+                    "value": "score",
+                },
+                "scale": "0-100",
+                "shape": "polygon",
+                "fillOpacity": 0.25,
+                "lineWidth": 2,
+                "showSymbol": True,
+                "showAxisLabels": True,
+                "showAxisTicks": False,
+            },
+        },
         {
             "name": "Vendor Dimension Comparison (Grouped Bar)",
             "type": "CHART",
@@ -4762,7 +4789,7 @@ DASHBOARDS = {
             {"query_key": "vendor_scorecard_kpi", "vis_index": 0, "width": 2},           # Total Vendors KPI
             {"query_key": "vendor_scorecard_kpi", "vis_index": 1, "width": 2},           # Avg Composite Score KPI
             {"query_key": "vendor_scorecard_kpi", "vis_index": 2, "width": 2},           # Best Score KPI
-            {"query_key": "vendor_scorecard_dimensions", "vis_index": 0, "width": 6},    # Dimension comparison bar chart
+            {"query_key": "vendor_scorecard_dimensions", "vis_index": 0, "width": 6},    # Dimension comparison radar (feature #197)
             {"query_key": "vendor_scorecard", "vis_index": 0, "width": 6},               # Rankings table
         ],
     },

@@ -198,6 +198,23 @@ WHERE invoice_balance > 0
     # Visualizations
     # ========================================================================
 
+    # Feature #207 — conditional formatting per aging bucket. Buckets get
+    # progressively more alarming colors so an overdue customer sticks out.
+    # Rules are evaluated top-to-bottom, first match wins (so we only need a
+    # single "any positive value" rule per bucket).
+    overdue_rules_30 = [{"type": "comparison", "op": "gt", "value": 0,
+                         "bg": "#fef3c7", "icon": "⚠"}]
+    overdue_rules_60 = [{"type": "comparison", "op": "gt", "value": 0,
+                         "bg": "#fed7aa", "icon": "⚠"}]
+    overdue_rules_90 = [{"type": "comparison", "op": "gt", "value": 0,
+                         "bg": "#fca5a5", "icon": "⚠"}]
+    overdue_rules_90plus = [{"type": "comparison", "op": "gt", "value": 0,
+                             "bg": "#dc2626", "fg": "#ffffff", "icon": "🚨",
+                             "fontWeight": "bold"}]
+    total_rules = [
+        {"type": "color-scale", "minColor": "#fef9c3", "maxColor": "#dc2626"},
+    ]
+
     # V1: Customer Aging Pivot Table
     v1 = api_call("POST", "/api/visualizations", {
         "query_id": q1_id,
@@ -209,17 +226,22 @@ WHERE invoice_balance > 0
                 {"name": "customer_name", "title": "Customer", "visible": True},
                 {"name": "customer_email", "title": "Email", "visible": True},
                 {"name": "total_outstanding", "title": "Total Outstanding", "visible": True,
-                 "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                 "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right",
+                 "conditionalFormatting": total_rules},
                 {"name": "current_amount", "title": "Current", "visible": True,
                  "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
                 {"name": "days_1_30", "title": "1-30 Days", "visible": True,
-                 "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                 "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right",
+                 "conditionalFormatting": overdue_rules_30},
                 {"name": "days_31_60", "title": "31-60 Days", "visible": True,
-                 "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                 "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right",
+                 "conditionalFormatting": overdue_rules_60},
                 {"name": "days_61_90", "title": "61-90 Days", "visible": True,
-                 "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                 "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right",
+                 "conditionalFormatting": overdue_rules_90},
                 {"name": "days_90_plus", "title": "90+ Days", "visible": True,
-                 "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                 "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right",
+                 "conditionalFormatting": overdue_rules_90plus},
                 {"name": "open_invoices", "title": "# Invoices", "visible": True, "alignContent": "right"},
                 {"name": "last_payment_date", "title": "Last Payment", "visible": True,
                  "displayAs": "datetime", "dateTimeFormat": "DD/MM/YYYY"},

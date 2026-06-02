@@ -1,0 +1,49 @@
+// Feature #214 — Drill-down breadcrumb bar styling. Same tiled look as the
+// parameters / cross-filter bars above it.
+
+.dashboard-drill-breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  .drill-back-btn {
+    flex: 0 0 auto;
+
+    .fa-arrow-left {
+      margin-right: 4px;
+    }
+  }
+
+  .drill-breadcrumb {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+
+    .ant-breadcrumb-link {
+      max-width: 240px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      display: inline-block;
+      vertical-align: bottom;
+    }
+  }
+
+  .drill-breadcrumb-link {
+    background: none;
+    border: 0;
+    color: #1890ff;
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  .drill-breadcrumb-current {
+    color: rgba(0, 0, 0, 0.65);
+    font-weight: 600;
+  }
+}

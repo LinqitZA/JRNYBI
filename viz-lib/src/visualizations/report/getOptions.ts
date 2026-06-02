@@ -3,6 +3,7 @@ import {
   getDefaultFormatOptions,
   getColumnsOptions,
 } from "@/visualizations/shared/columnUtils";
+import { JrnySemantic } from "@/visualizations/ColorPalette";
 
 export interface MetricCard {
   id: string;
@@ -24,8 +25,11 @@ export const DEFAULT_METRIC_CARD: MetricCard = {
   format: "number",
   decimalPlaces: 2,
   conditionalFormatting: false,
-  positiveColor: "#16a34a",
-  negativeColor: "#dc2626",
+  // Pulled from the JRNY semantic token palette (jrny-theme.less mirrors
+  // these values). Keeps Counter / metric-card conditional formatting in
+  // sync with the rest of the BI surface and ensures WCAG-AA contrast.
+  positiveColor: JrnySemantic.positive,
+  negativeColor: JrnySemantic.negative,
 };
 
 const DEFAULT_OPTIONS = {

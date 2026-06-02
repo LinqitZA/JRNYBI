@@ -47,9 +47,42 @@
   padding: 4px 0 8px 0;
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
 
   .ant-input-search {
     max-width: 320px;
+    flex-grow: 1;
+  }
+}
+
+// Feature #212 — "Export to Excel" toolbar button. Sits next to the search box.
+.jrnybi-table-export-excel {
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  padding: 4px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #1f7a3b; // Excel-green for affordance
+  cursor: pointer;
+  line-height: 1.4;
+  height: 32px;
+
+  &:hover {
+    background: #f0fdf4;
+    border-color: #1f7a3b;
+  }
+
+  &:active {
+    background: #dcfce7;
+  }
+
+  .jrnybi-table-export-excel-icon {
+    font-size: 14px;
+    line-height: 1;
   }
 }
 
@@ -120,6 +153,50 @@
   .display-as-null {
     font-style: italic;
     color: @text-muted;
+  }
+
+  // Feature #206 — sparkline cells: keep them vertically centered, prevent
+  // AG Grid's row line-height from clipping the SVG.
+  .display-as-sparkline {
+    overflow: visible;
+    line-height: 0; // svg sits on baseline otherwise
+    .table-sparkline-cell {
+      vertical-align: middle;
+      line-height: 0;
+    }
+  }
+
+  // Feature #207 — Conditional formatting icon prefix inside cells.
+  .jrnybi-cell-with-icon {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .jrnybi-cell-icon {
+    display: inline-block;
+    font-size: 0.95em;
+    line-height: 1;
+  }
+
+  // Feature #208 — In-cell data bars. The bar sits in an absolutely
+  // positioned span behind the value text. Cell wrapper needs `position`
+  // because AG Grid's default ag-cell-value is inline.
+  .display-as-data-bar {
+    overflow: hidden;
+    .ag-cell-wrapper,
+    .ag-cell-value {
+      width: 100%;
+      position: relative;
+    }
+  }
+  .data-bar-cell {
+    font-variant-numeric: tabular-nums;
+  }
+  .data-bar-cell-empty {
+    color: @text-muted;
+  }
+  .data-bar-cell-value {
+    pointer-events: auto;
   }
 
   // Expand chevron column (feature #210)

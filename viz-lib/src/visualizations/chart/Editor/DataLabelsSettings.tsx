@@ -6,7 +6,8 @@ import { EditorPropTypes } from "@/visualizations/prop-types";
 
 export default function DataLabelsSettings({ options, onOptionsChange }: any) {
   const isShowDataLabelsAvailable = includes(
-    ["line", "area", "column", "scatter", "pie", "heatmap"],
+    // Feature #198: waterfall also benefits from inline data labels on each bar
+    ["line", "area", "column", "scatter", "pie", "heatmap", "waterfall"],
     options.globalSeriesType
   );
 

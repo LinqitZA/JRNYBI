@@ -396,6 +396,139 @@ class QueryResultResource(BaseResource):
         return make_response(serialize_query_result_to_xlsx(query_result), 200, headers)
 
 
+# ---------------------------------------------------------------------------
+# Feature #211 — Server-side virtualised paging against the cached result.
+# ---------------------------------------------------------------------------
+# The Table viz can opt into AG Grid's infinite row model when the result set
+# is large (recommended threshold: 100k+ rows). Instead of shipping every row
+# to the browser at once, AG Grid asks for one page at a time. This resource
+# slices the cached `query_result.data["rows"]` payload server-side, applying
+# any caller-provided sort + substring filter so the browser only ever holds
+# the visible window in memory.
+#
+# We deliberately operate on the cached result (rather than re-running the
+# query against the data source) because:
+#   1. Cached results already represent a consistent snapshot — paging through
+#      them does not risk inconsistent windows from a moving target.
+#   2. Slicing in Python is O(rows) and trivially fast next to query
+#      execution; for 500k rows the round-trip is well under a second.
+#   3. It keeps the change surface minimal — no per-runner adapter for OFFSET
+#      / LIMIT semantics.
+#
+# Permission model mirrors QueryResultResource.get(): the caller must have
+# view access to the source data_source.
+class QueryResultPageResource(BaseResource):
+    # Hard cap so a malicious or buggy client can't request a 10M-row "page".
+    # AG Grid's default cacheBlockSize is 100; 5000 leaves plenty of headroom
+    # for clients that want larger blocks while still fitting in one JSON
+    # response.
+    MAX_PAGE_SIZE = 5000
+
+    @require_any_of_permission(("view_query", "execute_query"))
+    def post(self, query_result_id):
+        """
+        Return a paged slice of a cached query result.
+
+        Body (JSON):
+          offset:   int    — zero-based row index to start at (default 0)
+          limit:    int    — max rows to return (default 200, capped at 5000)
+          sort_by:  str    — column name to sort on (optional)
+          sort_dir: str    — 'asc' (default) or 'desc'
+          filter:   str    — substring matched case-insensitively against every
+                              column's string-coerced value (optional)
+
+        Response:
+          {
+            "rows":       [...],     # the requested slice
+            "total_rows": int,       # total after filter, before paging
+            "offset":     int,
+            "limit":      int
+          }
+        """
+        query_result = get_object_or_404(
+            models.QueryResult.get_by_id_and_org, query_result_id, self.current_org
+        )
+        require_access(query_result.data_source, self.current_user, view_only)
+
+        params = request.get_json(force=True, silent=True) or {}
+
+        try:
+            offset = max(0, int(params.get("offset", 0) or 0))
+        except (TypeError, ValueError):
+            offset = 0
+        try:
+            limit = int(params.get("limit", 200) or 200)
+        except (TypeError, ValueError):
+            limit = 200
+        limit = max(1, min(self.MAX_PAGE_SIZE, limit))
+
+        sort_by = params.get("sort_by")
+        sort_dir = (params.get("sort_dir") or "asc").lower()
+        if sort_dir not in ("asc", "desc"):
+            sort_dir = "asc"
+        filter_text = (params.get("filter") or "").strip()
+
+        # `data` is JSONText — already-decoded dict in this codebase.
+        data = query_result.data or {}
+        rows = list(data.get("rows", []) or [])
+
+        # Substring filter — applied before sort so total_rows reflects the
+        # post-filter universe (which is what the grid's "X of Y" UI expects).
+        if filter_text:
+            needle = filter_text.lower()
+            rows = [
+                row for row in rows
+                if any(
+                    needle in str(v).lower()
+                    for v in row.values()
+                    if v is not None
+                )
+            ]
+
+        if sort_by:
+            valid_columns = {c.get("name") for c in (data.get("columns") or [])}
+            if sort_by in valid_columns:
+                def sort_key(row):
+                    v = row.get(sort_by)
+                    # None sorts last in both directions for predictable behaviour.
+                    return (v is None, _comparable(v))
+
+                rows.sort(key=sort_key, reverse=(sort_dir == "desc"))
+
+        total_rows = len(rows)
+        page = rows[offset : offset + limit]
+
+        return {
+            "rows": page,
+            "total_rows": total_rows,
+            "offset": offset,
+            "limit": limit,
+        }
+
+
+def _comparable(value):
+    """Return a sort-friendly proxy for a heterogeneous row cell.
+
+    JSON-decoded rows can mix numbers, strings, booleans, None, and nested
+    lists/dicts. Python 3 refuses to order mixed types, so we coerce to a
+    (kind, value) tuple where `kind` orders by type bucket and `value` is the
+    raw type's natural sort within the bucket.
+    """
+    if isinstance(value, bool):
+        return (0, value)
+    if isinstance(value, (int, float)):
+        # NaN is not orderable — push to the end of the bucket.
+        try:
+            if value != value:  # NaN check
+                return (1, float("inf"))
+        except TypeError:
+            pass
+        return (1, value)
+    if isinstance(value, str):
+        return (2, value)
+    return (3, repr(value))
+
+
 class JobResource(BaseResource):
     def get(self, job_id, query_id=None):
         """

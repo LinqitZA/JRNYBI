@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { first, includes } from "lodash";
 import Menu from "antd/lib/menu";
 import Link from "@/components/Link";
@@ -8,6 +8,7 @@ import CreateDashboardDialog from "@/components/dashboards/CreateDashboardDialog
 import { useCurrentRoute } from "@/components/ApplicationArea/Router";
 import { Auth, currentUser, clientConfig } from "@/services/auth";
 import settingsMenu from "@/services/settingsMenu";
+import theme from "@/services/theme";
 import logoUrl from "@/assets/images/jrnybi_logo.svg";
 
 import DesktopOutlinedIcon from "@ant-design/icons/DesktopOutlined";
@@ -20,7 +21,21 @@ import SettingOutlinedIcon from "@ant-design/icons/SettingOutlined";
 import BookOutlinedIcon from "@ant-design/icons/BookOutlined";
 import ArrowLeftOutlinedIcon from "@ant-design/icons/ArrowLeftOutlined";
 import UserOutlinedIcon from "@ant-design/icons/UserOutlined";
+import BulbOutlinedIcon from "@ant-design/icons/BulbOutlined";
 import VersionInfo from "./VersionInfo";
+
+function ThemeMenuItem({ mode, label, currentMode, onSelect }) {
+  const selected = currentMode === mode;
+  return (
+    <PlainButton
+      data-test={`ThemeMode-${mode}`}
+      className={`theme-mode-item ${selected ? "theme-mode-item-active" : ""}`}
+      onClick={() => onSelect(mode)}>
+      {selected ? "● " : "○ "}
+      {label}
+    </PlainButton>
+  );
+}
 
 function getUserInitials(name) {
   if (!name || typeof name !== "string") return null;
@@ -72,6 +87,17 @@ export default function DesktopNavbar() {
   const firstSettingsTab = first(settingsMenu.getAvailableItems());
 
   const activeState = useNavbarActiveState();
+
+  const [themeMode, setThemeMode] = useState(theme.mode);
+  useEffect(() => {
+    // re-render when a theme change is broadcast (e.g. OS preference flips)
+    const unsubscribe = theme.subscribe(() => setThemeMode(theme.mode));
+    return unsubscribe;
+  }, []);
+  const handleThemeChange = newMode => {
+    theme.setMode(newMode);
+    setThemeMode(newMode);
+  };
 
   const canCreateQuery = currentUser.hasPermission("create_query");
   const canCreateDashboard = currentUser.hasPermission("create_dashboard");
@@ -202,6 +228,25 @@ export default function DesktopNavbar() {
                 <Link href="admin/status">System Status</Link>
               </Menu.Item>
             )}
+            <Menu.Divider />
+            <Menu.SubMenu
+              key="theme"
+              popupClassName="desktop-navbar-submenu"
+              title={
+                <span data-test="ThemeMenu">
+                  <BulbOutlinedIcon /> Theme
+                </span>
+              }>
+              <Menu.Item key="theme-light">
+                <ThemeMenuItem mode="light" label="Light" currentMode={themeMode} onSelect={handleThemeChange} />
+              </Menu.Item>
+              <Menu.Item key="theme-dark">
+                <ThemeMenuItem mode="dark" label="Dark" currentMode={themeMode} onSelect={handleThemeChange} />
+              </Menu.Item>
+              <Menu.Item key="theme-system">
+                <ThemeMenuItem mode="system" label="System" currentMode={themeMode} onSelect={handleThemeChange} />
+              </Menu.Item>
+            </Menu.SubMenu>
             <Menu.Divider />
             <Menu.Item key="logout">
               <PlainButton data-test="LogOutButton" onClick={() => Auth.logout()}>

@@ -3,6 +3,7 @@ from flask_login import login_required
 
 from redash.handlers.api import api
 from redash.handlers.base import routes
+from redash.handlers.digest_subscriptions import unsubscribe_view
 from redash.monitor import get_status
 from redash.permissions import require_super_admin
 from redash.security import talisman
@@ -12,6 +13,15 @@ from redash.security import talisman
 @talisman(force_https=False)
 def ping():
     return "PONG."
+
+
+# Feature #219: token-based unsubscribe — no session required. The signature
+# in `?sig=` is computed off the per-subscription token + SECRET_KEY so this
+# endpoint is safe to expose unauthenticated.
+@routes.route("/api/digest_subscriptions/unsubscribe", methods=["GET"])
+@talisman(force_https=False)
+def digest_unsubscribe():
+    return unsubscribe_view()
 
 
 @routes.route("/status.json")

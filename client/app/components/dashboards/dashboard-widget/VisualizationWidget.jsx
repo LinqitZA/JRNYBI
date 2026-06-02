@@ -19,6 +19,7 @@ import PlainButton from "@/components/PlainButton";
 import ExpandedWidgetDialog from "@/components/dashboards/ExpandedWidgetDialog";
 import EditParameterMappingsDialog from "@/components/dashboards/EditParameterMappingsDialog";
 import VisualizationRenderer from "@/components/visualizations/VisualizationRenderer";
+import SkeletonWidget from "@/components/dashboards/SkeletonWidget";
 
 import Widget from "./Widget";
 
@@ -148,9 +149,15 @@ function VisualizationWidgetFooter({ widget, isPublic, onRefresh, onExpand }) {
   const widgetQueryResult = widget.getQueryResult();
   const updatedAt = invoke(widgetQueryResult, "getUpdatedAt");
   const [refreshClickButtonId, setRefreshClickButtonId] = useState();
+  const isRefreshing = !!refreshClickButtonId;
 
+  // Feature #190: refresh from any of the per-widget buttons triggers the
+  // same onRefresh promise. Whichever button was clicked spins its own
+  // icon; we disable BOTH buttons until the request completes so users
+  // can't spam-fire the same query. The disabled-on-pointer-events style
+  // also prevents accidental double-clicks on slow networks.
   const refreshWidget = buttonId => {
-    if (!refreshClickButtonId) {
+    if (!isRefreshing) {
       setRefreshClickButtonId(buttonId);
       onRefresh().finally(() => setRefreshClickButtonId(null));
     }
@@ -163,20 +170,31 @@ function VisualizationWidgetFooter({ widget, isPublic, onRefresh, onExpand }) {
           <PlainButton
             className="refresh-button hidden-print btn btn-sm btn-default btn-transparent"
             onClick={() => refreshWidget(1)}
+            disabled={isRefreshing}
+            aria-disabled={isRefreshing}
             data-test="RefreshButton">
-            <i className={cx("zmdi zmdi-refresh", { "zmdi-hc-spin": refreshClickButtonId === 1 })} aria-hidden="true" />
+            <i
+              className={cx("zmdi zmdi-refresh", { "zmdi-hc-spin": refreshClickButtonId === 1 })}
+              aria-hidden="true"
+            />
             <span className="sr-only">
-              {refreshClickButtonId === 1 ? "Refreshing, please wait. " : "Press to refresh. "}
+              {isRefreshing ? "Refreshing, please wait. " : "Press to refresh. "}
             </span>{" "}
-            <TimeAgo date={updatedAt} />
+            <span data-test="WidgetLastUpdated">
+              {/* Feature #190: explicit "Last updated" label so users can tell
+                  the chip is freshness information, not metadata. TimeAgo
+                  re-renders every 30s via its own useEffect interval. */}
+              Last updated <TimeAgo date={updatedAt} />
+            </span>
           </PlainButton>
         )}
         <span className="visible-print">
           <i className="zmdi zmdi-time-restore" aria-hidden="true" /> {formatDateTime(updatedAt)}
         </span>
         {isPublic && (
-          <span className="small hidden-print">
-            <i className="zmdi zmdi-time-restore" aria-hidden="true" /> <TimeAgo date={updatedAt} />
+          <span className="small hidden-print" data-test="WidgetLastUpdated">
+            <i className="zmdi zmdi-time-restore" aria-hidden="true" /> Last updated{" "}
+            <TimeAgo date={updatedAt} />
           </span>
         )}
       </span>
@@ -184,10 +202,16 @@ function VisualizationWidgetFooter({ widget, isPublic, onRefresh, onExpand }) {
         {!isPublic && (
           <PlainButton
             className="btn btn-sm btn-default hidden-print btn-transparent btn__refresh"
-            onClick={() => refreshWidget(2)}>
-            <i className={cx("zmdi zmdi-refresh", { "zmdi-hc-spin": refreshClickButtonId === 2 })} aria-hidden="true" />
+            onClick={() => refreshWidget(2)}
+            disabled={isRefreshing}
+            aria-disabled={isRefreshing}
+            data-test="RefreshButtonSecondary">
+            <i
+              className={cx("zmdi zmdi-refresh", { "zmdi-hc-spin": refreshClickButtonId === 2 })}
+              aria-hidden="true"
+            />
             <span className="sr-only">
-              {refreshClickButtonId === 2 ? "Refreshing, please wait." : "Press to refresh."}
+              {isRefreshing ? "Refreshing, please wait." : "Press to refresh."}
             </span>
           </PlainButton>
         )}
@@ -291,26 +315,29 @@ class VisualizationWidget extends React.Component {
       case "done":
         return (
           <div className="body-row-auto scrollbox">
+            {/* Feature #213 — widgetId + widgetName threaded through so the
+                cross-filter bus can identify the source of a click and skip
+                applying the filter back onto the originating widget. */}
             <VisualizationRenderer
               visualization={widget.visualization}
               queryResult={widgetQueryResult}
               filters={filters}
               onFiltersChange={this.onLocalFiltersChange}
               context="widget"
+              widgetId={widget.id}
+              widgetName={
+                widget.getQuery && widget.getQuery() ? widget.getQuery().name : undefined
+              }
             />
           </div>
         );
       default:
+        // Skeleton placeholder shaped like the eventual visualization.
+        // Fills the widget grid cell so the dashboard layout doesn't shift
+        // when the data arrives. Replaces the previous twitchy spinner.
         return (
-          <div
-            className="body-row-auto spinner-container"
-            role="status"
-            aria-live="polite"
-            aria-relevant="additions removals">
-            <div className="spinner">
-              <i className="zmdi zmdi-refresh zmdi-hc-spin zmdi-hc-5x" aria-hidden="true" />
-              <span className="sr-only">Loading...</span>
-            </div>
+          <div className="body-row-auto" aria-live="polite" aria-relevant="additions removals">
+            <SkeletonWidget visualizationType={widget.visualization && widget.visualization.type} />
           </div>
         );
     }

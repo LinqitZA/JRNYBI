@@ -10,6 +10,14 @@
 import React from "react";
 import enzyme from "enzyme";
 
+// Mock the SheetJS-backed excel-export utility so feature #212 tests don't
+// poke at File / Blob APIs missing in the jsdom test env. We just want to
+// observe that the button click calls downloadExcel with the right args.
+jest.mock("@/lib/excel-export", () => ({
+  downloadExcel: jest.fn(),
+}));
+import { downloadExcel } from "@/lib/excel-export";
+
 import Renderer from "./Renderer";
 import getOptions from "./getOptions";
 
@@ -108,6 +116,114 @@ describe("Visualizations -> Table -> Renderer (AG Grid)", () => {
     expect(byField("id").pinned).toBe("left");
     expect(byField("name").pinned).toBeNull();
     expect(byField("revenue").pinned).toBe("right");
+  });
+
+  test("Server-side virtualisation switches the grid into infinite row model (feature #211)", () => {
+    const el = mount(sampleData, {
+      enableServerSideVirtualization: true,
+      queryResultId: 999,
+      serverSidePageSize: 250,
+      columns: [
+        { name: "id", visible: true, order: 0, displayAs: "number" },
+        { name: "name", visible: true, order: 1, displayAs: "string" },
+        { name: "revenue", visible: true, order: 2, displayAs: "number" },
+      ],
+    });
+    const agGrid = el.find("AgGridReact").first();
+    expect(agGrid.prop("rowModelType")).toBe("infinite");
+    expect(agGrid.prop("cacheBlockSize")).toBe(250);
+    // datasource should be defined
+    expect(typeof (agGrid.prop("datasource") as any).getRows).toBe("function");
+    // Container should carry the server-side variant class
+    expect(el.find(".ag-jrnybi-theme-serverside")).toHaveLength(1);
+    // Indicator data-test attribute exists for browser testing
+    expect(el.find('[data-test="TableServerSide"]')).toHaveLength(1);
+  });
+
+  test("Server-side virtualisation falls back to client-side when no queryResultId (feature #211)", () => {
+    const el = mount(sampleData, {
+      enableServerSideVirtualization: true,
+      // queryResultId intentionally omitted
+      columns: [
+        { name: "id", visible: true, order: 0, displayAs: "number" },
+      ],
+    });
+    const agGrid = el.find("AgGridReact").first();
+    // Without an id we can't talk to the paged endpoint — stay on client-side path.
+    expect(agGrid.prop("rowModelType")).toBeUndefined();
+    expect(agGrid.prop("rowData")).toBeDefined();
+  });
+
+  test("Shows an 'Export to Excel' button when rows are present (feature #212)", () => {
+    const el = mount(sampleData, {
+      columns: [
+        { name: "id", visible: true, order: 0, displayAs: "number" },
+        { name: "name", visible: true, order: 1, displayAs: "string" },
+      ],
+    });
+    expect(el.find('[data-test="TableExportExcel"]').exists()).toBe(true);
+  });
+
+  test("Hides the export button when no rows (feature #212)", () => {
+    const el = mount({ columns: sampleData.columns, rows: [] });
+    expect(el.html()).toBeNull();
+  });
+
+  test("Hides the export button when explicitly disabled via options (feature #212)", () => {
+    const el = mount(sampleData, {
+      showExcelExport: false,
+      columns: [{ name: "id", visible: true, order: 0, displayAs: "number" }],
+    });
+    expect(el.find('[data-test="TableExportExcel"]').exists()).toBe(false);
+  });
+
+  test("Clicking 'Export to Excel' calls downloadExcel with column metadata (feature #212)", () => {
+    (downloadExcel as jest.Mock).mockClear();
+    const el = mount(sampleData, {
+      exportFilenameStem: "sales-q3",
+      exportSheetName: "Sales",
+      columns: [
+        {
+          name: "id",
+          visible: true,
+          order: 0,
+          displayAs: "number",
+          title: "ID",
+        },
+        {
+          name: "name",
+          visible: true,
+          order: 1,
+          displayAs: "string",
+          title: "Customer",
+        },
+        {
+          name: "revenue",
+          visible: true,
+          order: 2,
+          displayAs: "number",
+          title: "Revenue",
+          numberFormat: "0,0.00",
+        },
+      ],
+    });
+
+    el.find('[data-test="TableExportExcel"]').first().simulate("click");
+
+    expect(downloadExcel).toHaveBeenCalledTimes(1);
+    const callArgs = (downloadExcel as jest.Mock).mock.calls[0];
+    const [exportedColumns, exportedRows, filename, opts] = callArgs;
+    // Column metadata should be forwarded: title, displayAs, numberFormat
+    const revenueCol = exportedColumns.find((c: any) => c.name === "revenue");
+    expect(revenueCol).toBeDefined();
+    expect(revenueCol.title).toBe("Revenue");
+    expect(revenueCol.numberFormat).toBe("0,0.00");
+    expect(revenueCol.displayAs).toBe("number");
+    // Data rows passed through unchanged
+    expect(exportedRows).toEqual(sampleData.rows);
+    // Filename + sheet name come from the options
+    expect(filename).toBe("sales-q3");
+    expect(opts.sheetName).toBe("Sales");
   });
 
   test("Inserts a leading expand column when detailQuery is configured (feature #210)", () => {

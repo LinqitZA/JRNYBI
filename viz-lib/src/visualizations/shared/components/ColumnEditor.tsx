@@ -5,6 +5,8 @@ import * as Grid from "antd/lib/grid";
 import { Section, Select, Input, Checkbox, TextAlignmentSelect } from "@/components/visualizations/editor";
 
 import ColumnTypes from "../columns";
+import ConditionalFormattingEditor from "@/visualizations/table/Editor/ConditionalFormattingEditor";
+import { Rule } from "@/visualizations/shared/conditionalFormatting";
 
 type Column = {
   name: string;
@@ -15,6 +17,9 @@ type Column = {
   description?: string;
   allowSearch?: boolean;
   pinned?: "none" | "left" | "right";
+  // Feature #207 — conditional formatting rules. Evaluated top-to-bottom,
+  // first match wins. Implementation in shared/conditionalFormatting.ts.
+  conditionalFormatting?: Rule[];
 };
 
 type ColumnEditorProps = {
@@ -135,6 +140,28 @@ export default function ColumnEditor({
       </Section>
 
       {AdditionalOptions && <AdditionalOptions column={column} onChange={handleChange} />}
+
+      {variant === "table" && (
+        /* Feature #207 — Conditional formatting per column.
+           Mounted last so per-displayAs options stay grouped at top. */
+        // @ts-expect-error Section children typing
+        <Section>
+          <ControlLabelHeading>Conditional formatting</ControlLabelHeading>
+          <ConditionalFormattingEditor
+            rules={column.conditionalFormatting}
+            onChange={(rules: Rule[]) => handleChange({ conditionalFormatting: rules })}
+            testPrefix={`${dataTestPrefix}.CondFmt`}
+          />
+        </Section>
+      )}
+    </div>
+  );
+}
+
+function ControlLabelHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6, color: "#1f2937" }}>
+      {children}
     </div>
   );
 }

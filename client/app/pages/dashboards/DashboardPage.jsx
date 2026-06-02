@@ -10,6 +10,9 @@ import DynamicComponent from "@/components/DynamicComponent";
 import DashboardGrid from "@/components/dashboards/DashboardGrid";
 import Parameters from "@/components/Parameters";
 import Filters from "@/components/Filters";
+import CrossFilterChips from "@/components/dashboards/CrossFilterChips";
+import { CrossFilterProvider } from "@/services/crossFilterBus";
+import DrillBreadcrumbs from "@/components/dashboards/DrillBreadcrumbs";
 
 import { Dashboard } from "@/services/dashboard";
 import recordEvent from "@/services/recordEvent";
@@ -171,6 +174,15 @@ function DashboardComponent(props) {
           <Filters filters={filters} onChange={setFilters} />
         </div>
       )}
+      {/* Feature #214 — drill-down breadcrumb stack. Reads ?drill=<base64>
+          out of the URL and shows one chip per parent step + a Back button.
+          Hidden when no drill stack is present, so dashboards opened
+          directly are visually unchanged. */}
+      <DrillBreadcrumbs currentName={dashboard.name} />
+      {/* Feature #213 — active cross-filters chip bar. Renders nothing
+          when no widget has dispatched a click-driven filter, so existing
+          dashboards see no layout change unless the feature is in use. */}
+      <CrossFilterChips />
       {editingLayout && <DashboardSettings dashboardConfiguration={dashboardConfiguration} />}
       <div id="dashboard-container">
         <DashboardGrid
@@ -215,7 +227,19 @@ function DashboardPage({ dashboardSlug, dashboardId, onError }) {
       .catch(handleError);
   }, [dashboardId, dashboardSlug, handleError]);
 
-  return <div className="dashboard-page">{dashboard && <DashboardComponent dashboard={dashboard} />}</div>;
+  return (
+    <div className="dashboard-page">
+      {/* Feature #213 — wrap the whole dashboard in a CrossFilterProvider so
+          every widget shares one bus and the chip bar above the grid can
+          read/clear filters. The provider is scoped per dashboard so opening
+          two dashboards in different tabs doesn't bleed state across. */}
+      {dashboard && (
+        <CrossFilterProvider>
+          <DashboardComponent dashboard={dashboard} />
+        </CrossFilterProvider>
+      )}
+    </div>
+  );
 }
 
 DashboardPage.propTypes = {

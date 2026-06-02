@@ -1,3 +1,6 @@
+import math
+from datetime import datetime
+
 import sqlparse
 from flask import jsonify, request, url_for
 from flask_login import login_required
@@ -525,3 +528,232 @@ class QueryFavoriteListResource(BaseResource):
         )
 
         return response
+
+
+def _coerce_float(value):
+    """Best-effort conversion of arbitrary cell value to float, or None."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        # bool is a subclass of int; reject it as not a numeric measurement
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            f = float(value)
+        except (TypeError, ValueError):
+            return None
+        if math.isnan(f) or math.isinf(f):
+            return None
+        return f
+    if isinstance(value, str):
+        try:
+            f = float(value)
+        except (TypeError, ValueError):
+            return None
+        if math.isnan(f) or math.isinf(f):
+            return None
+        return f
+    return None
+
+
+def _autodetect_columns(columns, rows):
+    """Pick a sensible x (time/category) and y (numeric) column from a query result."""
+    if not columns or not rows:
+        return None, None
+
+    time_types = {"date", "datetime", "datetime-no-second", "time"}
+    numeric_types = {"integer", "float", "number"}
+
+    x_col = None
+    y_col = None
+    for c in columns:
+        name = c.get("name")
+        ftype = (c.get("friendly_type") or c.get("type") or "").lower()
+        if x_col is None and ftype in time_types:
+            x_col = name
+        elif y_col is None and ftype in numeric_types:
+            y_col = name
+
+    # Fallback heuristic: scan first row values
+    if x_col is None or y_col is None:
+        sample = rows[0] if rows else {}
+        for c in columns:
+            name = c.get("name")
+            if x_col is None:
+                v = sample.get(name)
+                if isinstance(v, str) and len(v) >= 8 and ("-" in v or "/" in v or ":" in v):
+                    x_col = name
+            if y_col is None and _coerce_float(sample.get(name)) is not None:
+                # Don't pick the same column as both x and y
+                if name != x_col:
+                    y_col = name
+
+    return x_col, y_col
+
+
+def _sort_key_for_x(x_value):
+    """Best-effort comparable key for x values (datetime parsed if possible)."""
+    if x_value is None:
+        return (1, "")
+    if isinstance(x_value, (int, float)):
+        return (0, float(x_value))
+    if isinstance(x_value, str):
+        # Try common ISO datetime / date prefixes
+        for fmt in (
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d",
+            "%Y/%m/%d %H:%M:%S",
+            "%Y/%m/%d",
+        ):
+            try:
+                # Strip trailing fractional seconds / timezone if present
+                trimmed = x_value[:19] if "T" in x_value or " " in x_value else x_value[:10]
+                return (0, datetime.strptime(trimmed, fmt).timestamp())
+            except (ValueError, TypeError):
+                continue
+        return (0, x_value)
+    return (1, str(x_value))
+
+
+def _compute_anomalies(rows, x_col, y_col, window, threshold):
+    """
+    Rolling-window z-score anomaly detection.
+
+    For each point i, compute the mean and standard deviation of the previous
+    `window` y-values (excluding the point itself, so the point can't dominate
+    its own band). Flag points whose |z| >= threshold.
+
+    Returns a dict: { points, bounds, summary }
+      - points: list of {index, x, y, z, mean, stddev, direction}
+      - bounds: list of {x, upper, lower, mean}
+      - summary: {count, threshold, window, x_col, y_col, total_points}
+    """
+    # Build (x, y, original_index) for points where y is numeric
+    series = []
+    for i, row in enumerate(rows):
+        y = _coerce_float(row.get(y_col))
+        if y is None:
+            continue
+        x = row.get(x_col)
+        series.append((x, y, i))
+
+    # Sort by x to make rolling window meaningful in time order
+    series.sort(key=lambda t: _sort_key_for_x(t[0]))
+
+    bounds = []
+    anomalies = []
+    for i, (x, y, original_index) in enumerate(series):
+        window_start = max(0, i - window)
+        window_vals = [series[j][1] for j in range(window_start, i)]
+        n = len(window_vals)
+        if n < 3:
+            # Not enough history for meaningful statistics
+            bounds.append({"x": x, "upper": None, "lower": None, "mean": None})
+            continue
+        mean = sum(window_vals) / n
+        var = sum((v - mean) ** 2 for v in window_vals) / n
+        stddev = math.sqrt(var)
+
+        upper = mean + threshold * stddev
+        lower = mean - threshold * stddev
+        bounds.append({"x": x, "upper": upper, "lower": lower, "mean": mean})
+
+        if stddev > 0:
+            z = (y - mean) / stddev
+        else:
+            z = 0.0 if y == mean else float("inf") if y > mean else float("-inf")
+
+        if abs(z) >= threshold and math.isfinite(z):
+            direction = "above" if z > 0 else "below"
+            anomalies.append(
+                {
+                    "index": original_index,
+                    "x": x,
+                    "y": y,
+                    "z": round(z, 2),
+                    "mean": mean,
+                    "stddev": stddev,
+                    "direction": direction,
+                }
+            )
+
+    return {
+        "points": anomalies,
+        "bounds": bounds,
+        "summary": {
+            "count": len(anomalies),
+            "threshold": threshold,
+            "window": window,
+            "x_column": x_col,
+            "y_column": y_col,
+            "total_points": len(series),
+        },
+    }
+
+
+class QueryAnomaliesResource(BaseResource):
+    """
+    Detect anomalies in a time series for a query's latest cached result.
+
+    Computes a rolling-window z-score for the chosen y column ordered by the
+    chosen x column. Returns flagged points + expected upper/lower bounds per x.
+
+    Query parameters:
+      x: x-axis column name (autodetected if omitted - first datetime column)
+      y: y-axis column name (autodetected if omitted - first numeric column)
+      window: rolling window size (default 30)
+      threshold: z-score magnitude that flags a point (default 2.0)
+    """
+
+    @require_permission("view_query")
+    def get(self, query_id):
+        query = get_object_or_404(models.Query.get_by_id_and_org, query_id, self.current_org)
+        require_access(query, self.current_user, view_only)
+
+        if not query.latest_query_data or not query.latest_query_data.data:
+            return {
+                "error": "no_data",
+                "message": "Query has no cached results. Execute the query first.",
+            }, 400
+
+        data = query.latest_query_data.data
+        columns = data.get("columns") or []
+        rows = data.get("rows") or []
+
+        x_col = request.args.get("x")
+        y_col = request.args.get("y")
+        if not x_col or not y_col:
+            auto_x, auto_y = _autodetect_columns(columns, rows)
+            x_col = x_col or auto_x
+            y_col = y_col or auto_y
+
+        if not x_col or not y_col:
+            return {
+                "error": "cannot_detect_columns",
+                "message": "Could not auto-detect x (time) and y (numeric) columns. Pass ?x=<col>&y=<col>.",
+            }, 400
+
+        try:
+            window = int(request.args.get("window", 30))
+        except (TypeError, ValueError):
+            window = 30
+        try:
+            threshold = float(request.args.get("threshold", 2.0))
+        except (TypeError, ValueError):
+            threshold = 2.0
+
+        window = max(3, min(window, 1000))
+        threshold = max(0.5, min(threshold, 10.0))
+
+        result = _compute_anomalies(rows, x_col, y_col, window, threshold)
+
+        self.record_event(
+            {
+                "action": "compute_anomalies",
+                "object_id": query.id,
+                "object_type": "query",
+            }
+        )
+
+        return result

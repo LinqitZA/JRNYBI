@@ -141,7 +141,7 @@ const config = {
       // Make a global `process` variable that points to the `process` package,
       // because the `util` package expects there to be a global variable named `process`.
       // Thanks to https://stackoverflow.com/a/65018686/14239942
-      process: 'process/browser'
+      process: 'process/browser.js'
     })
   ].filter(Boolean),
   optimization: {
@@ -154,7 +154,7 @@ const config = {
   module: {
     rules: [
       {
-        test: /\.js$/,
+        test: /\.m?js$/,
         enforce: "pre",
         use: ["source-map-loader"],
         resolve: {

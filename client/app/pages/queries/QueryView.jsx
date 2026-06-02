@@ -27,6 +27,7 @@ import QueryMetadata from "./components/QueryMetadata";
 import wrapQueryPage from "./components/wrapQueryPage";
 import QueryViewButton from "./components/QueryViewButton";
 import QueryExecutionMetadata from "./components/QueryExecutionMetadata";
+import SkeletonWidget from "@/components/dashboards/SkeletonWidget";
 
 import useVisualizationTabHandler from "./hooks/useVisualizationTabHandler";
 import useQueryExecute from "./hooks/useQueryExecute";
@@ -186,6 +187,14 @@ function QueryView(props) {
               }
               canRefresh={policy.canRun(query)}
             />
+          )}
+          {/* Skeleton preview while the very first query result is loading.
+              After the first result arrives, QueryVisualizationTabs renders
+              and the in-tab spinner / SkeletonWidget takes over on refresh. */}
+          {!loadedInitialResults && isExecuting && (
+            <div className="query-result-skeleton" data-test="QueryResultSkeleton">
+              <SkeletonWidget variant="TABLE" />
+            </div>
           )}
           <div className="query-results-footer">
             {queryResult && !queryResult.getError() && (

@@ -136,6 +136,89 @@ export default function initChart(container: any, options: any, data: any, addit
                 console.error('Click error: [%s]', error.message, { error });
               }
             }
+
+            // Feature #214 — drill-down on click.
+            //
+            // The host injects `options.onDrillDown(sourceRow, meta)` when
+            // visualization.options.drillDown.target is configured. We
+            // resolve the clicked source row (the raw query row that
+            // produced the bar/slice) and hand it to the host, which builds
+            // the target URL + pushes a breadcrumb step.
+            // Drill-down takes precedence over cross-filter when both are
+            // wired: drill-down navigates away, so dispatching a cross-
+            // filter onto the parent dashboard's bus would leak state into
+            // a page the user is leaving.
+            let drillDispatched = false;
+            try {
+              if (typeof options.onDrillDown === "function" && options.drillDown && options.drillDown.target) {
+                const point = (data && data.points && data.points[0]) || null;
+                if (point) {
+                  const sourceRow =
+                    [...(point.data?.sourceData?.entries?.() ?? [])][point.pointNumber ?? 0]?.[1]
+                      ?.row ?? {};
+                  options.onDrillDown(sourceRow, { plotlyPoint: point });
+                  drillDispatched = true;
+                }
+              }
+            } catch (error) {
+              console.error("Drill-down dispatch failed:", error);
+            }
+            if (drillDispatched) return;
+
+            // Feature #213 — cross-filter on click.
+            //
+            // When a host (dashboard) registers an `onCrossFilter` callback
+            // and cross-filtering is enabled (default ON when the host
+            // injects the callback), translate the click into a
+            // (dimension, value) dispatch. Dimension defaults to the chart's
+            // x-column name (options.columnMapping["x"] or the raw `x`
+            // mapping); the host can override via
+            // `options.crossFilter.dimension`. Value is the x-coordinate of
+            // the clicked point.
+            //
+            // The chart never dispatches its own filter back onto itself —
+            // that responsibility lives in the bus (sourceWidgetId match) so
+            // the click handler can stay simple here.
+            try {
+              if (
+                typeof options.onCrossFilter === "function" &&
+                options.crossFilter !== false &&
+                (!options.crossFilter || options.crossFilter.enabled !== false)
+              ) {
+                const point = (data && data.points && data.points[0]) || null;
+                if (point) {
+                  // Pull the raw row first — Plotly's `x` is post-formatted,
+                  // and sourceData carries the value the column was indexed
+                  // by (matches what the back-end returned).
+                  const sourceRow =
+                    [...(point.data?.sourceData?.entries?.() ?? [])][point.pointNumber ?? 0]?.[1]
+                      ?.row ?? {};
+                  const xMapping = options.columnMapping
+                    ? Object.keys(options.columnMapping).find(
+                        (k: string) => options.columnMapping[k] === "x"
+                      )
+                    : null;
+                  const dimension =
+                    (options.crossFilter && options.crossFilter.dimension) ||
+                    xMapping ||
+                    "x";
+                  // Prefer the raw x off the source row (un-formatted, what
+                  // the SQL produced). Fall back to point.x for cases where
+                  // sourceData isn't populated (e.g. preset charts).
+                  let value = sourceRow.x;
+                  if (value === undefined || value === null) {
+                    value = point.x;
+                  }
+                  options.onCrossFilter(dimension, value, {
+                    label: point.x != null ? String(point.x) : undefined,
+                  });
+                }
+              }
+            } catch (error) {
+              // Don't break the whole click path if the host's callback throws.
+              // eslint-disable-next-line no-console
+              console.error("Cross-filter dispatch failed:", error);
+            }
           }));
 
         unwatchResize = resizeObserver(

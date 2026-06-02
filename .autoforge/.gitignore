@@ -5,6 +5,9 @@ features.db-shm
 assistant.db
 assistant.db-wal
 assistant.db-shm
+agent_sessions.db
+agent_sessions.db-wal
+agent_sessions.db-shm
 .agent.lock
 .devserver.lock
 .pause_drain
@@ -13,3 +16,4 @@ assistant.db-shm
 .claude_settings.expand.*.json
 .progress_cache
 .migration_version
+project_settings.json

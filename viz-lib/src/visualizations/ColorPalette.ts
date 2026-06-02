@@ -74,6 +74,44 @@ const D3Category10 = {
   10 : "#17becf",
 }
 
+// ---------------------------------------------------------------------------
+// JRNY palette — synced with client/app/assets/less/jrny-theme.less
+//
+// Categorical: WCAG-AA contrast, deuteranopia-tested. Neighbouring entries
+// diverge in both hue AND luminance so series stay distinguishable in
+// greyscale or with red-green colour blindness.
+//
+// Semantic: positive / negative / warning / neutral / info — used by the
+// counter visualization and table conditional formatting.
+// ---------------------------------------------------------------------------
+export const JrnyCategorical = {
+  1: "#4e79a7", // steel blue
+  2: "#f28e2b", // burnt orange
+  3: "#59a14f", // muted green
+  4: "#e15759", // coral red
+  5: "#76b7b2", // teal
+  6: "#edc948", // mustard
+  7: "#b07aa1", // dusty purple
+  8: "#ff9da7", // peach pink
+  9: "#9c755f", // brown
+  10: "#bab0ac", // warm grey
+};
+
+export const JrnySemantic = {
+  positive:    "#117a3b",
+  positiveBg:  "#d1fae5",
+  negative:    "#b42318",
+  negativeBg:  "#fee2e2",
+  warning:     "#b54708",
+  warningBg:   "#fef3c7",
+  neutral:     "#475569",
+  neutralBg:   "#f1f5f9",
+  info:        "#1d4ed8",
+  infoBg:      "#dbeafe",
+};
+
+export const JrnyCategoricalArray = values(JrnyCategorical);
+
 let ColorPalette = {
   ...BaseColors,
   ...AdditionalColors,
@@ -84,6 +122,7 @@ export const ColorPaletteArray = values(ColorPalette);
 export default ColorPalette;
 
 export const AllColorPalettes = {
+  "JRNY" : JrnyCategorical,
   "Redash" : ColorPalette,
   "Viridis" : Viridis,
   "Tableau 10" : Tableau,
@@ -91,6 +130,7 @@ export const AllColorPalettes = {
 }
 
 export const AllColorPaletteArrays = {
+  "JRNY" : JrnyCategoricalArray,
   "Redash" : ColorPaletteArray,
   "Viridis" : values(Viridis),
   "Tableau 10" : values(Tableau),
@@ -98,6 +138,7 @@ export const AllColorPaletteArrays = {
 };
 
 export const ColorPaletteTypes = {
+  "JRNY" : 'discrete',
   "Redash" : 'discrete',
   "Viridis" : 'continuous',
   "Tableau 10" : 'discrete',

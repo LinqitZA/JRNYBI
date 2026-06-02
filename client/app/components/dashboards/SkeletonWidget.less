@@ -1,0 +1,144 @@
+/**
+ * SkeletonWidget — placeholder shimmer styles.
+ *
+ * Uses the JRNY semantic surface tokens (see jrny-theme.less) so the shimmer
+ * stays visible in both light and dark mode. In dark mode the surface
+ * tokens flip and the shimmer becomes a subtle lighter slate sweep.
+ */
+
+@keyframes jrny-skeleton-pulse {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.jrny-skeleton {
+  width: 100%;
+  height: 100%;
+  min-height: 120px;
+  padding: 16px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+
+.jrny-skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--jrny-surface-3, #f1f5f9) 0%,
+    var(--jrny-surface-2, #e2e8f0) 50%,
+    var(--jrny-surface-3, #f1f5f9) 100%
+  );
+  background-size: 200% 100%;
+  animation: jrny-skeleton-pulse 1.6s ease-in-out infinite;
+  border-radius: 4px;
+}
+
+// Counter ---------------------------------------------------------------
+.jrny-skeleton-counter {
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+
+  .jrny-skeleton-counter-value {
+    width: 65%;
+    height: 56px;
+  }
+  .jrny-skeleton-counter-label {
+    width: 45%;
+    height: 18px;
+  }
+}
+
+// Table -----------------------------------------------------------------
+.jrny-skeleton-table {
+  gap: 8px;
+
+  .jrny-skeleton-table-header,
+  .jrny-skeleton-table-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+  }
+
+  .jrny-skeleton-table-cell {
+    height: 14px;
+  }
+
+  .jrny-skeleton-table-header .jrny-skeleton-table-cell {
+    height: 18px;
+  }
+
+  .jrny-skeleton-table-body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 4px;
+  }
+}
+
+// Chart (bars) ----------------------------------------------------------
+.jrny-skeleton-chart {
+  position: relative;
+  height: 100%;
+
+  .jrny-skeleton-chart-axis {
+    height: 12px;
+    margin-bottom: 8px;
+
+    .jrny-skeleton-chart-axis-label {
+      width: 40%;
+      height: 100%;
+    }
+  }
+
+  .jrny-skeleton-chart-bars {
+    flex: 1;
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    min-height: 80px;
+  }
+
+  .jrny-skeleton-chart-bar {
+    flex: 1;
+    min-height: 8px;
+  }
+}
+
+// Pie ------------------------------------------------------------------
+.jrny-skeleton-pie {
+  flex-direction: row;
+  align-items: center;
+  gap: 24px;
+
+  .jrny-skeleton-pie-circle {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+  }
+
+  .jrny-skeleton-pie-legend {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .jrny-skeleton-pie-legend-item {
+    height: 12px;
+    width: 60%;
+  }
+}
+
+// Dark mode shimmer — slightly brighter highlight on the slate base so the
+// motion stays visible on .jrny-theme-dark surfaces.
+.jrny-theme-dark .jrny-skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--jrny-surface-2, #1e293b) 0%,
+    var(--jrny-surface-3, #334155) 50%,
+    var(--jrny-surface-2, #1e293b) 100%
+  );
+  background-size: 200% 100%;
+}

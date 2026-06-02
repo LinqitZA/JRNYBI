@@ -27,6 +27,7 @@ import ViewSuggestionBanner from "@/components/queries/ViewSuggestionBanner";
 import SelectStarHintBanner from "@/components/queries/SelectStarHintBanner";
 import FKHintBanner from "@/components/queries/FKHintBanner";
 import FanOutWarningBanner from "@/components/queries/FanOutWarningBanner";
+import SkeletonWidget from "@/components/dashboards/SkeletonWidget";
 
 import { getEditorComponents } from "@/components/queries/editor-components";
 import useQuery from "./hooks/useQuery";
@@ -445,6 +446,11 @@ function QuerySource(props) {
                           {line}
                         </p>
                       ))}
+                    </div>
+                  )}
+                  {!loadedInitialResults && isQueryExecuting && (
+                    <div className="query-result-skeleton" data-test="QueryResultSkeleton">
+                      <SkeletonWidget variant="TABLE" />
                     </div>
                   )}
                   {loadedInitialResults && !(queryFlags.isNew && !queryResult) && (

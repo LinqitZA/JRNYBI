@@ -227,6 +227,19 @@ export default function updateData(seriesList: any, options: any) {
         break;
       case "heatmap":
         break;
+      case "waterfall":
+        // Feature #198: Waterfall data already shaped by prepareWaterfallData.
+        // Plotly renders text from the trace directly; no unification needed.
+        break;
+      case "bullet":
+        // Feature #199: Bullet indicators are self-formatting via Plotly's
+        // number/delta blocks. No data unification or text-template step.
+        break;
+      case "slope":
+        // Feature #204: Slope chart sets its own endpoint labels in
+        // prepareSlopeData; running updateSeriesText here would overwrite
+        // them with the default "(y)" / "(yPercent (y))" templates.
+        break;
       default:
         updateDefaultData(visibleSeriesList, options);
         break;

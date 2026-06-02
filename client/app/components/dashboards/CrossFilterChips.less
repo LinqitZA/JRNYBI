@@ -1,0 +1,55 @@
+// Feature #213 — Cross-filter chip bar styling. Sits below the parameters bar
+// and matches the rest of the dashboard top-of-page tiled controls.
+
+.dashboard-cross-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+
+  .cross-filter-chips-label {
+    font-weight: 600;
+    color: #555;
+    margin-right: 4px;
+    white-space: nowrap;
+
+    .fa-filter {
+      margin-right: 4px;
+      color: #1890ff;
+    }
+  }
+
+  .cross-filter-chips-list {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .cross-filter-chip {
+    display: inline-flex;
+    align-items: center;
+    margin: 0;
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    strong {
+      font-weight: 600;
+      margin-right: 4px;
+    }
+
+    .cross-filter-chip-source {
+      color: rgba(0, 0, 0, 0.45);
+      margin-left: 6px;
+      font-size: 11px;
+    }
+  }
+
+  .cross-filter-chips-clear {
+    margin-left: auto;
+    padding: 0 4px;
+  }
+}

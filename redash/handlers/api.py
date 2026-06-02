@@ -45,6 +45,11 @@ from redash.handlers.favorites import (
     QueryFavoriteResource,
 )
 from redash.handlers.jrny_data_dictionary import JRNYDataDictionaryResource
+from redash.handlers.digest_subscriptions import (
+    DigestSubscriptionListResource,
+    DigestSubscriptionResource,
+)
+from redash.handlers.explain import ExplainResource
 from redash.handlers.groups import (
     GroupDataSourceListResource,
     GroupDataSourceResource,
@@ -59,6 +64,7 @@ from redash.handlers.permissions import (
 )
 from redash.handlers.queries import (
     MyQueriesResource,
+    QueryAnomaliesResource,
     QueryArchiveResource,
     QueryFavoriteListResource,
     QueryForkResource,
@@ -75,6 +81,7 @@ from redash.handlers.query_results import (
     QueryDropdownsResource,
     QueryResultDropdownResource,
     QueryResultListResource,
+    QueryResultPageResource,
     QueryResultResource,
 )
 from redash.handlers.query_snippets import (
@@ -211,6 +218,7 @@ api.add_org_resource(QueryArchiveResource, "/api/queries/archive", endpoint="que
 api.add_org_resource(QueryListResource, "/api/queries", endpoint="queries")
 api.add_org_resource(MyQueriesResource, "/api/queries/my", endpoint="my_queries")
 api.add_org_resource(QueryRefreshResource, "/api/queries/<query_id>/refresh", endpoint="query_refresh")
+api.add_org_resource(QueryAnomaliesResource, "/api/queries/<query_id>/anomalies", endpoint="query_anomalies")
 api.add_org_resource(QueryResource, "/api/queries/<query_id>", endpoint="query")
 api.add_org_resource(QueryForkResource, "/api/queries/<query_id>/fork", endpoint="query_fork")
 api.add_org_resource(
@@ -255,6 +263,14 @@ api.add_org_resource(
     "/api/jobs/<job_id>",
     "/api/queries/<query_id>/jobs/<job_id>",
     endpoint="job",
+)
+
+# Feature #211 — server-side paged access to cached results for AG Grid's
+# infinite row model. See QueryResultPageResource.post for the request shape.
+api.add_org_resource(
+    QueryResultPageResource,
+    "/api/query_results/<query_result_id>/page",
+    endpoint="query_result_page",
 )
 
 api.add_org_resource(UserListResource, "/api/users", endpoint="users")
@@ -306,4 +322,23 @@ api.add_org_resource(
     JRNYReportCategoryResource,
     "/api/jrny/report-categories/<category_id>",
     endpoint="jrny_report_category",
+)
+
+# Feature #219: insight-digest subscriptions (Tableau-Pulse-style emails).
+api.add_org_resource(
+    DigestSubscriptionListResource,
+    "/api/digest_subscriptions",
+    endpoint="digest_subscriptions",
+)
+api.add_org_resource(
+    DigestSubscriptionResource,
+    "/api/digest_subscriptions/<subscription_id>",
+    endpoint="digest_subscription",
+)
+
+# Feature #218: "Explain this number" LLM endpoint.
+api.add_org_resource(
+    ExplainResource,
+    "/api/explain",
+    endpoint="explain",
 )

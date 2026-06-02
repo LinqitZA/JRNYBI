@@ -1,5 +1,5 @@
 import { isArray, map, mapValues, includes, some, each, difference, toNumber, isFinite } from "lodash";
-import React, { useMemo } from "react";
+import React, { useMemo, useRef, useEffect } from "react";
 import { Section, Select, Checkbox, InputNumber, ContextHelp, Input } from "@/components/visualizations/editor";
 import { UpdateOptionsStrategy } from "@/components/visualizations/editor/createTabbedEditor";
 import { EditorPropTypes } from "@/visualizations/prop-types";
@@ -7,6 +7,13 @@ import { AllColorPalettes } from "@/visualizations/ColorPalette";
 import ChartTypeSelect from "./ChartTypeSelect";
 import ColumnMappingSelect from "./ColumnMappingSelect";
 import { useDebouncedCallback } from "use-debounce/lib";
+
+// Feature #215 — Auto chart-type suggestion based on column types.
+import {
+  topChartSuggestion,
+  recordSuggestionDecision,
+  buildShapeSummary,
+} from "@/lib/suggest-chart";
 
 function getAvailableColumnMappingTypes(options: any) {
   // Feature #199: Bullet — `x` is the metric label; `y` is replaced by `actualValue`
@@ -119,7 +126,50 @@ export default function GeneralSettings({ options, data, onOptionsChange }: any)
     data.columns,
   ]);
 
+  // -------------------------------------------------------------------------
+  // Feature #215 — Auto chart-type suggestion.
+  // -------------------------------------------------------------------------
+  // The suggestion is computed from the query's column metadata + a sample of
+  // rows. It does NOT auto-apply — it only surfaces a "Recommended" tag next
+  // to the suggested type in the picker and an "Apply suggestion" button that
+  // the user can click to accept. This keeps existing visualizations
+  // unchanged (suggestion never overwrites an in-progress user selection).
+  const suggestion = useMemo(
+    () => topChartSuggestion({ columns: data.columns || [], rows: data.rows || [] }),
+    [data.columns, data.rows]
+  );
+  // Stable shape summary for the accept/reject telemetry — captured at the
+  // moment the suggestion was offered, NOT recomputed on every click so the
+  // ML feedback record matches what the user actually saw.
+  const shapeRef = useRef<any>(null);
+  if (shapeRef.current === null) {
+    shapeRef.current = buildShapeSummary({ columns: data.columns || [], rows: data.rows || [] });
+  }
+  // Fire the "offered" event exactly once per editor mount.
+  const offeredRef = useRef(false);
+  useEffect(() => {
+    if (!suggestion || offeredRef.current) return;
+    offeredRef.current = true;
+    recordSuggestionDecision({
+      decision: "offered",
+      suggestedType: suggestion.type,
+      reason: suggestion.reason,
+      shape: shapeRef.current,
+    });
+  }, [suggestion]);
+
   function handleGlobalSeriesTypeChange(globalSeriesType: any) {
+    // If the user picked something different from the suggestion AFTER seeing
+    // it, log as a rejection. If they picked the suggestion, log as accepted.
+    if (suggestion && offeredRef.current) {
+      recordSuggestionDecision({
+        decision: globalSeriesType === suggestion.type ? "accepted" : "rejected",
+        suggestedType: suggestion.type,
+        acceptedType: globalSeriesType,
+        reason: suggestion.reason,
+        shape: shapeRef.current,
+      });
+    }
     onOptionsChange({
       globalSeriesType,
       showDataLabels: globalSeriesType === "pie",
@@ -129,6 +179,33 @@ export default function GeneralSettings({ options, data, onOptionsChange }: any)
         type: globalSeriesType,
       })),
     });
+  }
+
+  // Accept-button handler: applies type + column mapping + any patches
+  // (e.g. swappedAxes for horizontal-bar suggestions) in a single options
+  // change so the editor re-renders cleanly.
+  function applySuggestion() {
+    if (!suggestion) return;
+    const baseSeries = mapValues(options.seriesOptions, series => ({
+      ...series,
+      type: suggestion.type,
+    }));
+    const patch: any = {
+      globalSeriesType: suggestion.type,
+      showDataLabels: suggestion.type === "pie",
+      swappedAxes: false,
+      seriesOptions: baseSeries,
+      columnMapping: { ...(options.columnMapping || {}), ...suggestion.columnMapping },
+      ...(suggestion.optionPatches || {}),
+    };
+    recordSuggestionDecision({
+      decision: "accepted",
+      suggestedType: suggestion.type,
+      acceptedType: suggestion.type,
+      reason: suggestion.reason,
+      shape: shapeRef.current,
+    });
+    onOptionsChange(patch);
   }
 
   function handleColumnMappingChange(column: any, type: any) {
@@ -163,12 +240,49 @@ export default function GeneralSettings({ options, data, onOptionsChange }: any)
       {/* @ts-expect-error ts-migrate(2745) FIXME: This JSX tag's 'children' prop expects type 'never... Remove this comment to see the full error message */}
       <Section>
         <ChartTypeSelect
-          // @ts-expect-error ts-migrate(2322) FIXME: Type '{ label: string; "data-test": string; defaul... Remove this comment to see the full error message
+          // @ts-expect-error ts-migrate(2322) FIXME: `label` and `data-test` flow through `{...props}` to Select, but ChartTypeSelect's typed surface doesn't declare them.
           label="Chart Type"
           data-test="Chart.GlobalSeriesType"
           defaultValue={options.globalSeriesType}
           onChange={handleGlobalSeriesTypeChange}
+          suggestedType={suggestion ? suggestion.type : null}
         />
+        {/* Feature #215 — Recommendation banner. Only shown when the
+            suggestion differs from the current selection — once the user
+            picks the suggested type the banner disappears so the editor
+            stays uncluttered. */}
+        {suggestion && suggestion.type !== options.globalSeriesType && (
+          <div
+            data-test="Chart.SuggestionBanner"
+            style={{
+              marginTop: 8,
+              padding: "8px 10px",
+              borderRadius: 4,
+              background: "#e6f4ff",
+              border: "1px solid #91caff",
+              fontSize: 12,
+            }}>
+            <div style={{ marginBottom: 6 }}>
+              <strong>Recommended: {suggestion.type}.</strong> {suggestion.reason}
+            </div>
+            <button
+              type="button"
+              onClick={applySuggestion}
+              data-test="Chart.ApplySuggestion"
+              style={{
+                background: "#1677ff",
+                color: "white",
+                border: 0,
+                borderRadius: 3,
+                padding: "4px 10px",
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: 600,
+              }}>
+              Apply suggestion
+            </button>
+          </div>
+        )}
       </Section>
 
       {includes(["column", "line", "box"], options.globalSeriesType) && (

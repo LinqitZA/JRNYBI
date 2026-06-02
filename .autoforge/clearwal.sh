@@ -1,2 +1,6 @@
 sqlite3 features.db "PRAGMA wal_checkpoint(FULL);"
 sqlite3 features.db "PRAGMA wal_checkpoint(TRUNCATE);"
+sqlite3 assistant.db "PRAGMA wal_checkpoint(FULL);"
+sqlite3 assistant.db "PRAGMA wal_checkpoint(TRUNCATE);"
+sqlite3 agent_sessions.db "PRAGMA wal_checkpoint(FULL);"
+sqlite3 agent_sessions.db "PRAGMA wal_checkpoint(TRUNCATE);"

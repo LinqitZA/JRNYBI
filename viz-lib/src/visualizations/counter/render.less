@@ -1,3 +1,13 @@
+// =============================================================================
+// Counter / KPI Card styles
+//
+// Two layouts coexist in this file:
+//   - .counter-visualization-container WITHOUT .counter-v2 — legacy compact
+//     layout, kept verbatim for backwards compat with old dashboards.
+//   - .counter-visualization-container.counter-v2 — KPI Card v2 (feature #192)
+//     with big number, delta chip, sparkline strip, and threshold background.
+// =============================================================================
+
 .counter-visualization-container {
   display: block;
   text-align: center;
@@ -43,5 +53,220 @@
 
   &.trend-negative .counter-visualization-value {
     color: #d9534f;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// KPI Card v2 (feature #192)
+// ---------------------------------------------------------------------------
+
+.counter-visualization-container.counter-v2 {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-align: left;
+  padding: 18px 20px;
+  height: 100%;
+  width: 100%;
+  border-radius: 6px;
+  transition: background-color 240ms ease;
+
+  .counter-v2-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--jrny-text-3, #64748b);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .counter-v2-row {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+
+  .counter-v2-value {
+    font-size: 44px;
+    line-height: 1.05;
+    font-weight: 700;
+    color: var(--jrny-text-1, #0f172a);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .counter-v2-delta-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+
+    .counter-v2-delta-arrow {
+      font-size: 14px;
+      line-height: 1;
+    }
+
+    .counter-v2-delta-pct {
+      font-variant-numeric: tabular-nums;
+    }
+
+    .counter-v2-delta-label {
+      font-weight: 500;
+      opacity: 0.85;
+      margin-left: 4px;
+    }
+  }
+
+  .counter-v2-chip-positive {
+    color: var(--jrny-positive, #117a3b);
+    background: var(--jrny-positive-bg, #d1fae5);
+  }
+  .counter-v2-chip-negative {
+    color: var(--jrny-negative, #b42318);
+    background: var(--jrny-negative-bg, #fee2e2);
+  }
+  .counter-v2-chip-warning {
+    color: var(--jrny-warning, #b54708);
+    background: var(--jrny-warning-bg, #fef3c7);
+  }
+  .counter-v2-chip-neutral {
+    color: var(--jrny-neutral, #475569);
+    background: var(--jrny-neutral-bg, #f1f5f9);
+  }
+  .counter-v2-chip-info {
+    color: var(--jrny-info, #1d4ed8);
+    background: var(--jrny-info-bg, #dbeafe);
+  }
+  .counter-v2-chip-primary {
+    color: var(--jrny-primary, #2563eb);
+    background: var(--jrny-info-bg, #dbeafe);
+  }
+
+  .counter-v2-sparkline {
+    width: 100%;
+    margin-top: 4px;
+    margin-bottom: 6px;
+
+    svg, span {
+      display: block;
+      width: 100%;
+    }
+  }
+
+  .counter-v2-narrative {
+    margin-top: 8px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--jrny-text-3, #64748b);
+    font-style: italic;
+  }
+
+  // -------------------------------------------------------------------------
+  // "Explain this number" trigger + popover (feature #218)
+  // -------------------------------------------------------------------------
+  .counter-v2-explain-trigger {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--jrny-text-3, #64748b);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.55;
+    transition: opacity 120ms ease, background 120ms ease, border-color 120ms ease;
+
+    &:hover, &:focus {
+      opacity: 1;
+      background: var(--jrny-info-bg, #dbeafe);
+      border-color: var(--jrny-info, #1d4ed8);
+      outline: none;
+    }
+  }
+}
+
+// Explain popover (rendered outside the card via antd Popover portal — selector
+// is at the global scope, not nested inside .counter-visualization-container).
+.counter-v2-explain-panel {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--jrny-text-1, #0f172a);
+
+  .counter-v2-explain-heading {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--jrny-text-3, #64748b);
+    margin-bottom: 8px;
+  }
+  .counter-v2-explain-loading {
+    color: var(--jrny-text-3, #64748b);
+    font-style: italic;
+    padding: 4px 0;
+  }
+  .counter-v2-explain-error {
+    color: var(--jrny-negative, #b42318);
+    background: var(--jrny-negative-bg, #fee2e2);
+    padding: 8px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+  .counter-v2-explain-retry {
+    background: transparent;
+    border: 1px solid var(--jrny-negative, #b42318);
+    color: var(--jrny-negative, #b42318);
+    border-radius: 4px;
+    font-size: 12px;
+    padding: 2px 8px;
+    cursor: pointer;
+  }
+  .counter-v2-explain-body {
+    white-space: pre-wrap;
+    color: var(--jrny-text-1, #0f172a);
+  }
+  .counter-v2-explain-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 10px;
+    font-size: 11px;
+    color: var(--jrny-text-3, #64748b);
+  }
+  .counter-v2-explain-source {
+    color: var(--jrny-primary, #2563eb);
+    text-decoration: none;
+    font-weight: 500;
+  }
+  .counter-v2-explain-source:hover {
+    text-decoration: underline;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Narrow widget overrides (counter on a half-width column / mobile)
+// ---------------------------------------------------------------------------
+@media (max-width: 480px) {
+  .counter-visualization-container.counter-v2 {
+    padding: 12px;
+
+    .counter-v2-value {
+      font-size: 32px;
+    }
   }
 }

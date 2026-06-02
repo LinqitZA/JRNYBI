@@ -39,7 +39,8 @@ function getTableColumns(options: any, updateSeriesOption: any, debouncedUpdateS
     },
   ];
 
-  if (!includes(["pie", "heatmap"], options.globalSeriesType)) {
+  // Waterfall is treated as a single bridge — per-series y-axis / sub-type are not meaningful
+  if (!includes(["pie", "heatmap", "waterfall"], options.globalSeriesType)) {
     if (!options.swappedAxes) {
       result.push({
         title: "Y Axis",

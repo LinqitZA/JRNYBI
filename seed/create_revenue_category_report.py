@@ -36,20 +36,37 @@ def main():
         return
 
     # Query 1: Category Summary (for bar chart + % contribution)
-    # v_revenue_by_category is pre-aggregated; use v_sales_orders for date-filtered analysis
-    q1_sql = """SELECT
-  product_category,
-  COUNT(DISTINCT order_id) AS order_count,
-  SUM(quantity) AS total_qty_sold,
+    # v_revenue_by_category is pre-aggregated; use v_sales_orders for date-filtered analysis.
+    # The inner CTE produces one monthly revenue total per (category, month) and we
+    # aggregate it into a JSON array per category so the Table viz can render it
+    # as an in-cell sparkline (feature #206).
+    q1_sql = """WITH monthly AS (
+  SELECT
+    product_category,
+    date_trunc('month', order_date) AS month,
+    SUM(line_total) AS month_revenue
+  FROM reporting.v_sales_orders
+  WHERE order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+  GROUP BY product_category, date_trunc('month', order_date)
+)
+SELECT
+  s.product_category,
+  COUNT(DISTINCT s.order_id) AS order_count,
+  SUM(s.quantity) AS total_qty_sold,
   COUNT(*) AS line_count,
-  SUM(line_total) AS total_revenue,
-  SUM(quantity * cost_price) AS total_cogs,
-  SUM(line_total) - SUM(quantity * cost_price) AS total_margin,
-  ROUND(AVG(line_gp_margin), 1) AS avg_margin_pct,
-  ROUND(100.0 * SUM(line_total) / NULLIF(SUM(SUM(line_total)) OVER (), 0), 1) AS pct_of_total_revenue
-FROM reporting.v_sales_orders
-WHERE order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-GROUP BY product_category
+  SUM(s.line_total) AS total_revenue,
+  SUM(s.quantity * s.cost_price) AS total_cogs,
+  SUM(s.line_total) - SUM(s.quantity * s.cost_price) AS total_margin,
+  ROUND(AVG(s.line_gp_margin), 1) AS avg_margin_pct,
+  ROUND(100.0 * SUM(s.line_total) / NULLIF(SUM(SUM(s.line_total)) OVER (), 0), 1) AS pct_of_total_revenue,
+  (
+    SELECT json_agg(m.month_revenue ORDER BY m.month)
+    FROM monthly m
+    WHERE m.product_category = s.product_category
+  ) AS monthly_trend
+FROM reporting.v_sales_orders s
+WHERE s.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+GROUP BY s.product_category
 ORDER BY total_revenue DESC"""
 
     q1 = api_call("POST", "/api/queries", {
@@ -139,11 +156,34 @@ ORDER BY product_category, total_revenue DESC"""
                 {"name": "order_count", "title": "Orders", "visible": True, "alignContent": "right"},
                 {"name": "total_qty_sold", "title": "Qty Sold", "visible": True, "alignContent": "right"},
                 {"name": "line_count", "title": "Lines", "visible": True, "alignContent": "right"},
-                {"name": "total_revenue", "title": "Revenue", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                # Feature #208 — Data bar visualises revenue magnitude across
+                # categories at a glance. Bar scales to column min/max.
+                {"name": "total_revenue", "title": "Revenue", "visible": True,
+                 "displayAs": "data-bar", "numberFormat": "0,0.00", "alignContent": "right",
+                 "dataBarColor": "positive", "dataBarShowValue": True, "dataBarHeight": 18},
                 {"name": "total_cogs", "title": "COGS", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
-                {"name": "total_margin", "title": "Margin", "visible": True, "displayAs": "number", "numberFormat": "0,0.00", "alignContent": "right"},
+                {"name": "total_margin", "title": "Margin", "visible": True,
+                 "displayAs": "data-bar", "numberFormat": "0,0.00", "alignContent": "right",
+                 "dataBarColor": "info", "dataBarNegativeColor": "negative",
+                 "dataBarShowValue": True, "dataBarHeight": 18},
                 {"name": "avg_margin_pct", "title": "Margin %", "visible": True, "displayAs": "number", "numberFormat": "0.0", "alignContent": "right"},
                 {"name": "pct_of_total_revenue", "title": "% of Total", "visible": True, "displayAs": "number", "numberFormat": "0.0", "alignContent": "right"},
+                # Feature #206 — in-cell sparkline of monthly revenue trend per category.
+                # The query above aggregates per-month revenue into a JSON array;
+                # the sparkline column type parses arrays, comma-separated strings
+                # and Postgres array literals.
+                {
+                    "name": "monthly_trend",
+                    "title": "Trend",
+                    "visible": True,
+                    "displayAs": "sparkline",
+                    "alignContent": "left",
+                    "sparklineVariant": "area",
+                    "sparklineColor": "auto",
+                    "sparklineShowLast": True,
+                    "sparklineWidth": 120,
+                    "sparklineHeight": 28,
+                },
             ],
         },
     })

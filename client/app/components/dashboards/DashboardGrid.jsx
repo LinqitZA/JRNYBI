@@ -7,6 +7,9 @@ import { VisualizationWidget, TextboxWidget, RestrictedWidget } from "@/componen
 import { FiltersType } from "@/components/Filters";
 import cfg from "@/config/dashboard-grid-options";
 import AutoHeightController from "./AutoHeightController";
+import SkeletonWidget from "./SkeletonWidget";
+import useLazyMount from "@/lib/hooks/useLazyMount";
+import usePrintMode from "@/lib/hooks/usePrintMode";
 import { WidgetTypeEnum } from "@/services/widget";
 
 import "react-grid-layout/css/styles.css";
@@ -83,10 +86,107 @@ const DashboardWidget = React.memo(
     prevProps.isEditing === nextProps.isEditing
 );
 
+// Feature #189: lazy-load below-the-fold dashboard widgets.
+//
+// LazyDashboardWidgetCell is the actual cell rendered inside the
+// ResponsiveGridLayout. Off-screen cells render a SkeletonWidget placeholder
+// (matching the visualization shape, so layout doesn't shift) and only mount
+// the real DashboardWidget once they scroll into view (with a 200px rootMargin
+// to start hydrating slightly before the user sees them).
+//
+// `forceMount` is set to true while the page is in print preview, while the
+// dashboard is being edited, while it's in "public/embedded" mode, AND when
+// the widget has loading state — all paths that need the real renderer to
+// be active up front. Lazy mount is reserved for the read-only viewing case
+// on dense dashboards.
+function LazyDashboardWidgetCell({
+  widget,
+  forceMount,
+  dashboard,
+  filters,
+  isPublic,
+  isEditing,
+  canEdit,
+  onLoadWidget,
+  onRefreshWidget,
+  onRemoveWidget,
+  onParameterMappingsChange,
+}) {
+  const [ref, isVisible] = useLazyMount({ rootMargin: "200px", forceVisible: forceMount });
+  const shouldMount = isVisible || forceMount;
+
+  // Skeleton shape inferred from the underlying visualization. Textbox
+  // widgets render instantly (just markdown) so we always mount those.
+  const isTextbox = widget.type === WidgetTypeEnum.TEXTBOX;
+  let placeholderType = null;
+  if (widget.visualization && widget.visualization.type) {
+    placeholderType = widget.visualization.type;
+  }
+
+  if (isTextbox || shouldMount) {
+    return (
+      <DashboardWidget
+        dashboard={dashboard}
+        widget={widget}
+        filters={filters}
+        isPublic={isPublic}
+        isLoading={widget.loading}
+        isEditing={isEditing}
+        canEdit={canEdit}
+        onLoadWidget={onLoadWidget}
+        onRefreshWidget={onRefreshWidget}
+        onRemoveWidget={onRemoveWidget}
+        onParameterMappingsChange={onParameterMappingsChange}
+      />
+    );
+  }
+
+  return (
+    <div
+      ref={ref}
+      className="widget-wrapper widget-wrapper-lazy-placeholder"
+      data-test={`WidgetLazyPlaceholder-${widget.id}`}
+      style={{ width: "100%", height: "100%" }}>
+      <div className="tile body-container" style={{ width: "100%", height: "100%" }}>
+        <div className="body-row tile__bottom-control" style={{ flex: 1, padding: 12 }}>
+          <SkeletonWidget visualizationType={placeholderType} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+LazyDashboardWidgetCell.propTypes = {
+  widget: PropTypes.object.isRequired, // eslint-disable-line react/forbid-prop-types
+  forceMount: PropTypes.bool,
+  dashboard: PropTypes.object.isRequired, // eslint-disable-line react/forbid-prop-types
+  filters: FiltersType,
+  isPublic: PropTypes.bool,
+  isEditing: PropTypes.bool,
+  canEdit: PropTypes.bool,
+  onLoadWidget: PropTypes.func,
+  onRefreshWidget: PropTypes.func,
+  onRemoveWidget: PropTypes.func,
+  onParameterMappingsChange: PropTypes.func,
+};
+
+LazyDashboardWidgetCell.defaultProps = {
+  forceMount: false,
+  filters: [],
+  isPublic: false,
+  isEditing: false,
+  canEdit: false,
+  onLoadWidget: () => {},
+  onRefreshWidget: () => {},
+  onRemoveWidget: () => {},
+  onParameterMappingsChange: () => {},
+};
+
 class DashboardGrid extends React.Component {
   static propTypes = {
     isEditing: PropTypes.bool.isRequired,
     isPublic: PropTypes.bool,
+    isPrinting: PropTypes.bool,
     dashboard: PropTypes.object.isRequired, // eslint-disable-line react/forbid-prop-types
     widgets: PropTypes.arrayOf(WidgetType).isRequired,
     filters: FiltersType,
@@ -100,6 +200,7 @@ class DashboardGrid extends React.Component {
 
   static defaultProps = {
     isPublic: false,
+    isPrinting: false,
     filters: [],
     onLoadWidget: () => {},
     onRefreshWidget: () => {},
@@ -264,12 +365,12 @@ class DashboardGrid extends React.Component {
               className={cx("dashboard-widget-wrapper", {
                 "widget-auto-height-enabled": this.autoHeightCtrl.exists(widget.id),
               })}>
-              <DashboardWidget
-                dashboard={dashboard}
+              <LazyDashboardWidgetCell
                 widget={widget}
+                forceMount={this.props.isPrinting || isEditing}
+                dashboard={dashboard}
                 filters={filters}
                 isPublic={isPublic}
-                isLoading={widget.loading}
                 isEditing={isEditing}
                 canEdit={dashboard.canEdit()}
                 onLoadWidget={onLoadWidget}
@@ -285,4 +386,13 @@ class DashboardGrid extends React.Component {
   }
 }
 
-export default DashboardGrid;
+// Wrap the class component with a function component so we can use the
+// usePrintMode hook to detect print/PDF export, then inject it as a prop.
+// Keeping the class component intact avoids churning the rest of the
+// dashboard's state-heavy logic just to pick up one boolean.
+function DashboardGridWithPrintMode(props) {
+  const isPrinting = usePrintMode();
+  return <DashboardGrid {...props} isPrinting={isPrinting} />;
+}
+
+export default DashboardGridWithPrintMode;

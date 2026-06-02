@@ -7,6 +7,7 @@ from rq.job import Job
 from rq_scheduler import Scheduler
 
 from redash import rq_redis_connection, settings
+from redash.tasks.digest import send_digests
 from redash.tasks.failure_report import send_aggregated_errors
 from redash.tasks.general import sync_user_details, version_check
 from redash.tasks.queries import (
@@ -84,6 +85,11 @@ def periodic_job_definitions():
 
     if settings.QUERY_RESULTS_CLEANUP_ENABLED:
         jobs.append({"func": cleanup_query_results, "interval": timedelta(minutes=5)})
+
+    # Feature #219: insight-digest emails. Runs every hour and dispatches any
+    # subscriptions whose `delivery_hour` matches the current UTC hour and
+    # whose `last_sent_at` is past the minimum age for their frequency.
+    jobs.append({"func": send_digests, "interval": timedelta(hours=1), "timeout": 600})
 
     # Add your own custom periodic jobs in your dynamic_settings module.
     jobs.extend(settings.dynamic_settings.periodic_jobs() or [])

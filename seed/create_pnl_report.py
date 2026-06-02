@@ -317,6 +317,82 @@ WHERE entry_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
     sys.stderr.write(f"Vis 5 (Gross Margin Counter) created: id={v5_id}\n")
 
     # ========================================================================
+    # Query 4: P&L Bridge — Waterfall (Feature #198)
+    # Single-row-per-component breakdown shaped for a waterfall trace:
+    #   Revenue (+, relative), COGS (-, relative), Gross Profit (total),
+    #   OpEx (-, relative), Net Income (total).
+    # ========================================================================
+    q4_sql = """WITH totals AS (
+  SELECT
+    SUM(CASE WHEN account_type = 'revenue' THEN net_amount ELSE 0 END) AS rev,
+    SUM(CASE WHEN account_type = 'expense' AND account_group ILIKE '%cost%sale%' THEN net_amount ELSE 0 END) AS cogs,
+    SUM(CASE WHEN account_type = 'expense' AND account_group NOT ILIKE '%cost%sale%' THEN net_amount ELSE 0 END) AS opex
+  FROM reporting.v_general_ledger
+  WHERE entry_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    AND account_type IN ('revenue', 'expense')
+)
+SELECT 'Revenue'         AS component,  rev                    AS amount, 'relative' AS measure, 1 AS sort_order FROM totals
+UNION ALL
+SELECT 'COGS'            AS component, -cogs                   AS amount, 'relative' AS measure, 2 AS sort_order FROM totals
+UNION ALL
+SELECT 'Gross Profit'    AS component,  0                      AS amount, 'total'    AS measure, 3 AS sort_order FROM totals
+UNION ALL
+SELECT 'Operating Exp.'  AS component, -opex                   AS amount, 'relative' AS measure, 4 AS sort_order FROM totals
+UNION ALL
+SELECT 'Net Income'      AS component,  0                      AS amount, 'total'    AS measure, 5 AS sort_order FROM totals
+ORDER BY sort_order"""
+
+    q4 = api_call("POST", "/api/queries", {
+        "name": "Profit & Loss Statement - Bridge",
+        "description": "P&L bridge: revenue down to net income via COGS / gross profit / operating expenses. Shaped for waterfall visualization.",
+        "data_source_id": DS_ID,
+        "query": q4_sql,
+        "options": {
+            "parameters": [
+                {"name": "start_date", "title": "Start Date", "type": "date", "value": "2024-01-01"},
+                {"name": "end_date", "title": "End Date", "type": "date", "value": "2024-12-31"},
+            ]
+        },
+        "tags": ["finance", "jrny-report"],
+    })
+    q4_id = q4["id"]
+    sys.stderr.write(f"Query 4 (P&L Bridge) created: id={q4_id}\n")
+
+    # ========================================================================
+    # Visualization 7: P&L Bridge — Waterfall Chart (Feature #198)
+    # ========================================================================
+    v7 = api_call("POST", "/api/visualizations", {
+        "query_id": q4_id,
+        "name": "P&L Bridge (Waterfall)",
+        "type": "CHART",
+        "options": {
+            "globalSeriesType": "waterfall",
+            "columnMapping": {
+                "component": "x",
+                "amount": "y",
+                "measure": "measure",
+                "sort_order": "unused",
+            },
+            "seriesOptions": {
+                "amount": {"type": "waterfall", "yAxis": 0, "name": "Amount"},
+            },
+            "xAxis": {"type": "category", "labels": {"enabled": True}},
+            "yAxis": [{"type": "linear", "title": {"text": "Amount"}}],
+            "sortX": False,
+            "legend": {"enabled": False},
+            "waterfall": {
+                "increasingColor": "#117a3b",
+                "decreasingColor": "#b42318",
+                "totalColor": "#475569",
+                "connectorVisible": True,
+            },
+            "showDataLabels": True,
+        },
+    })
+    v7_id = v7["id"]
+    sys.stderr.write(f"Vis 7 (P&L Waterfall) created: id={v7_id}\n")
+
+    # ========================================================================
     # Visualization 6: Monthly P&L Summary Table
     # ========================================================================
     v6 = api_call("POST", "/api/visualizations", {
@@ -389,20 +465,28 @@ WHERE entry_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
         "options": {"position": {"autoHeight": True, "sizeX": 2, "sizeY": 10, "col": 4, "row": 5}},
     })
 
-    # Row 15: Monthly summary table
+    # Row 15: Waterfall bridge (full width — Feature #198)
     api_call("POST", "/api/widgets", {
         "dashboard_id": dash_id,
-        "visualization_id": v6_id,
+        "visualization_id": v7_id,
         "width": 6,
         "options": {"position": {"autoHeight": True, "sizeX": 6, "sizeY": 10, "col": 0, "row": 15}},
     })
 
-    # Row 25: Detailed P&L table
+    # Row 25: Monthly summary table
+    api_call("POST", "/api/widgets", {
+        "dashboard_id": dash_id,
+        "visualization_id": v6_id,
+        "width": 6,
+        "options": {"position": {"autoHeight": True, "sizeX": 6, "sizeY": 10, "col": 0, "row": 25}},
+    })
+
+    # Row 35: Detailed P&L table
     api_call("POST", "/api/widgets", {
         "dashboard_id": dash_id,
         "visualization_id": v1_id,
         "width": 6,
-        "options": {"position": {"autoHeight": True, "sizeX": 6, "sizeY": 14, "col": 0, "row": 25}},
+        "options": {"position": {"autoHeight": True, "sizeX": 6, "sizeY": 14, "col": 0, "row": 35}},
     })
     sys.stderr.write("All widgets added.\n")
 
@@ -418,12 +502,14 @@ WHERE entry_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
         "q1_id": q1_id,
         "q2_id": q2_id,
         "q3_id": q3_id,
+        "q4_id": q4_id,
         "v1_id": v1_id,
         "v2_id": v2_id,
         "v3_id": v3_id,
         "v4_id": v4_id,
         "v5_id": v5_id,
         "v6_id": v6_id,
+        "v7_id": v7_id,
         "dash_id": dash_id,
         "dash_slug": dash_slug,
     }

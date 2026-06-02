@@ -432,6 +432,82 @@ class TestQueryResultExcelResponse(BaseTestCase):
         self.assertEqual(rv.status_code, 200)
 
 
+class TestQueryResultPageResource(BaseTestCase):
+    """Feature #211 — server-side paged access for AG Grid infinite row model."""
+
+    def _make_result(self, n_rows=300, columns=None):
+        cols = columns or [{"name": "id"}, {"name": "name"}, {"name": "score"}]
+        rows = [
+            {"id": i, "name": "row-{}".format(i), "score": (i * 7) % 100}
+            for i in range(n_rows)
+        ]
+        data = {"columns": cols, "rows": rows}
+        return self.factory.create_query_result(data=data)
+
+    def test_returns_default_slice(self):
+        qr = self._make_result(300)
+        rv = self.make_request("post", "/api/query_results/{}/page".format(qr.id), data={})
+        self.assertEqual(rv.status_code, 200)
+        # default limit is 200
+        self.assertEqual(len(rv.json["rows"]), 200)
+        self.assertEqual(rv.json["total_rows"], 300)
+        self.assertEqual(rv.json["offset"], 0)
+
+    def test_offset_and_limit(self):
+        qr = self._make_result(300)
+        rv = self.make_request(
+            "post",
+            "/api/query_results/{}/page".format(qr.id),
+            data={"offset": 250, "limit": 50},
+        )
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(len(rv.json["rows"]), 50)
+        # First row of the slice should be row #250.
+        self.assertEqual(rv.json["rows"][0]["id"], 250)
+        self.assertEqual(rv.json["total_rows"], 300)
+
+    def test_sort_descending_by_score(self):
+        qr = self._make_result(50)
+        rv = self.make_request(
+            "post",
+            "/api/query_results/{}/page".format(qr.id),
+            data={"sort_by": "score", "sort_dir": "desc", "limit": 5},
+        )
+        self.assertEqual(rv.status_code, 200)
+        scores = [row["score"] for row in rv.json["rows"]]
+        self.assertEqual(scores, sorted(scores, reverse=True))
+
+    def test_filter_substring(self):
+        qr = self._make_result(100)
+        rv = self.make_request(
+            "post",
+            "/api/query_results/{}/page".format(qr.id),
+            data={"filter": "row-42"},
+        )
+        self.assertEqual(rv.status_code, 200)
+        # row-42 matches exactly one row name
+        self.assertEqual(rv.json["total_rows"], 1)
+        self.assertEqual(rv.json["rows"][0]["id"], 42)
+
+    def test_caps_limit_at_max(self):
+        qr = self._make_result(20)
+        rv = self.make_request(
+            "post",
+            "/api/query_results/{}/page".format(qr.id),
+            data={"limit": 100000},
+        )
+        self.assertEqual(rv.status_code, 200)
+        # All rows fit so we don't see the cap directly, but limit field
+        # in response must be clamped to MAX_PAGE_SIZE.
+        self.assertLessEqual(rv.json["limit"], 5000)
+
+    def test_blocks_access_without_data_source_permission(self):
+        ds = self.factory.create_data_source(group=self.factory.create_group())
+        qr = self.factory.create_query_result(data_source=ds)
+        rv = self.make_request("post", "/api/query_results/{}/page".format(qr.id), data={})
+        self.assertEqual(rv.status_code, 403)
+
+
 class TestJobResource(BaseTestCase):
     def test_cancels_queued_queries(self):
         QUEUED = 1

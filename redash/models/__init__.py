@@ -1517,6 +1517,12 @@ class QuerySnippet(TimestampMixin, db.Model, BelongsToOrgMixin):
         return d
 
 
+# Feature #219: digest subscription model. Imported at module bottom so the
+# SQLAlchemy declarative metaclass registers it against the same `db` metadata
+# that the rest of the app uses (avoids "table not found" at db.create_all()).
+from redash.models.digest import DigestSubscription  # noqa: F401, E402
+
+
 def init_db():
     default_org = Organization(name="Default", slug="default", settings={})
     admin_group = Group(

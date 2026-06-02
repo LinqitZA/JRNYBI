@@ -1,4 +1,4 @@
-import { isString, map, uniq, flatten, filter, sortBy, keys } from "lodash";
+import { isString, map, uniq, flatten, filter, sortBy } from "lodash";
 import React from "react";
 import { Section, Select } from "@/components/visualizations/editor";
 
@@ -9,6 +9,20 @@ const MappingTypes = {
   yError: { label: "Errors column" },
   size: { label: "Bubble Size Column" },
   zVal: { label: "Color Column" },
+  // Feature #198: Waterfall — per-point measure ('relative'/'total'/'absolute')
+  measure: { label: "Measure Column" },
+  // Feature #199: Bullet graph — actual vs target with qualitative bands
+  actualValue: { label: "Actual Value Column" },
+  targetValue: { label: "Target Value Column" },
+  bandLower: { label: "Poor / Satisfactory Threshold Column" },
+  bandUpper: { label: "Satisfactory / Good Threshold Column" },
+  // Feature #200: Forecast band columns (line chart with confidence interval)
+  forecastValue: { label: "Forecast Value Column" },
+  forecastLower: { label: "Forecast Lower Bound Column" },
+  forecastUpper: { label: "Forecast Upper Bound Column" },
+  // Feature #202: Small multiples / trellis — column whose unique values split
+  // the chart into a grid of subplots
+  facet: { label: "Facet Column (split into subplots)" },
 };
 
 const SwappedMappingTypes = {
