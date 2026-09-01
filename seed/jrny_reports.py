@@ -46,6 +46,7 @@ import logging
 import os
 import sys
 import time
+from urllib.parse import urlencode
 
 try:
     import requests
@@ -4982,7 +4983,55 @@ def create_query(client, data_source_id, query_key, query_def):
     }
     result = client.post("/api/queries", payload)
     logger.info("  Created query: '%s' (id=%s)", result["name"], result["id"])
+    publish_query(client, result["id"])
     return result
+
+
+def publish_query(client, query_id):
+    """Publish a query (set is_draft=False).
+
+    Redash creates queries as drafts. Dashboards were being published but their
+    queries were not, which left every seeded query unpublished — invisible in
+    the query list, and excluded from the scheduler that would otherwise have
+    given the dashboards their first result.
+    """
+    try:
+        result = client.post(f"/api/queries/{query_id}", {"is_draft": False})
+        logger.info("  Published query (id=%s)", query_id)
+        return result
+    except Exception as e:
+        logger.warning("  Could not publish query %s: %s", query_id, e)
+        return None
+
+
+def refresh_query(client, query_id, query_def=None):
+    """Execute a query once so it has a stored result.
+
+    A freshly seeded query has never run. Seeding that stops at "created" leaves
+    every query without a result, which is how 32 dashboards came to look broken
+    while the underlying views were fine.
+
+    Parameter values are REQUIRED for a parameterised query and must go in the
+    QUERY STRING with a `p_` prefix — QueryRefreshResource reads them via
+    collect_parameters_from_request(request.args), not from the JSON body.
+    Without them Redash rejects the run with "Missing parameter value for: ...".
+    56 of the 77 seeded queries are parameterised, so omitting this fails most of
+    them. The defaults declared on the query are used.
+    """
+    params = (query_def or {}).get("options", {}).get("parameters", []) or []
+    suffix = ""
+    if params:
+        suffix = "?" + urlencode(
+            {"p_" + p["name"]: (p.get("value") if p.get("value") is not None else "") for p in params}
+        )
+
+    try:
+        client.post(f"/api/queries/{query_id}/refresh{suffix}", {})
+        logger.info("  Queued first execution (query id=%s)", query_id)
+        return True
+    except Exception as e:
+        logger.warning("  Could not queue execution for query %s: %s", query_id, e)
+        return False
 
 
 def create_visualization(client, query_id, vis_def):
@@ -5214,6 +5263,18 @@ def seed_reports(base_url=None, api_key=None, data_source_id=None):
 
         # Publish the dashboard (with tags if defined)
         publish_dashboard(client, dashboard_id, tags=dash_def.get("tags"))
+
+    # ---- First execution ----
+    # Widgets render the query's last stored result, so a seed that stops at
+    # "created" leaves every dashboard blank. Queue one run per query; the worker
+    # executes them and the dashboards come up populated.
+    logger.info("Queueing first execution for %d queries...", len(created["queries"]))
+    refreshed = 0
+    for query_key, query_entry in created["queries"].items():
+        query_def = QUERIES.get(query_key) or LOOKUP_QUERIES.get(query_key) or {}
+        if refresh_query(client, query_entry["id"], query_def):
+            refreshed += 1
+    logger.info("Queued %d/%d query executions", refreshed, len(created["queries"]))
 
     # ---- Summary ----
     total_queries = len(created["queries"])
