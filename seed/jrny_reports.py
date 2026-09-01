@@ -174,7 +174,7 @@ LOOKUP_QUERIES = {
     "supplier_lookup": {
         "name": "Lookup: Suppliers",
         "description": "Distinct active supplier names for dropdown parameters.",
-        "query": "SELECT DISTINCT vendor_name AS supplier_name FROM reporting.v_purchase_orders WHERE vendor_name IS NOT NULL ORDER BY vendor_name",
+        "query": "SELECT DISTINCT supplier_name AS supplier_name FROM reporting.v_purchase_orders WHERE supplier_name IS NOT NULL ORDER BY supplier_name",
         "options": {"parameters": []},
         "tags": ["jrny-lookup"],
     },
@@ -223,7 +223,7 @@ LOOKUP_QUERIES = {
     "vendor_group_lookup": {
         "name": "Lookup: Vendor Groups",
         "description": "Distinct vendor groups for dropdown parameters.",
-        "query": "SELECT DISTINCT vendor_name AS vendor_group FROM reporting.v_purchase_orders WHERE vendor_name IS NOT NULL ORDER BY vendor_name",
+        "query": "SELECT DISTINCT supplier_name AS vendor_group FROM reporting.v_purchase_orders WHERE supplier_name IS NOT NULL ORDER BY supplier_name",
         "options": {"parameters": []},
         "tags": ["jrny-lookup"],
     },
@@ -1528,16 +1528,16 @@ SELECT
     ap.invoice_number,
     ap.invoice_date,
     ap.due_date,
-    ap.total,
-    ap.amount_paid,
-    ap.balance,
+    ap.total_oc,
+    ap.amount_paid_oc,
+    ap.balance_oc,
     ap.invoice_status,
     ap.aging_bucket,
     ap.days_overdue
 FROM reporting.v_ap_aging ap
 WHERE ap.due_date <= '{{ as_at_date }}'
    OR ap.invoice_status = 'open'
-ORDER BY ap.days_overdue DESC, ap.balance_due DESC;
+ORDER BY ap.days_overdue DESC, ap.balance_oc DESC;
 """.strip(),
         "options": {
             "parameters": [
@@ -1629,17 +1629,12 @@ FROM reporting.v_payment_compliance ptc
 WHERE ptc.invoice_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
   AND ptc.compliance_status != 'Unpaid'
 GROUP BY 1, ptc.compliance_status
-ORDER BY
-    CASE
-        WHEN days_to_pay_bucket = '0-7 days' THEN 1
-        WHEN days_to_pay_bucket = '8-14 days' THEN 2
-        WHEN days_to_pay_bucket = '15-21 days' THEN 3
-        WHEN days_to_pay_bucket = '22-30 days' THEN 4
-        WHEN days_to_pay_bucket = '31-45 days' THEN 5
-        WHEN days_to_pay_bucket = '46-60 days' THEN 6
-        WHEN days_to_pay_bucket = '61-90 days' THEN 7
-        ELSE 8
-    END;
+-- Ordered by the smallest days_late in each bucket rather than by repeating the
+-- CASE: an output column name is only usable as a bare ORDER BY item, not inside
+-- an expression, so `CASE WHEN days_to_pay_bucket = ...` raised
+-- `column "days_to_pay_bucket" does not exist`. The buckets are monotonic in
+-- days_late, so this yields exactly the same order.
+ORDER BY MIN(ptc.days_late);
 """.strip(),
         "options": {"parameters": DATE_PARAMS},
         "tags": ["finance", "jrny-report"],
@@ -1781,7 +1776,7 @@ SELECT
 FROM reporting.v_budget_variance bv
 WHERE bv.fiscal_year_label = '{{ fiscal_year }}'
   AND ('{{ department }}' = '' OR bv.account_group = '{{ department }}')
-  AND ({{ fiscal_period }} = 0 OR bv.period_number = {{ fiscal_period }})
+  AND ({{ fiscal_period }} = 0 OR bv.period_number::int = {{ fiscal_period }})
 ORDER BY bv.account_type, bv.gl_account_code, bv.period_number;
 """.strip(),
         "options": {
@@ -1828,7 +1823,7 @@ SELECT
     COUNT(*) FILTER (WHERE ABS(bv.variance_percentage) > 10) AS significant_variances
 FROM reporting.v_budget_variance bv
 WHERE bv.fiscal_year_label = '{{ fiscal_year }}'
-  AND ({{ fiscal_period }} = 0 OR bv.period_number = {{ fiscal_period }})
+  AND ({{ fiscal_period }} = 0 OR bv.period_number::int = {{ fiscal_period }})
 GROUP BY bv.account_type, bv.account_group
 ORDER BY bv.account_type, bv.account_group;
 """.strip(),
@@ -1857,9 +1852,9 @@ ORDER BY bv.account_type, bv.account_group;
 SELECT
     ap.aging_bucket,
     COUNT(*) AS bill_count,
-    SUM(ap.balance) AS total_balance_due,
-    SUM(ap.total) AS total_invoiced,
-    SUM(ap.amount_paid) AS total_paid,
+    SUM(ap.balance_oc) AS total_balance_due,
+    SUM(ap.total_oc) AS total_invoiced,
+    SUM(ap.amount_paid_oc) AS total_paid,
     ROUND(AVG(ap.days_overdue), 0) AS avg_days_overdue
 FROM reporting.v_ap_aging ap
 WHERE ap.due_date <= '{{ as_at_date }}'
@@ -1904,14 +1899,17 @@ WITH vat_data AS (
       AND inv.line_vat_amount IS NOT NULL
     UNION ALL
     SELECT
-        DATE_TRUNC('month', po.order_date)::DATE AS tax_period,
-        po.tax_code,
+        DATE_TRUNC('month', po.po_date)::DATE AS tax_period,
+        -- Purchase orders carry no tax code: procurement.purchase_order_items has
+        -- vat_rate and vat_amount only, so v_purchase_orders cannot expose one.
+        -- NULL keeps the shape of the union with the invoice branch, which does.
+        NULL::VARCHAR AS tax_code,
         po.line_vat_rate AS tax_rate,
         'input' AS vat_type,
         po.line_total AS taxable_amount,
         po.line_vat_amount AS vat_amount
     FROM reporting.v_purchase_orders po
-    WHERE po.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    WHERE po.po_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
       AND po.line_vat_amount IS NOT NULL
 )
 SELECT
@@ -1946,11 +1944,11 @@ WITH vat_data AS (
       AND inv.line_vat_amount IS NOT NULL
     UNION ALL
     SELECT
-        DATE_TRUNC('month', po.order_date)::DATE AS month,
+        DATE_TRUNC('month', po.po_date)::DATE AS month,
         'input' AS vat_type,
         po.line_vat_amount AS vat_amount
     FROM reporting.v_purchase_orders po
-    WHERE po.order_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    WHERE po.po_date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
       AND po.line_vat_amount IS NOT NULL
 )
 SELECT
