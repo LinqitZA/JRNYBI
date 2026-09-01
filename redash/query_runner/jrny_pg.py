@@ -52,6 +52,23 @@ RLS_VARIABLES = [
     ("app.current_user_role", "jrny_role", "role"),
 ]
 
+# Claims that MUST be present. Eight of the thirty-two reporting views filter on
+# app.current_entity_id:
+#
+#     WHERE c.entity_id = current_setting('app.current_entity_id', true)::uuid
+#
+# current_setting with missing_ok=true returns NULL when the variable is unset,
+# and `entity_id = NULL` is NULL rather than true, so every row is filtered out.
+# Skipping the claim therefore does not degrade the result — it empties it, and
+# the query still succeeds, so a dashboard renders blank with nothing in the
+# logs, the UI or the result to say why. Measured on the dev replica:
+# reporting.v_general_ledger returns 6,559 rows with the variable set and 0
+# without it.
+#
+# The others stay optional: a user legitimately has no branch, and the views
+# tolerate a null branch by design.
+REQUIRED_CLAIMS = {"jrny_entity_id"}
+
 # JRNY ERP schemas accessible via the read-replica
 JRNY_SCHEMAS = [
     "reporting",
@@ -203,6 +220,18 @@ class JRNYPostgreSQL(PostgreSQL):
         for var_name, detail_key, var_type in RLS_VARIABLES:
             value = details.get(detail_key)
             if value is None:
+                if detail_key in REQUIRED_CLAIMS:
+                    logger.error(
+                        "Missing required JRNY claim '%s' for RLS variable '%s'",
+                        detail_key,
+                        var_name,
+                    )
+                    raise ValueError(
+                        "Missing required JRNY claim '{}'. Without it {} is unset "
+                        "and the entity-scoped reporting views return no rows, "
+                        "which would render as an empty dashboard rather than an "
+                        "error. Query execution blocked.".format(detail_key, var_name)
+                    )
                 logger.warning(
                     "Missing JRNY claim '%s' for RLS variable '%s'",
                     detail_key,
