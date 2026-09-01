@@ -6,7 +6,9 @@ import pystache
 from dateutil.parser import parse
 from funcy import distinct
 
-from redash.utils import mustache_render
+from flask_login import current_user
+
+from redash.utils import gen_query_hash, json_loads, mustache_render
 
 
 def _pluck_name_and_value(default_column, row):
@@ -17,16 +19,74 @@ def _pluck_name_and_value(default_column, row):
     return {"name": row[name_column], "value": str(row[value_column])}
 
 
+def _current_user_id():
+    """The id of the logged-in user, or None outside a request context."""
+    try:
+        return current_user.id
+    except Exception:
+        return None
+
+
+def _rls_result_for_current_user(query):
+    """Newest stored result produced by THIS user for this query.
+
+    Query.latest_query_data_id is always NULL on an RLS data source:
+    tasks/queries/execution.py salts the query hash with the user id so users
+    never share RLS-filtered results, while Query.update_latest_result() matches
+    on the unsalted hash, so the pointer is never set. Dropdown options were read
+    from that pointer, so every `query`-type parameter rendered with no options
+    and /api/queries/<id>/dropdown returned a 500.
+
+    Populating the pointer is not an option — one global "latest result" cannot
+    represent per-user output, and pointing it at any single user's result would
+    serve their rows to everyone else. Matching the user's own salted hash is safe
+    by construction: the hash embeds the user id, so this can only ever return
+    rows that this user already produced.
+    """
+    from redash import models
+
+    user_id = _current_user_id()
+    if user_id is None:
+        return None
+
+    # Same salt as tasks/queries/execution.enqueue_query — keep them in step.
+    salted = gen_query_hash("{}::user_id={}".format(query.query_text, user_id))
+    return (
+        models.QueryResult.query.filter(
+            models.QueryResult.query_hash == salted,
+            models.QueryResult.data_source_id == query.data_source_id,
+        )
+        .order_by(models.QueryResult.retrieved_at.desc())
+        .first()
+    )
+
+
 def _load_result(query_id, org):
     from redash import models
 
     query = models.Query.get_by_id_and_org(query_id, org)
 
-    if query.data_source:
-        query_result = models.QueryResult.get_by_id_and_org(query.latest_query_data_id, org)
-        return query_result.data
-    else:
+    if not query.data_source:
         raise QueryDetachedFromDataSourceError(query_id)
+
+    if query.latest_query_data_id:
+        return models.QueryResult.get_by_id_and_org(query.latest_query_data_id, org).data
+
+    cached = _rls_result_for_current_user(query)
+    if cached is not None:
+        return cached.data
+
+    # No result this user has produced yet — run it for them. Lookup queries
+    # backing a dropdown are small, and run_query injects their RLS context, so
+    # the options are correct for whoever is looking at the report.
+    data, error = query.data_source.query_runner.run_query(query.query_text, current_user)
+    if error:
+        raise DropdownValuesError(
+            "Could not load options for this parameter: {}".format(error)
+        )
+    # BaseQueryRunner.run_query returns serialised JSON, but a runner is free to
+    # return the already-deserialised dict (jrny_pg does), so accept both.
+    return json_loads(data) if isinstance(data, (str, bytes, bytearray)) else data
 
 
 def dropdown_values(query_id, org):
@@ -108,6 +168,28 @@ def _is_date_range(obj):
     return _is_date(obj["start"]) and _is_date(obj["end"])
 
 
+def _is_unset_optional_filter(value):
+    """An optional dropdown filter the user has not chosen a value for.
+
+    The seeded JRNY reports are authored so that an empty value means "no
+    filter":
+
+        AND ('{{ category }}' = '' OR il.product_category = '{{ category }}')
+
+    Redash has no native "any"/"all" option for `query` or `enum` parameters —
+    a value must appear in the dropdown — so the empty default every one of
+    those parameters ships with was rejected, and the report failed to load
+    with "The following parameter values are incompatible with their
+    definitions". On a dashboard that is fatal: each widget renders the error
+    instead of data, with no way to intervene.
+
+    Accepting the empty string restores the authored behaviour. It widens the
+    accepted set by exactly one constant that carries no user input, so the
+    injection guarantee of dropdown-restricted parameters is unchanged.
+    """
+    return value == ""
+
+
 def _is_value_within_options(value, dropdown_options, allow_list=False):
     if isinstance(value, list):
         return allow_list and set(map(str, value)).issubset(set(dropdown_options))
@@ -156,8 +238,10 @@ class ParameterizedQuery:
             "text": lambda value: isinstance(value, str),
             "text-pattern": lambda value: _is_regex_pattern(value, regex),
             "number": _is_number,
-            "enum": lambda value: _is_value_within_options(value, enum_options, allow_multiple_values),
-            "query": lambda value: _is_value_within_options(
+            "enum": lambda value: _is_unset_optional_filter(value)
+            or _is_value_within_options(value, enum_options, allow_multiple_values),
+            "query": lambda value: _is_unset_optional_filter(value)
+            or _is_value_within_options(
                 value,
                 [v["value"] for v in dropdown_values(query_id, self.org)],
                 allow_multiple_values,
@@ -201,6 +285,10 @@ class InvalidParameterError(Exception):
         parameter_names = ", ".join(parameters)
         message = "The following parameter values are incompatible with their definitions: {}".format(parameter_names)
         super(InvalidParameterError, self).__init__(message)
+
+
+class DropdownValuesError(Exception):
+    """Raised when a `query`-type parameter's options cannot be loaded."""
 
 
 class QueryDetachedFromDataSourceError(Exception):
