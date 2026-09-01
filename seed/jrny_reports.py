@@ -120,18 +120,40 @@ class APIClient:
 # Query definitions
 # ---------------------------------------------------------------------------
 
+# Default reporting window for the seeded reports.
+#
+# These MUST fall inside the range of the JRNY demo seed's data or every
+# parameterised dashboard opens on a window that predates every row and renders
+# an empty chart — which is exactly what happened: the defaults were
+# 2024-01-01..2024-12-31 while the demo data runs 2025-04-06..2026-05-02, so
+# correct queries against sound views produced nothing and the dashboards looked
+# broken.
+#
+# Aligned to FY2026 (finance.fiscal_years: FY2026 = 2025-03-01..2026-02-28), the
+# fiscal year the demo seed is built around, so the date window and DEMO_FISCAL_YEAR
+# below describe the same period.
+#
+# Redash dynamic dates (d_now, d_yesterday) are NOT usable here: only those two
+# exist for single-date parameters, and they are resolved CLIENT-side —
+# redash/utils/parameterized_query.py has no dynamic handling — so a `d_` value
+# would break the server-side first execution this seeder performs. Update these
+# constants if the JRNY demo seed's fiscal window moves.
+DEMO_PERIOD_START = "2025-03-01"
+DEMO_PERIOD_END = "2026-02-28"
+DEMO_FISCAL_YEAR = "FY2026"
+
 DATE_PARAMS = [
     {
         "name": "start_date",
         "title": "Start Date",
         "type": "date",
-        "value": "2024-01-01",
+        "value": DEMO_PERIOD_START,
     },
     {
         "name": "end_date",
         "title": "End Date",
         "type": "date",
-        "value": "2024-12-31",
+        "value": DEMO_PERIOD_END,
     },
 ]
 
@@ -1422,13 +1444,13 @@ ORDER BY a.entry_date, a.debit DESC;
                     "name": "start_date",
                     "title": "Start Date",
                     "type": "date",
-                    "value": "2024-01-01",
+                    "value": DEMO_PERIOD_START,
                 },
                 {
                     "name": "end_date",
                     "title": "End Date",
                     "type": "date",
-                    "value": "2024-12-31",
+                    "value": DEMO_PERIOD_END,
                 },
             ]
         },
@@ -1484,13 +1506,13 @@ LEFT JOIN LATERAL (
                     "name": "start_date",
                     "title": "Start Date",
                     "type": "date",
-                    "value": "2024-01-01",
+                    "value": DEMO_PERIOD_START,
                 },
                 {
                     "name": "end_date",
                     "title": "End Date",
                     "type": "date",
-                    "value": "2024-12-31",
+                    "value": DEMO_PERIOD_END,
                 },
             ]
         },
@@ -1523,7 +1545,7 @@ ORDER BY ap.days_overdue DESC, ap.balance_due DESC;
                     "name": "as_at_date",
                     "title": "As-At Date",
                     "type": "date",
-                    "value": "2024-12-31",
+                    "value": DEMO_PERIOD_END,
                 },
             ]
         },
@@ -1768,7 +1790,7 @@ ORDER BY bv.account_type, bv.gl_account_code, bv.period_number;
                     "name": "fiscal_year",
                     "title": "Fiscal Year",
                     "type": "text",
-                    "value": "2024",
+                    "value": DEMO_FISCAL_YEAR,
                 },
                 {
                     "name": "fiscal_period",
@@ -1816,7 +1838,7 @@ ORDER BY bv.account_type, bv.account_group;
                     "name": "fiscal_year",
                     "title": "Fiscal Year",
                     "type": "text",
-                    "value": "2024",
+                    "value": DEMO_FISCAL_YEAR,
                 },
                 {
                     "name": "fiscal_period",
@@ -1858,7 +1880,7 @@ ORDER BY
                     "name": "as_at_date",
                     "title": "As-At Date",
                     "type": "date",
-                    "value": "2024-12-31",
+                    "value": DEMO_PERIOD_END,
                 },
             ]
         },
@@ -2180,13 +2202,13 @@ END;
                     "name": "start_date",
                     "title": "Close Date From",
                     "type": "date",
-                    "value": "2024-01-01",
+                    "value": DEMO_PERIOD_START,
                 },
                 {
                     "name": "end_date",
                     "title": "Close Date To",
                     "type": "date",
-                    "value": "2024-12-31",
+                    "value": DEMO_PERIOD_END,
                 },
                 {
                     "name": "assigned_to",
@@ -2233,13 +2255,13 @@ ORDER BY
                     "name": "start_date",
                     "title": "Close Date From",
                     "type": "date",
-                    "value": "2024-01-01",
+                    "value": DEMO_PERIOD_START,
                 },
                 {
                     "name": "end_date",
                     "title": "Close Date To",
                     "type": "date",
-                    "value": "2024-12-31",
+                    "value": DEMO_PERIOD_END,
                 },
                 {
                     "name": "assigned_to",
@@ -2275,13 +2297,13 @@ ORDER BY stage DESC;
                     "name": "start_date",
                     "title": "Close Date From",
                     "type": "date",
-                    "value": "2024-01-01",
+                    "value": DEMO_PERIOD_START,
                 },
                 {
                     "name": "end_date",
                     "title": "Close Date To",
                     "type": "date",
-                    "value": "2024-12-31",
+                    "value": DEMO_PERIOD_END,
                 },
                 {
                     "name": "assigned_to",
@@ -2327,13 +2349,13 @@ ORDER BY days_since_last_activity DESC;
                     "name": "start_date",
                     "title": "Activity Date From",
                     "type": "date",
-                    "value": "2024-01-01",
+                    "value": DEMO_PERIOD_START,
                 },
                 {
                     "name": "end_date",
                     "title": "Activity Date To",
                     "type": "date",
-                    "value": "2024-12-31",
+                    "value": DEMO_PERIOD_END,
                 },
                 {
                     "name": "assigned_to",
@@ -2366,13 +2388,13 @@ ORDER BY week_start;
                     "name": "start_date",
                     "title": "Activity Date From",
                     "type": "date",
-                    "value": "2024-01-01",
+                    "value": DEMO_PERIOD_START,
                 },
                 {
                     "name": "end_date",
                     "title": "Activity Date To",
                     "type": "date",
-                    "value": "2024-12-31",
+                    "value": DEMO_PERIOD_END,
                 },
                 {
                     "name": "assigned_to",
@@ -2411,13 +2433,13 @@ ORDER BY a.activity_date DESC;
                     "name": "start_date",
                     "title": "Activity Date From",
                     "type": "date",
-                    "value": "2024-01-01",
+                    "value": DEMO_PERIOD_START,
                 },
                 {
                     "name": "end_date",
                     "title": "Activity Date To",
                     "type": "date",
-                    "value": "2024-12-31",
+                    "value": DEMO_PERIOD_END,
                 },
                 {
                     "name": "assigned_to",
