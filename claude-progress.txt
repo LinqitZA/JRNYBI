@@ -4366,3 +4366,88 @@ Agent: Batch agent handling features #188, #189, #190 (Polish slice)
 - All 3 assigned features (#188, #189, #190) complete
 - Could not commit due to bash sandbox issue — staged changes remain in working tree for next session
 
+
+================================================================================
+SESSION 2026-10-20 -- fix: query-based dropdown parameters on jrny_pg (per-user results) -- branch fix/query-dropdown-per-user-results (not committed)
+================================================================================
+  Bug: every query-based dropdown parameter failed (dropdown HTTP 500, run with a value HTTP 400
+  "incompatible") because jrny_pg results are cached per user (hash includes user_id), so
+  Query.latest_query_data_id is never set, and dropdown_values() read only that shared result.
+  Fix (redash/models/parameterized_query.py, redash/handlers/query_results.py): for jrny_pg sources
+  the lookup query runs as the VIEWING user (runner.run_query(text, user), so that user's RLS claims
+  apply); no user -> DropdownValuesUnavailableError (subclass of QueryDetachedFromDataSourceError, so
+  handlers answer 400 and scheduled refresh / hash update log and skip as before). Other data source
+  types unchanged. ParameterizedQuery takes an optional user; the run handler passes current_user.
+  Security invariant 2 (per-user results) kept: no shared result is ever read for jrny_pg.
+  Also: CLAUDE.md replaced by a coding-agent charter (old prompt kept as CLAUDE.md.old), user decision.
+  Tests: tests/models/test_parameterized_query.py (+6), tests/handlers/test_query_results.py (+4);
+  187 of 188 in the affected suites pass; the 1 failure (test_queries ...from_its_organization,
+  401 != 404) also fails on main (pre-existing). ruff clean (black not installed in the image).
+  Deploy: rebuild the jrnybi image and recreate jrnybi-server (and worker/scheduler for consistency);
+  no metadata migration, no env vars. Rollback: previous image. Each dropdown open / parameterised run
+  now executes the (small) lookup query once as the viewer.
+
+## 2026-10-21 — Dashboards don't auto-run reports with empty parameters (AQ request)
+Branch: fix/query-dropdown-per-user-results (uncommitted, on top of the dropdown fix).
+- client/app/services/widget.js: Widget.load no longer runs a query while a parameter is empty (it could
+  only return "missing value for … parameter"); sets widget.awaitingParameters instead.
+- client/app/components/dashboards/dashboard-widget/VisualizationWidget.jsx: shows an info box
+  "Choose a value for <params> above, then click Apply Changes to run this report." while waiting.
+- client/app/components/QueryBasedParameterInput.jsx: re-proposes the shown first option when the dashboard
+  rebuilds its parameter objects (it does on every widget load), so "Apply Changes" no longer disappears
+  while a dropdown shows a default (Income Statement case: its counter widget finished after the dropdown).
+- Tests (written first, failed before): client/app/services/widget.test.js (4),
+  client/app/components/QueryBasedParameterInput.test.js (3). Full client jest: all pass except 4
+  pre-existing ScheduleDialog failures (same on HEAD). ESLint clean on changed files.
+- Verified on dev through JRNY (/reports/migrated/...) in Chromium by two independent subagent checks: no
+  "missing value" errors; Apply Changes visible on open for dropdown reports; reports run after Apply;
+  no-parameter reports and p_ URLs run immediately; no new console errors.
+- Unchanged: query editor page (/queries/<id>) still shows the missing-value error before Apply.
+Deploy impact: JRNYBI image rebuild only. No metadata migrations, no env vars, no manual steps.
+Rollback: previous dev image kept as jrnybi:pre-no-autorun (it has the dropdown fix but not this change);
+on PROD redeploy the previous image.
+
+## 2026-10-21 -- Nested report folders (not committed, on fix/query-dropdown-per-user-results)
+Report categories nest through an optional "parent" (org-settings JSONB, no migration; a category
+without parent is top-level). Rules: redash/utils/report_category_tree.py (unknown parent, self,
+cycle, depth > 6); handler validates POST/PUT/bulk PUT, keeps parent when a PUT omits it, refuses
+DELETE of a folder with sub-folders. UI: Reports home tabs = top-level folders with nested
+collapsible sub-folders; View All menu is a nested tree with subtree counts and deep links; admin
+page has a Parent folder picker; publish picker shows paths. Helper client/app/lib/reportCategoryTree.js.
+Tests: tests/utils/test_report_category_tree.py + tests/handlers/test_jrny_report_categories.py (19),
+client/app/lib/reportCategoryTree.test.js (19). Run python tests ONLY against a separate DB
+(they drop_all): see jrny docs/superpowers/verification/2026-10-21-jrnybi-report-folders-dev-check.md.
+Deploy impact: JRNYBI image rebuild; then jrny scripts/aon-reports organise-folders.py (data:
+tags + categories, backup first). Rollback: organise-folders.py --restore <backup>, then the previous
+image (dev: jrnybi:before-folders). Spec/runbook in the jrny repo docs/.
+
+## 2026-10-21 -- "Download as Excel (as shown)" (not committed, same branch)
+Pivot and table visualizations expose exportRef.current = { getGrid } (viz-lib src/lib/export-grid.ts);
+the dashboard widget and query-page menus add "Download as Excel (as shown)", which POSTs the grid to
+/api/jrny/excel-export (redash/utils/excel_grid.py + handlers/jrny_excel_export.py) for a styled xlsx.
+Tests: tests/utils/test_excel_grid.py (13), tests/handlers/test_jrny_excel_export.py (4), viz-lib
+export-grid.test.ts (19) + Renderer tests, client excelAsShown/excelExport tests (30).
+Deploy impact: image rebuild only; no migration/env/data. Rollback: previous image (dev: jrnybi:before-excel).
+Spec, runbook and dev check in the jrny repo docs/.
+
+## 2026-10-22 -- Row tree for the TABLE visualization (not committed, same branch)
+AQ request (jrny docs/superpowers/specs/2026-10-22-income-statement-drilldown-design.md): opt-in option
+rowTree: { levelColumn, depth } expands / collapses rows by a level column of the result. Levels 1..depth
+form the tree (children = following rows with a higher level up to the next same-or-lower level); other
+levels are always shown and end the group. Opens collapsed; chevron column + row click toggle; Expand all /
+Collapse all in the toolbar; sorting off in tree mode; new result = collapsed; both Excel exports give every
+row. Missing / non-numeric level column = flat table. Card view (narrow) shows every row.
+Files: viz-lib/src/visualizations/table/rowTree.ts (+ rowTree.test.ts, 7), Renderer.tsx, renderer.less,
+Renderer.test.tsx (+10). Table jest 37/38: "Mounts with column defs derived from options.columns" fails
+on HEAD too (toolbar always shows the Excel button). Tests run in the frontend-builder stage image
+(docker build --target frontend-builder -t jrnybi-frontend-test:row-tree .; mount viz-lib/src; npx jest).
+Deploy impact: JRNYBI image rebuild only; no migration/env/data. Rollback: previous image (dev: jrnybi:pre-row-tree).
+Later the same day (AQ): "Download as Excel (as shown)" of a row-tree table writes Excel row groups that open
+collapsed (ExportGrid.row_outline {levels, collapsed}; redash/utils/excel_grid.py validates + writes it with
+xlsxwriter, summary row above). The table's own Excel button is unchanged. Tests: test_excel_grid.py +4
+(17/17, run in the image with REDASH_COOKIE_SECRET/REDASH_DATABASE_URL dummies, no DB), Renderer +2.
+viz-lib src/lib has 2 jest failures that also fail on HEAD (excel-export numeraljs / cell type).
+Later again (AQ): column option excelNumber (an Excel format) exports text figures formatted in SQL
+("(1,234.50)", "12.5%") as numbers in both Excel exports (lib/excel-export.ts parseFormattedNumber,
+buildCell; lib/export-grid.ts tableCell; Renderer passes it). Tests: excel-export +3, export-grid +1, Renderer +1.
+Then: rowTree.test.ts +1 (level-0 label row above the first group, Month On Month (Drill Down)).

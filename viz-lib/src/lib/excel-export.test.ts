@@ -10,6 +10,7 @@ import * as XLSX from "xlsx";
 
 import {
   buildWorkbook,
+  parseFormattedNumber,
   displayAsToCellType,
   numberFormatToExcel,
   dateTimeFormatToExcel,
@@ -176,5 +177,48 @@ describe("buildWorkbook()", () => {
     const ws3 = wb3.Sheets[wb3.SheetNames[0]];
     expect(ws3["A2"].t).toBe("s");
     expect(ws3["A2"].v).toBe("not-a-number");
+  });
+});
+
+// Text figures formatted in SQL (AON reports: "(1,234.50)", "12.5%", "" for blank) exported as numbers
+// when the column sets `excelNumber` (an Excel format).
+describe("parseFormattedNumber()", () => {
+  test("brackets are negative, separators dropped, % divided by 100", () => {
+    expect(parseFormattedNumber("1,234.50")).toBe(1234.5);
+    expect(parseFormattedNumber("(8,355,186.77)")).toBe(-8355186.77);
+    expect(parseFormattedNumber("-12.5%")).toBeCloseTo(-0.125, 10);
+    expect(parseFormattedNumber("0.0%")).toBe(0);
+    expect(parseFormattedNumber(" 42 ")).toBe(42);
+    expect(parseFormattedNumber(7)).toBe(7);
+  });
+
+  test("blank or not a number → null", () => {
+    expect(parseFormattedNumber("")).toBeNull();
+    expect(parseFormattedNumber("Sales")).toBeNull();
+    expect(parseFormattedNumber("1.2.3")).toBeNull();
+    expect(parseFormattedNumber("((5))")).toBeNull();
+    expect(parseFormattedNumber(null)).toBeNull();
+  });
+});
+
+describe("buildWorkbook() with excelNumber columns", () => {
+  test("formatted text becomes a number with the column's Excel format; blanks stay empty", () => {
+    const wb = buildWorkbook(
+      [
+        { name: "g", title: "Group", displayAs: "string", order: 0 },
+        { name: "a", title: "Actual", displayAs: "string", order: 1, excelNumber: "#,##0.00;(#,##0.00)" },
+        { name: "p", title: "Var%", displayAs: "string", order: 2, excelNumber: "0.0%" },
+      ],
+      [
+        { g: "Sales", a: "(8,355,186.77)", p: "12.5%" },
+        { g: "Other", a: "", p: "x" },
+      ]
+    );
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    expect(ws["B2"]).toMatchObject({ t: "n", v: -8355186.77, z: "#,##0.00;(#,##0.00)" });
+    expect(ws["C2"]).toMatchObject({ t: "n", v: 0.125, z: "0.0%" });
+    expect(ws["A2"]).toMatchObject({ t: "s", v: "Sales" });
+    expect(ws["B3"] ? ws["B3"].v : "").toBe("");
+    expect(ws["C3"]).toMatchObject({ t: "s", v: "x" });
   });
 });

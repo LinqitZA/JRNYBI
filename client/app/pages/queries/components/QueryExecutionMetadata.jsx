@@ -21,6 +21,7 @@ export default function QueryExecutionMetadata({
   showEditVisualizationButton,
   onEditVisualization,
   extraActions,
+  exportRef,
 }) {
   const queryResultData = useQueryResultData(queryResult);
   const openAddToDashboardDialog = useAddToDashboardDialog(query);
@@ -37,6 +38,7 @@ export default function QueryExecutionMetadata({
           apiKey={query.api_key}
           selectedTab={selectedVisualization}
           openAddToDashboardForm={openAddToDashboardDialog}
+          exportRef={exportRef}
         />
       </span>
       {extraActions}
@@ -95,6 +97,7 @@ QueryExecutionMetadata.propTypes = {
   showEditVisualizationButton: PropTypes.bool,
   onEditVisualization: PropTypes.func,
   extraActions: PropTypes.node,
+  exportRef: PropTypes.shape({ current: PropTypes.any }), // eslint-disable-line react/forbid-prop-types
 };
 
 QueryExecutionMetadata.defaultProps = {
@@ -103,4 +106,5 @@ QueryExecutionMetadata.defaultProps = {
   showEditVisualizationButton: false,
   onEditVisualization: () => {},
   extraActions: null,
+  exportRef: null,
 };

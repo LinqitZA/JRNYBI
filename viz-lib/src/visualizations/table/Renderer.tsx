@@ -12,11 +12,21 @@ import ColumnTypes from "../shared/columns";
 // (xlsx) Community utility added in the foundation feature so we get column
 // typing, number/date formats, and a frozen header row in the exported file.
 import { downloadExcel } from "@/lib/excel-export";
+import { tableExportGrid, ExportGrid, ExportGridSource, TableExportColumn } from "@/lib/export-grid";
 import {
   evaluateRules,
   extractColumnNumbers,
   toAgCellStyle,
 } from "../shared/conditionalFormatting";
+import {
+  RowTreeConfig,
+  TreeInfo,
+  getRowTreeConfig,
+  buildRowTree,
+  visibleRowIndexes,
+  expandableIndexes,
+  collapse,
+} from "./rowTree";
 
 import "./renderer.less";
 
@@ -35,6 +45,8 @@ import "./renderer.less";
  *   - Optional detail-row expansion via the `detailQuery` option
  *     (fetches a child query parameterised by the row's key column,
  *     renders an inline panel via AG Grid Community's full-width row).
+ *   - Optional row tree via the `rowTree` option ({ levelColumn, depth }):
+ *     rows expand / collapse by a level column of the result (rowTree.ts).
  */
 
 const KEY_COLUMN_PARAM = "row_key";
@@ -83,6 +95,94 @@ function useIsNarrow(threshold: number) {
   return [ref, isNarrow] as const;
 }
 
+// Simple text-based quick filter used by the card view — matches AG Grid's
+// quickFilterText behaviour: any column with allowSearch === true contributes.
+function filterRowsBySearch(rows: any[], columns: any[], searchTerm: string) {
+  const searchableNames = filter(columns || [], (c: any) => c.allowSearch).map((c: any) => c.name);
+  const trimmed = (searchTerm || "").trim().toLowerCase();
+  if (!trimmed || searchableNames.length === 0) return rows;
+  return rows.filter((row: any) =>
+    searchableNames.some((name: string) => {
+      const v = row[name];
+      return v != null && String(v).toLowerCase().includes(trimmed);
+    })
+  );
+}
+
+function toExportColumn(column: any): TableExportColumn {
+  return {
+    name: column.name,
+    title: column.title || column.name,
+    displayAs: column.displayAs,
+    numberFormat: column.numberFormat,
+    dateTimeFormat: column.dateTimeFormat,
+    excelNumber: column.excelNumber,
+  };
+}
+
+// "Download as Excel (as shown)": the table as the viewer currently sees it.
+// Desktop grid: AG Grid's displayed columns (moved / pinned order) and its
+// rows after the quick filter and sort; server-side mode exports only the
+// loaded rows; a row tree exports every row, as Excel row groups that open
+// collapsed. Card view, or before the grid api is ready: the visible
+// columns in their configured order and the card view's search.
+function buildTableExportGrid(
+  state: {
+    options: any;
+    data: any;
+    searchTerm: string;
+    isNarrow: boolean;
+    serverSide: boolean;
+    treeActive: boolean;
+    tree: TreeInfo[] | null;
+  },
+  gridApi: any
+): ExportGrid | null {
+  const { options, data, searchTerm, isNarrow, serverSide, treeActive, tree } = state;
+  const optionColumns: any[] = options.columns || [];
+  const dataRows: any[] = (data && data.rows) || [];
+  if (!serverSide && dataRows.length === 0) return null;
+
+  if (!isNarrow && gridApi && !(gridApi.isDestroyed && gridApi.isDestroyed())) {
+    const byName: Record<string, any> = {};
+    optionColumns.forEach((c: any) => {
+      byName[c.name] = c;
+    });
+    const displayed: any[] = gridApi.getAllDisplayedColumns() || [];
+    const columns = displayed
+      .map((col: any) => {
+        const def = col.getColDef ? col.getColDef() : {};
+        // Columns we didn't build from options.columns (the expander) don't map.
+        return byName[(def && def.field) || col.getColId()];
+      })
+      .filter(Boolean)
+      .map(toExportColumn);
+    const rows: any[] = [];
+    const collect = (node: any) => {
+      if (node && node.data && !node.data.__detailRow) rows.push(node.data);
+    };
+    // Row tree: every row in query order, expanded or not (the tree has no sort).
+    if (treeActive) dataRows.forEach(row => rows.push(row));
+    else if (serverSide) gridApi.forEachNode(collect);
+    else gridApi.forEachNodeAfterFilterAndSort(collect);
+    const grid = tableExportGrid(columns, rows);
+    // Row tree: Excel row groups that open collapsed, like the screen (tree level 1 = outline 0;
+    // always-shown rows and the header 0).
+    if (grid && treeActive && tree) {
+      const levels = tree.map(t => (t.level == null ? 0 : t.level - 1));
+      grid.row_outline = { levels: [...new Array(grid.header_rows).fill(0), ...levels], collapsed: true };
+    }
+    return grid;
+  }
+
+  if (serverSide) return null; // nothing is loaded outside the grid
+  const visibleColumns = sortBy(
+    filter(optionColumns, (c: any) => c.visible !== false),
+    "order"
+  );
+  return tableExportGrid(visibleColumns.map(toExportColumn), filterRowsBySearch(dataRows, optionColumns, searchTerm));
+}
+
 // Card view for mobile: each row becomes a vertical stack of (label, value)
 // pairs so all columns stay readable on a phone-width viewport. Hidden columns
 // and the expand chevron from feature #210 are skipped. Cells delegate to the
@@ -116,24 +216,10 @@ function MobileCardView({
     [visibleColumns]
   );
 
-  // Simple text-based quick filter — matches AG Grid's quickFilterText
-  // behaviour: any visible column with allowSearch === true contributes.
-  const searchableNames = useMemo(
-    () => filter(options.columns || [], (c: any) => c.allowSearch).map((c: any) => c.name),
-    [options.columns]
+  const filteredRows = useMemo(
+    () => filterRowsBySearch(data.rows || [], options.columns || [], searchTerm),
+    [data.rows, searchTerm, options.columns]
   );
-
-  const filteredRows = useMemo(() => {
-    const allRows = data.rows || [];
-    const trimmed = (searchTerm || "").trim().toLowerCase();
-    if (!trimmed || searchableNames.length === 0) return allRows;
-    return allRows.filter((row: any) =>
-      searchableNames.some((name: string) => {
-        const v = row[name];
-        return v != null && String(v).toLowerCase().includes(trimmed);
-      })
-    );
-  }, [data.rows, searchTerm, searchableNames]);
 
   // Single-shot pagination: phones rarely benefit from page jumps, so we
   // expose a simple "Load more" button instead of a numeric paginator.
@@ -233,7 +319,13 @@ function buildColumnDefs(
   expandedKey: string | null,
   onToggleExpand: (row: any) => void,
   getRowKey: (row: any) => string,
-  rows: any[]
+  rows: any[],
+  treeCtx: {
+    cfg: RowTreeConfig;
+    tree: TreeInfo[];
+    expanded: Set<number>;
+    onToggle: (index: number) => void;
+  } | null = null
 ): any[] {
   const visible = sortBy(filter(columns, c => c.visible !== false), "order");
   // Pre-extract numeric values per column once — color-scale and top/bottom
@@ -247,6 +339,48 @@ function buildColumnDefs(
   });
 
   const colDefs: any[] = [];
+
+  // Row tree chevron column, indented by level (rowTree.ts)
+  if (treeCtx) {
+    const { cfg, tree, expanded, onToggle } = treeCtx;
+    colDefs.push({
+      headerName: "",
+      field: "__tree",
+      colId: "__tree",
+      width: 40 + 16 * (cfg.depth - 1),
+      pinned: "left",
+      sortable: false,
+      filter: false,
+      resizable: false,
+      suppressMenu: true,
+      suppressMovable: true,
+      headerClass: "ag-jrnybi-expand-header",
+      cellClass: "ag-jrnybi-expand-cell",
+      cellRenderer: function TreeToggleRenderer(params: any) {
+        if (!params.data || params.data.__detailRow) return null;
+        const index = params.data.__rowIndex;
+        const info = tree[index];
+        if (!info || !info.hasChildren) return null;
+        const isExpanded = expanded.has(index);
+        return (
+          <button
+            type="button"
+            className={`jrnybi-table-expand-btn ${isExpanded ? "is-expanded" : ""}`}
+            style={{ marginLeft: 16 * ((info.level || 1) - 1) }}
+            data-test="TableTreeToggle"
+            data-row-index={index}
+            aria-expanded={isExpanded}
+            onClick={e => {
+              e.stopPropagation();
+              onToggle(index);
+            }}
+            aria-label={isExpanded ? "Collapse row" : "Expand row"}>
+            <span className="jrnybi-table-expand-chevron">{isExpanded ? "▾" : "▸"}</span>
+          </button>
+        );
+      },
+    });
+  }
 
   // Optional expand chevron column for detail panels (feature #210)
   if (detailQuery && detailQuery.queryId) {
@@ -302,7 +436,8 @@ function buildColumnDefs(
       field: column.name,
       headerName: column.title || column.name,
       headerTooltip: column.description || column.title || column.name,
-      sortable: true,
+      // A row tree keeps query order: sorting would separate children from their parents.
+      sortable: !treeCtx,
       resizable: true,
       filter: false,
       suppressMenu: true,
@@ -437,10 +572,14 @@ function DetailPanel({ parentRow, detailQuery, cache }: any) {
 // Main Renderer
 // ---------------------------------------------------------------------------
 
-export default function Renderer({ options, data }: any) {
+export default function Renderer({ options, data, exportRef }: any) {
   const [searchTerm, setSearchTerm] = useState("");
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  // Row tree: indexes (into data.rows) of the expanded rows.
+  const [treeExpanded, setTreeExpanded] = useState<Set<number>>(() => new Set());
   const gridRef = useRef<any>(null);
+  // Latest render's state for exportRef.getGrid (isNarrow is filled in below).
+  const exportStateRef = useRef<any>(null);
   // Session-scoped detail-row cache (Map kept in a ref to survive re-renders).
   const detailCacheRef = useRef<{ get: (k: string) => any; set: (k: string, v: any) => void }>({
     get: () => undefined,
@@ -483,12 +622,29 @@ export default function Renderer({ options, data }: any) {
     [getRowKey]
   );
 
+  const treeConfig = useMemo(() => getRowTreeConfig(options, (data && data.rows) || []), [options, data]);
+  const tree = useMemo(() => (treeConfig ? buildRowTree(data.rows, treeConfig) : null), [treeConfig, data]);
+
+  const handleToggleTree = useCallback(
+    (index: number) => {
+      if (!tree) return;
+      setTreeExpanded(prev => {
+        if (prev.has(index)) return collapse(tree, prev, index);
+        const next = new Set(prev);
+        next.add(index);
+        return next;
+      });
+    },
+    [tree]
+  );
+
   // Inject row index for stable identity + expand the row data with detail rows.
   const rowData = useMemo(() => {
-    const baseRows = (data.rows || []).map((row: any, idx: number) => ({
+    const allRows = (data.rows || []).map((row: any, idx: number) => ({
       ...row,
       __rowIndex: idx,
     }));
+    const baseRows = tree ? visibleRowIndexes(tree, treeExpanded).map(i => allRows[i]) : allRows;
     if (!detailQuery || expandedKey == null) {
       return baseRows;
     }
@@ -505,7 +661,7 @@ export default function Renderer({ options, data }: any) {
       }
     });
     return out;
-  }, [data.rows, detailQuery, expandedKey, getRowKey]);
+  }, [data.rows, detailQuery, expandedKey, getRowKey, tree, treeExpanded]);
 
   const columnDefs = useMemo(
     () =>
@@ -515,9 +671,33 @@ export default function Renderer({ options, data }: any) {
         expandedKey,
         handleToggleExpand,
         getRowKey,
-        data?.rows || []
+        data?.rows || [],
+        tree && treeConfig
+          ? { cfg: treeConfig, tree, expanded: treeExpanded, onToggle: handleToggleTree }
+          : null
       ),
-    [options.columns, detailQuery, expandedKey, handleToggleExpand, getRowKey, data?.rows]
+    [
+      options.columns,
+      detailQuery,
+      expandedKey,
+      handleToggleExpand,
+      getRowKey,
+      data?.rows,
+      tree,
+      treeConfig,
+      treeExpanded,
+      handleToggleTree,
+    ]
+  );
+
+  const getRowClass = useCallback(
+    (params: any) => {
+      if (!tree || !params.data || params.data.__detailRow) return undefined;
+      const info = tree[params.data.__rowIndex];
+      if (!info) return undefined;
+      return info.level == null ? "jrnybi-tree-always" : `jrnybi-tree-level-${info.level}`;
+    },
+    [tree]
   );
 
   const isFullWidthRow = useCallback((params: any) => !!params.rowNode.data?.__detailRow, []);
@@ -538,6 +718,16 @@ export default function Renderer({ options, data }: any) {
   const handleCellClicked = useCallback(
     (params: any) => {
       if (!params || !params.data || params.data.__detailRow) return;
+
+      // Row tree: a click on an expandable row toggles it (the chevron button
+      // toggles itself, so its clicks are skipped here) and nothing else runs.
+      if (tree) {
+        const target = params.event && params.event.target;
+        const onToggle = target && target.closest && target.closest('[data-test="TableTreeToggle"]');
+        const info = tree[params.data.__rowIndex];
+        if (!onToggle && info && info.hasChildren) handleToggleTree(params.data.__rowIndex);
+        return;
+      }
 
       // Feature #214 — drill-down takes precedence over cross-filter when
       // both are wired on the same table. Drill-down navigates away, so
@@ -593,7 +783,7 @@ export default function Renderer({ options, data }: any) {
         console.error("Table cross-filter dispatch failed:", err);
       }
     },
-    [options]
+    [options, tree, handleToggleTree]
   );
 
   const fullWidthCellRenderer = useCallback(
@@ -619,6 +809,11 @@ export default function Renderer({ options, data }: any) {
   useEffect(() => {
     setExpandedKey(null);
   }, [data.rows, options.detailQuery && options.detailQuery.queryId]);
+
+  // A new result (parameter change, refresh) opens the row tree collapsed.
+  useEffect(() => {
+    setTreeExpanded(new Set());
+  }, [data.rows]);
 
   // -------------------------------------------------------------------------
   // Feature #211 — Server-side virtualised scrolling.
@@ -684,6 +879,28 @@ export default function Renderer({ options, data }: any) {
     };
   }, [serverSideQueryResultId, serverSidePageSize, searchTerm]);
 
+  exportStateRef.current = {
+    options,
+    data,
+    searchTerm,
+    isNarrow: exportStateRef.current ? exportStateRef.current.isNarrow : false,
+    serverSide: !!serverSideQueryResultId,
+    treeActive: !!tree && !serverSideQueryResultId,
+    tree,
+  };
+
+  // "Download as Excel (as shown)" — see buildTableExportGrid.
+  useEffect(() => {
+    if (!exportRef) return undefined;
+    const source: ExportGridSource = {
+      getGrid: () => buildTableExportGrid(exportStateRef.current, gridRef.current && gridRef.current.api),
+    };
+    exportRef.current = source;
+    return () => {
+      if (exportRef.current === source) exportRef.current = null;
+    };
+  }, [exportRef]);
+
   if (!data || !data.rows || data.rows.length === 0) {
     if (!serverSideQueryResultId) {
       return null;
@@ -697,6 +914,7 @@ export default function Renderer({ options, data }: any) {
   // the layout adapts when the surrounding widget is resized — dashboard edit
   // mode, browser narrowing, or phone rotation.
   const [containerRef, isNarrow] = useIsNarrow(MOBILE_BREAKPOINT);
+  exportStateRef.current.isNarrow = isNarrow;
 
   // -------------------------------------------------------------------------
   // Feature #212 — "Export to Excel" toolbar action.
@@ -719,6 +937,7 @@ export default function Renderer({ options, data }: any) {
       order: c.order,
       numberFormat: c.numberFormat,
       dateTimeFormat: c.dateTimeFormat,
+      excelNumber: c.excelNumber,
       description: c.description,
     }));
     const baseRows = (data && data.rows) || [];
@@ -739,13 +958,34 @@ export default function Renderer({ options, data }: any) {
     (data.rows || []).length > 0 &&
     !serverSideQueryResultId; // hidden in infinite-scroll mode (see comment above)
 
+  // Row tree buttons: desktop grid only (the card view shows every row).
+  const showTreeButtons = !!tree && !isNarrow && !serverSideQueryResultId;
+
   return (
     <div
       ref={containerRef}
       className={`table-visualization-container ag-jrnybi-table-container${isNarrow ? " jrnybi-table-mobile" : ""}`}
       data-test="TableVisualization">
-      {(showSearch || showExcelExport) && (
+      {(showSearch || showExcelExport || showTreeButtons) && (
         <div className="ag-jrnybi-table-toolbar">
+          {showTreeButtons && (
+            <>
+              <button
+                type="button"
+                className="jrnybi-table-tree-btn"
+                data-test="TableTreeExpandAll"
+                onClick={() => tree && setTreeExpanded(expandableIndexes(tree))}>
+                Expand all
+              </button>
+              <button
+                type="button"
+                className="jrnybi-table-tree-btn"
+                data-test="TableTreeCollapseAll"
+                onClick={() => setTreeExpanded(new Set())}>
+                Collapse all
+              </button>
+            </>
+          )}
           {showSearch && (
             <Input.Search
               allowClear
@@ -815,6 +1055,7 @@ export default function Renderer({ options, data }: any) {
           isFullWidthRow={isFullWidthRow}
           fullWidthCellRenderer={detailQuery ? fullWidthCellRenderer : undefined}
           getRowHeight={getRowHeight}
+          getRowClass={getRowClass}
           suppressDragLeaveHidesColumns
           domLayout="autoHeight"
           headerHeight={36}

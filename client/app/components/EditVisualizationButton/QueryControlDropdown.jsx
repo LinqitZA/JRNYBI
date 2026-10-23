@@ -5,6 +5,8 @@ import Menu from "antd/lib/menu";
 import Button from "antd/lib/button";
 import PlainButton from "@/components/PlainButton";
 import { clientConfig } from "@/services/auth";
+import { canExportAsShown, buildExportTitle, resolveSelectedVisualization } from "@/lib/excelAsShown";
+import { exportVisualizationAsShown } from "@/services/excelExport";
 
 import PlusCircleFilledIcon from "@ant-design/icons/PlusCircleFilled";
 import ShareAltOutlinedIcon from "@ant-design/icons/ShareAltOutlined";
@@ -15,6 +17,21 @@ import EllipsisOutlinedIcon from "@ant-design/icons/EllipsisOutlined";
 import QueryResultsLink from "./QueryResultsLink";
 
 export default function QueryControlDropdown(props) {
+  // "Download as Excel (as shown)" exports the visualization shown in the selected tab.
+  // Shown for pivot and table visualizations; disabled while running or when the result has no rows.
+  const selectedVisualization = resolveSelectedVisualization(props.query.visualizations, props.selectedTab);
+  const showDownloadAsShown =
+    !!props.exportRef && canExportAsShown({ visualizationType: selectedVisualization.type, isQueryResultEmpty: false });
+  const canDownloadAsShown = canExportAsShown({
+    visualizationType: selectedVisualization.type,
+    isQueryResultEmpty: props.queryExecuting || !props.queryResult.isEmpty || props.queryResult.isEmpty(),
+  });
+  const downloadAsShown = () =>
+    exportVisualizationAsShown(props.exportRef, {
+      title: buildExportTitle(props.query.name, selectedVisualization),
+      parameters: props.query.getParametersDefs ? props.query.getParametersDefs(false) : [],
+    });
+
   const menu = (
     <Menu>
       {!props.query.isNew() && (!props.query.is_draft || !props.query.is_archived) && (
@@ -66,6 +83,13 @@ export default function QueryControlDropdown(props) {
           <FileExcelOutlinedIcon /> Download as Excel File
         </QueryResultsLink>
       </Menu.Item>
+      {showDownloadAsShown && (
+        <Menu.Item key="download_excel_as_shown" disabled={!canDownloadAsShown}>
+          <PlainButton onClick={downloadAsShown} disabled={!canDownloadAsShown} data-test="DownloadExcelAsShownButton">
+            <FileExcelOutlinedIcon /> Download as Excel (as shown)
+          </PlainButton>
+        </Menu.Item>
+      )}
     </Menu>
   );
 
@@ -87,6 +111,8 @@ QueryControlDropdown.propTypes = {
   apiKey: PropTypes.string,
   selectedTab: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
   openAddToDashboardForm: PropTypes.func.isRequired,
+  // ref the selected visualization's Renderer sets to { getGrid } (pivot and table only)
+  exportRef: PropTypes.shape({ current: PropTypes.any }), // eslint-disable-line react/forbid-prop-types
 };
 
 QueryControlDropdown.defaultProps = {
@@ -94,4 +120,5 @@ QueryControlDropdown.defaultProps = {
   embed: false,
   apiKey: "",
   selectedTab: "",
+  exportRef: null,
 };

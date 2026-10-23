@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import Button from "antd/lib/button";
 import Input from "antd/lib/input";
 import Modal from "antd/lib/modal";
@@ -6,6 +6,7 @@ import Table from "antd/lib/table";
 import Popconfirm from "antd/lib/popconfirm";
 import Form from "antd/lib/form";
 import Tooltip from "antd/lib/tooltip";
+import Select from "antd/lib/select";
 import {
   PlusOutlined,
   EditOutlined,
@@ -35,6 +36,7 @@ import wrapSettingsTab from "@/components/SettingsWrapper";
 import { axios } from "@/services/axios";
 import notification from "@/services/notification";
 import routes from "@/services/routes";
+import { buildCategoryTree, flattenTree, descendantIds, moveAmongSiblings } from "@/lib/reportCategoryTree";
 
 import "./ReportCategories.less";
 
@@ -64,19 +66,38 @@ function CategoryIcon({ icon, color, size = 18 }) {
   return <IconComponent style={{ fontSize: size, color: color || "#6b7280" }} />;
 }
 
-function CategoryFormModal({ visible, category, onSave, onCancel, existingIds }) {
+// Value of the "Top level" option in the parent picker (sent to the API as null)
+const TOP_LEVEL = "";
+
+// The backend's error text from a failed request, or the fallback.
+function apiErrorMessage(err, fallback) {
+  const data = err?.response?.data;
+  return data?.error || data?.message || fallback;
+}
+
+function CategoryFormModal({ visible, category, onSave, onCancel, categories }) {
   const [form] = Form.useForm();
   const isEdit = !!category;
+
+  // Parent choices, indented by depth. A folder can't move under itself or its own sub-folders.
+  const parentOptions = useMemo(() => {
+    const tree = buildCategoryTree(categories);
+    const excluded = new Set(category ? [category.id, ...descendantIds(tree, category.id)] : []);
+    return flattenTree(tree).filter(row => !excluded.has(row.category.id));
+  }, [categories, category]);
 
   useEffect(() => {
     if (visible) {
       form.setFieldsValue(
-        category || {
-          name: "",
-          icon: "folder",
-          color: "#6b7280",
-          description: "",
-        }
+        category
+          ? { ...category, parent: category.parent || TOP_LEVEL }
+          : {
+              name: "",
+              icon: "folder",
+              color: "#6b7280",
+              description: "",
+              parent: TOP_LEVEL,
+            }
       );
     }
   }, [visible, category, form]);
@@ -84,7 +105,7 @@ function CategoryFormModal({ visible, category, onSave, onCancel, existingIds })
   const handleOk = async () => {
     try {
       const values = await form.validateFields();
-      onSave(values);
+      onSave({ ...values, parent: values.parent || null });
     } catch (_) {
       // validation failed
     }
@@ -123,6 +144,22 @@ function CategoryFormModal({ visible, category, onSave, onCancel, existingIds })
             <Input placeholder="auto-generated" />
           </Form.Item>
         )}
+
+        <Form.Item
+          name="parent"
+          label="Parent folder"
+          extra="Leave as Top level for a folder of its own in the Reports navigation.">
+          <Select data-test="ReportCategoryParent" showSearch optionFilterProp="label">
+            <Select.Option value={TOP_LEVEL} label="Top level">
+              Top level
+            </Select.Option>
+            {parentOptions.map(({ category: option, depth }) => (
+              <Select.Option key={option.id} value={option.id} label={option.name}>
+                <span style={{ paddingLeft: depth * 16 }}>{option.name}</span>
+              </Select.Option>
+            ))}
+          </Select>
+        </Form.Item>
 
         <Form.Item name="icon" label="Icon">
           <div className="icon-picker">
@@ -230,7 +267,7 @@ function ReportCategories() {
       setEditingCategory(null);
       fetchCategories();
     } catch (err) {
-      const msg = err?.response?.data?.error || "Failed to save category.";
+      const msg = apiErrorMessage(err, "Failed to save category.");
       notification.error(msg);
     }
   };
@@ -241,25 +278,28 @@ function ReportCategories() {
       notification.success("Category deleted.");
       fetchCategories();
     } catch (err) {
-      const msg = err?.response?.data?.error || "Failed to delete category.";
+      const msg = apiErrorMessage(err, "Failed to delete category.");
       notification.error(msg);
     }
   };
 
-  const handleMove = async (index, direction) => {
-    const newCategories = [...categories];
-    const targetIndex = index + direction;
-    if (targetIndex < 0 || targetIndex >= newCategories.length) return;
+  // Folders shown depth first and indented; the arrows move a folder among its siblings.
+  const rows = useMemo(
+    () => flattenTree(buildCategoryTree(categories)).map(({ category, depth }) => ({ ...category, depth })),
+    [categories]
+  );
 
-    // Swap
-    [newCategories[index], newCategories[targetIndex]] = [newCategories[targetIndex], newCategories[index]];
+  const handleMove = async (catId, direction) => {
+    const newCategories = moveAmongSiblings(categories, catId, direction);
+    if (!newCategories) return;
 
     try {
+      // Bulk PUT of the whole list; each entry keeps its parent
       const res = await axios.put("api/jrny/report-categories", newCategories);
       setCategories(res.categories || newCategories);
       notification.success("Order updated.");
     } catch (err) {
-      const msg = err?.response?.data?.error || "Failed to reorder categories.";
+      const msg = apiErrorMessage(err, "Failed to reorder categories.");
       notification.error(msg);
     }
   };
@@ -269,21 +309,23 @@ function ReportCategories() {
       title: "",
       key: "order",
       width: 80,
-      render: (_, _record, index) => (
+      render: (_, record) => (
         <div className="order-controls">
           <Button
             type="text"
             size="small"
             icon={<ArrowUpOutlined />}
-            disabled={index === 0}
-            onClick={() => handleMove(index, -1)}
+            aria-label={`Move ${record.name} up`}
+            disabled={!moveAmongSiblings(categories, record.id, -1)}
+            onClick={() => handleMove(record.id, -1)}
           />
           <Button
             type="text"
             size="small"
             icon={<ArrowDownOutlined />}
-            disabled={index === categories.length - 1}
-            onClick={() => handleMove(index, 1)}
+            aria-label={`Move ${record.name} down`}
+            disabled={!moveAmongSiblings(categories, record.id, 1)}
+            onClick={() => handleMove(record.id, 1)}
           />
         </div>
       ),
@@ -303,7 +345,8 @@ function ReportCategories() {
       dataIndex: "name",
       key: "name",
       render: (text, record) => (
-        <div>
+        <div style={{ paddingLeft: record.depth * 24 }} data-test={`ReportCategoryRow-${record.id}`}>
+          {record.depth > 0 && <FolderOutlined className="category-subfolder-icon" style={{ marginRight: 6 }} />}
           <strong>{text}</strong>
           <div className="category-id-label">{record.id}</div>
         </div>
@@ -338,7 +381,7 @@ function ReportCategories() {
           </Tooltip>
           <Popconfirm
             title={`Delete "${record.name}"?`}
-            description="Reports using this category will become uncategorized."
+            description="Reports using this category will become uncategorized. A folder with sub-folders can't be deleted."
             onConfirm={() => handleDelete(record.id)}
             okText="Delete"
             okType="danger">
@@ -357,7 +400,8 @@ function ReportCategories() {
         <div>
           <h3>Report Categories</h3>
           <p className="page-subtitle">
-            Manage the categories that organize reports in the Reports navigation. Drag to reorder.
+            Manage the folders that organize reports in the Reports navigation. Pick a parent folder to nest a
+            folder; use the arrows to reorder a folder among its siblings.
           </p>
         </div>
         <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
@@ -366,7 +410,7 @@ function ReportCategories() {
       </div>
 
       <Table
-        dataSource={categories}
+        dataSource={rows}
         columns={columns}
         rowKey="id"
         loading={loading}
@@ -388,7 +432,7 @@ function ReportCategories() {
           setModalVisible(false);
           setEditingCategory(null);
         }}
-        existingIds={categories.map(c => c.id)}
+        categories={categories}
       />
     </div>
   );

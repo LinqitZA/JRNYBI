@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import PropTypes from "prop-types";
 import cx from "classnames";
 import useMedia from "use-media";
@@ -47,6 +47,8 @@ function QueryView(props) {
   const queryFlags = useQueryFlags(query, dataSource);
   const [parameters, areParametersDirty, updateParametersDirtyFlag] = useQueryParameters(query);
   const [selectedVisualization, setSelectedVisualization] = useVisualizationTabHandler(query.visualizations);
+  // "Download as Excel (as shown)": the selected visualization's Renderer fills it; the ⋮ menu reads it
+  const exportRef = useRef(null);
   const isDesktop = useMedia({ minWidth: 768 });
   const isFixedLayout = useMedia({ minHeight: 500 }) && isDesktop;
   const [fullscreen, toggleFullscreen] = useFullscreenHandler(isDesktop);
@@ -169,6 +171,7 @@ function QueryView(props) {
               showNewVisualizationButton={queryFlags.canEdit && queryResultData.status === ExecutionStatus.DONE}
               canDeleteVisualizations={queryFlags.canEdit}
               selectedTab={selectedVisualization}
+              exportRef={exportRef}
               onChangeTab={setSelectedVisualization}
               onAddVisualization={addVisualization}
               onDeleteVisualization={deleteVisualization}
@@ -202,6 +205,7 @@ function QueryView(props) {
                 query={query}
                 queryResult={queryResult}
                 selectedVisualization={selectedVisualization}
+                exportRef={exportRef}
                 isQueryExecuting={isExecuting}
                 showEditVisualizationButton={queryFlags.canEdit}
                 onEditVisualization={editVisualization}

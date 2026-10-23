@@ -35,6 +35,9 @@ export const RendererPropTypes = {
   data: Data.isRequired,
   options: VisualizationOptions.isRequired,
   onOptionsChange: PropTypes.func, // (newOptions) => void
+  // "Download as Excel (as shown)": a React ref object; the Pivot and Table
+  // renderers set `current` to { getGrid } while mounted (see lib/export-grid).
+  exportRef: PropTypes.shape({ current: PropTypes.any }),
 };
 
 // For each visualization's editor

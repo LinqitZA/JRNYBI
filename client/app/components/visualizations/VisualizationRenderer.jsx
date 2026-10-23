@@ -219,6 +219,7 @@ export default function VisualizationRenderer(props) {
       options={options}
       data={filteredData}
       visualizationName={visualization.name}
+      exportRef={props.exportRef}
       addonBefore={showFilters && <Filters filters={filters} onChange={handleFiltersChange} />}
     />
   );
@@ -234,6 +235,8 @@ VisualizationRenderer.propTypes = {
   // Feature #213 — widget identity, only set when rendered inside a dashboard.
   widgetId: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   widgetName: PropTypes.string,
+  // "Download as Excel (as shown)": a React ref the pivot and table Renderers set to { getGrid } while mounted.
+  exportRef: PropTypes.shape({ current: PropTypes.any }), // eslint-disable-line react/forbid-prop-types
 };
 
 VisualizationRenderer.defaultProps = {
@@ -242,4 +245,5 @@ VisualizationRenderer.defaultProps = {
   onFiltersChange: () => {},
   widgetId: null,
   widgetName: null,
+  exportRef: null,
 };

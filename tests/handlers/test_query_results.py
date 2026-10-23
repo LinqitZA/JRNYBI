@@ -530,3 +530,64 @@ class TestJobResource(BaseTestCase):
         job = self.make_request("get", f"/api/jobs/{job_id}").json["job"]
         self.assertEqual(job["status"], FAILED)
         self.assertTrue("cancelled" in job["error"])
+
+
+class TestDropdownsOnRLSDataSources(BaseTestCase):
+    """jrny_pg results are cached per user, so dropdown values come from running the lookup query as
+    the viewing user (redash/models/parameterized_query.py), never from a shared latest result."""
+
+    def _rls_queries(self):
+        from unittest.mock import patch  # noqa: F401  (patched per test)
+
+        ds = self.factory.create_data_source(type="jrny_pg", group=self.factory.org.default_group)
+        lookup = self.factory.create_query(data_source=ds, query_text="SELECT name FROM reps")
+        options = {"parameters": [{"name": "rep", "type": "query", "queryId": lookup.id}]}
+        report = self.factory.create_query(data_source=ds, query_text="SELECT '{{rep}}'", options=options)
+        return lookup, report
+
+    def test_dropdowns_endpoint_runs_the_lookup_as_the_current_user(self):
+        from unittest.mock import patch
+
+        lookup, report = self._rls_queries()
+        data = {"columns": [{"name": "name"}], "rows": [{"name": "Grant Catto"}]}
+        with patch("redash.query_runner.jrny_pg.JRNYPostgreSQL.run_query", return_value=(data, None)) as run:
+            rv = self.make_request("get", "/api/queries/{}/dropdowns/{}".format(report.id, lookup.id))
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(rv.json, [{"name": "Grant Catto", "value": "Grant Catto"}])
+        self.assertEqual(run.call_args.args[0], "SELECT name FROM reps")
+        self.assertEqual(run.call_args.args[1].id, self.factory.user.id)
+
+    def test_dropdowns_endpoint_returns_400_not_500_when_the_lookup_fails(self):
+        from unittest.mock import patch
+
+        lookup, report = self._rls_queries()
+        with patch("redash.query_runner.jrny_pg.JRNYPostgreSQL.run_query", return_value=(None, "boom")):
+            rv = self.make_request("get", "/api/queries/{}/dropdowns/{}".format(report.id, lookup.id))
+        self.assertEqual(rv.status_code, 400)
+        self.assertIn("boom", rv.json["message"])
+
+    def _run_report(self, value):
+        from unittest.mock import patch
+
+        lookup, report = self._rls_queries()
+        data = {"columns": [{"name": "name"}], "rows": [{"name": "Grant Catto"}]}
+        with patch("redash.query_runner.jrny_pg.JRNYPostgreSQL.run_query", return_value=(data, None)), patch(
+            "redash.handlers.query_results.enqueue_query"
+        ) as enqueue, patch("redash.handlers.query_results.serialize_job", return_value={"job": {}}):
+            rv = self.make_request(
+                "post",
+                "/api/queries/{}/results".format(report.id),
+                data={"parameters": {"rep": value}, "max_age": 0},
+            )
+        return rv, enqueue
+
+    def test_a_value_from_the_users_dropdown_is_accepted_when_running_the_report(self):
+        rv, enqueue = self._run_report("Grant Catto")
+        self.assertEqual(rv.status_code, 200, rv.json)
+        enqueue.assert_called_once()
+        self.assertIn("SELECT 'Grant Catto'", enqueue.call_args.args[0])
+
+    def test_a_value_not_in_the_users_dropdown_is_rejected(self):
+        rv, enqueue = self._run_report("Someone Else")
+        self.assertEqual(rv.status_code, 400)
+        enqueue.assert_not_called()

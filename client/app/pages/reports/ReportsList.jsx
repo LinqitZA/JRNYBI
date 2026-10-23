@@ -3,7 +3,6 @@ import Input from "antd/lib/input";
 import Spin from "antd/lib/spin";
 import Empty from "antd/lib/empty";
 import Tooltip from "antd/lib/tooltip";
-import Button from "antd/lib/button";
 import AntdMenu from "antd/lib/menu";
 import {
   StarOutlined,
@@ -27,7 +26,7 @@ import {
   FundOutlined,
   RightOutlined,
 } from "@ant-design/icons";
-import { sortBy, filter, some } from "lodash";
+import { sortBy, filter } from "lodash";
 import moment from "moment";
 
 import routeWithUserSession from "@/components/ApplicationArea/routeWithUserSession";
@@ -36,9 +35,15 @@ import PageHeader from "@/components/PageHeader";
 import Layout from "@/components/layouts/ContentWithSidebar";
 import { axios } from "@/services/axios";
 import { Dashboard } from "@/services/dashboard";
-import { currentUser } from "@/services/auth";
 import routes from "@/services/routes";
 import notification from "@/services/notification";
+import {
+  getReportCategoryId,
+  buildCategoryTree,
+  assignReports,
+  subtreeReports,
+  ancestorIds,
+} from "@/lib/reportCategoryTree";
 
 import "./reports-list.less";
 
@@ -67,29 +72,18 @@ function CategoryIcon({ icon, color, size = 16 }) {
 }
 
 /**
- * Extracts report category id from a dashboard's tags.
- * Convention: tag format is "report:<category-id>"
- * Returns the first report category id found, or null.
- */
-function getReportCategory(dashboard) {
-  if (!dashboard.tags || !Array.isArray(dashboard.tags)) return null;
-  for (const tag of dashboard.tags) {
-    if (typeof tag === "string" && tag.startsWith("report:")) {
-      return tag.substring(7); // remove "report:" prefix
-    }
-  }
-  return null;
-}
-
-/**
  * Check if a dashboard is a report (has any report:* tag)
  */
 function isReport(dashboard) {
-  return getReportCategory(dashboard) !== null;
+  return getReportCategoryId(dashboard) !== null;
+}
+
+// Menu key for a folder's sub-menu (the folder's own menu item uses the plain category id)
+function subMenuKey(categoryId) {
+  return `folder:${categoryId}`;
 }
 
 function ReportCard({ report, onToggleFavorite }) {
-  const categoryId = getReportCategory(report);
   const updatedAt = report.updated_at ? moment(report.updated_at).fromNow() : "Unknown";
   const createdBy = report.user ? report.user.name : "Unknown";
 
@@ -175,112 +169,158 @@ function ReportsList({ currentCategory }) {
     []
   );
 
-  // Build category counts and grouped data
-  const { groupedReports, categoryCounts, recentReports } = useMemo(() => {
-    const grouped = {};
-    const counts = {};
+  // Folder tree, each report in the folder of its first report:<id> tag, and counts that include
+  // sub-folders. Reports whose category is unknown go to Uncategorized.
+  const { tree, groupedReports, categoryCounts, recentReports } = useMemo(() => {
+    const builtTree = buildCategoryTree(categories);
+    const { byCategory, uncategorized } = assignReports(builtTree, dashboards);
 
-    // Initialize all known categories
-    categories.forEach((cat) => {
-      grouped[cat.id] = [];
-      counts[cat.id] = 0;
-    });
-    grouped["uncategorized"] = [];
-    counts["uncategorized"] = 0;
-
-    // Group dashboards by category
-    dashboards.forEach((d) => {
-      const catId = getReportCategory(d);
-      const bucket = catId && grouped[catId] !== undefined ? catId : "uncategorized";
-      grouped[bucket].push(d);
-      counts[bucket] = (counts[bucket] || 0) + 1;
+    const grouped = { uncategorized: sortBy(uncategorized, "name") };
+    Object.keys(byCategory).forEach((id) => {
+      grouped[id] = sortBy(byCategory[id], "name");
     });
 
-    // Sort each group by name
-    Object.keys(grouped).forEach((key) => {
-      grouped[key] = sortBy(grouped[key], "name");
+    const counts = { uncategorized: uncategorized.length };
+    Object.keys(builtTree.byId).forEach((id) => {
+      counts[id] = subtreeReports(builtTree, byCategory, id).length;
     });
 
     // Recent reports: top 5 most recently updated
-    const recent = sortBy(dashboards, (d) => -(new Date(d.updated_at || 0).getTime())).slice(0, 5);
+    const recent = sortBy(dashboards, (d) => -new Date(d.updated_at || 0).getTime()).slice(0, 5);
 
-    return { groupedReports: grouped, categoryCounts: counts, recentReports: recent };
+    return { tree: builtTree, groupedReports: grouped, categoryCounts: counts, recentReports: recent };
   }, [dashboards, categories]);
 
-  // Filter by search term
-  const filteredReports = useMemo(() => {
+  // Reports to show, as groups. A folder shows its own reports first, then one labelled group per
+  // sub-folder (depth first, in folder order), so selecting a folder lists its whole subtree.
+  const reportGroups = useMemo(() => {
     const lowerSearch = searchTerm.toLowerCase().trim();
+    const matches = (list) => (lowerSearch ? filter(list, (d) => d.name.toLowerCase().includes(lowerSearch)) : list);
 
     if (currentCategory === "recent") {
-      if (!lowerSearch) return recentReports;
-      return filter(recentReports, (d) => d.name.toLowerCase().includes(lowerSearch));
+      return [{ key: "recent", reports: matches(recentReports) }];
     }
-
     if (currentCategory === "all" || !currentCategory) {
-      if (!lowerSearch) return sortBy(dashboards, "name");
-      return filter(sortBy(dashboards, "name"), (d) => d.name.toLowerCase().includes(lowerSearch));
+      return [{ key: "all", reports: matches(sortBy(dashboards, "name")) }];
     }
 
-    const catReports = groupedReports[currentCategory] || [];
-    if (!lowerSearch) return catReports;
-    return filter(catReports, (d) => d.name.toLowerCase().includes(lowerSearch));
-  }, [currentCategory, searchTerm, dashboards, groupedReports, recentReports]);
-
-  // Build sidebar menu items
-  const sidebarItems = useMemo(() => {
-    const items = [
-      {
-        key: "all",
-        href: "reports",
-        title: `All Reports`,
-        icon: () => (
-          <span className="btn-favorite m-r-5">
-            <FileTextOutlined style={{ fontSize: 14 }} />
-          </span>
-        ),
-      },
-      {
-        key: "recent",
-        href: "reports/recent",
-        title: "Recently Updated",
-        icon: () => (
-          <span className="btn-favorite m-r-5">
-            <ClockCircleOutlined style={{ fontSize: 14 }} />
-          </span>
-        ),
-      },
-    ];
-
-    categories.forEach((cat) => {
-      const count = categoryCounts[cat.id] || 0;
-      items.push({
-        key: cat.id,
-        href: `reports/${cat.id}`,
-        title: `${cat.name} (${count})`,
-        icon: () => (
-          <span className="btn-favorite m-r-5">
-            <CategoryIcon icon={cat.icon} color={cat.color} size={14} />
-          </span>
-        ),
-      });
-    });
-
-    // Add uncategorized if it has items
-    if (categoryCounts["uncategorized"] > 0) {
-      items.push({
-        key: "uncategorized",
-        href: "reports/uncategorized",
-        title: `Uncategorized (${categoryCounts["uncategorized"]})`,
-        icon: () => (
-          <span className="btn-favorite m-r-5">
-            <FolderOutlined style={{ fontSize: 14, color: "#6b7280" }} />
-          </span>
-        ),
-      });
+    const node = tree.byId[currentCategory];
+    if (!node) {
+      return [{ key: currentCategory, reports: matches(groupedReports[currentCategory] || []) }];
     }
 
-    return items;
-  }, [categories, categoryCounts]);
+    const groups = [{ key: node.id, reports: matches(groupedReports[node.id] || []) }];
+    const addChildren = (parent, path) => {
+      parent.children.forEach((child) => {
+        const childPath = [...path, child.category.name];
+        groups.push({
+          key: child.id,
+          title: childPath.join(" / "),
+          href: `reports/${child.id}`,
+          reports: matches(groupedReports[child.id] || []),
+        });
+        addChildren(child, childPath);
+      });
+    };
+    addChildren(node, []);
+    return groups.filter((group) => group.reports.length > 0);
+  }, [currentCategory, searchTerm, dashboards, tree, groupedReports, recentReports]);
+
+  const visibleReportCount = reportGroups.reduce((total, group) => total + group.reports.length, 0);
+
+  // Sub-menus to keep open: the path down to the selected folder (deep links open the right path),
+  // plus any the user opened.
+  const [openKeys, setOpenKeys] = useState([]);
+  useEffect(() => {
+    if (!tree.byId[currentCategory]) return;
+    const pathKeys = [...ancestorIds(tree, currentCategory), currentCategory]
+      .filter((id) => tree.byId[id].children.length > 0)
+      .map(subMenuKey);
+    setOpenKeys((prev) => Array.from(new Set([...prev, ...pathKeys])));
+  }, [tree, currentCategory]);
+
+  const renderCategoryLabel = (category, count, size = 14) => (
+    <>
+      <span className="btn-favorite m-r-5">
+        <CategoryIcon icon={category.icon} color={category.color} size={size} />
+      </span>
+      {`${category.name} (${count})`}
+    </>
+  );
+
+  // A folder without sub-folders is a link; a folder with sub-folders is a sub-menu whose first
+  // entry ("All in <name>") selects the folder itself.
+  const renderCategoryNode = (node) => {
+    const count = categoryCounts[node.id] || 0;
+    if (node.children.length === 0) {
+      return (
+        <AntdMenu.Item key={node.id} className="m-0">
+          <Link href={`reports/${node.id}`}>{renderCategoryLabel(node.category, count)}</Link>
+        </AntdMenu.Item>
+      );
+    }
+    return (
+      <AntdMenu.SubMenu key={subMenuKey(node.id)} className="m-0" title={renderCategoryLabel(node.category, count)}>
+        <AntdMenu.Item key={node.id} className="m-0">
+          <Link href={`reports/${node.id}`}>
+            <span className="btn-favorite m-r-5">
+              <FolderOutlined style={{ fontSize: 14, color: "#6b7280" }} />
+            </span>
+            {`All in ${node.category.name} (${count})`}
+          </Link>
+        </AntdMenu.Item>
+        {node.children.map(renderCategoryNode)}
+      </AntdMenu.SubMenu>
+    );
+  };
+
+  // Fixed menu items above and below the folder tree
+  const topItems = [
+    {
+      key: "all",
+      href: "reports",
+      title: `All Reports`,
+      icon: () => (
+        <span className="btn-favorite m-r-5">
+          <FileTextOutlined style={{ fontSize: 14 }} />
+        </span>
+      ),
+    },
+    {
+      key: "recent",
+      href: "reports/recent",
+      title: "Recently Updated",
+      icon: () => (
+        <span className="btn-favorite m-r-5">
+          <ClockCircleOutlined style={{ fontSize: 14 }} />
+        </span>
+      ),
+    },
+  ];
+  // Uncategorized is shown only if it has items
+  const bottomItems =
+    categoryCounts["uncategorized"] > 0
+      ? [
+          {
+            key: "uncategorized",
+            href: "reports/uncategorized",
+            title: `Uncategorized (${categoryCounts["uncategorized"]})`,
+            icon: () => (
+              <span className="btn-favorite m-r-5">
+                <FolderOutlined style={{ fontSize: 14, color: "#6b7280" }} />
+              </span>
+            ),
+          },
+        ]
+      : [];
+  const renderFixedItem = (item) => (
+    <AntdMenu.Item key={item.key} className="m-0">
+      <Link href={item.href}>
+        {item.icon && item.icon()}
+        {item.title}
+      </Link>
+    </AntdMenu.Item>
+  );
 
   // Current category info for the header
   const currentCategoryInfo = useMemo(() => {
@@ -293,11 +333,12 @@ function ReportsList({ currentCategory }) {
     if (currentCategory === "uncategorized") {
       return { name: "Uncategorized", description: "Reports without a category assignment" };
     }
-    const cat = categories.find((c) => c.id === currentCategory);
-    return cat
-      ? { name: cat.name, description: cat.description, icon: cat.icon, color: cat.color }
-      : { name: currentCategory, description: "" };
-  }, [currentCategory, categories]);
+    const node = tree.byId[currentCategory];
+    if (!node) return { name: currentCategory, description: "", ancestors: [] };
+    const cat = node.category;
+    const ancestors = ancestorIds(tree, currentCategory).map((id) => tree.byId[id].category);
+    return { name: cat.name, description: cat.description, icon: cat.icon, color: cat.color, ancestors };
+  }, [currentCategory, tree]);
 
   const effectiveCategory = currentCategory || "all";
 
@@ -323,24 +364,32 @@ function ReportsList({ currentCategory }) {
                 className="invert-stripe-position"
                 mode="inline"
                 selectable={false}
-                selectedKeys={[effectiveCategory]}>
-                {sidebarItems.map((item) => (
-                  <AntdMenu.Item key={item.key} className="m-0">
-                    <Link href={item.href}>
-                      {item.icon && item.icon()}
-                      {item.title}
-                    </Link>
-                  </AntdMenu.Item>
-                ))}
+                selectedKeys={[effectiveCategory]}
+                openKeys={openKeys}
+                onOpenChange={setOpenKeys}>
+                {topItems.map(renderFixedItem)}
+                {tree.roots.map(renderCategoryNode)}
+                {bottomItems.map(renderFixedItem)}
               </AntdMenu>
             </div>
           </Layout.Sidebar>
           <Layout.Content>
+            {currentCategoryInfo.ancestors && currentCategoryInfo.ancestors.length > 0 && (
+              <div className="reports-breadcrumbs" data-test="ReportsBreadcrumbs">
+                {currentCategoryInfo.ancestors.map((ancestor) => (
+                  <React.Fragment key={ancestor.id}>
+                    <Link href={`reports/${ancestor.id}`}>{ancestor.name}</Link>
+                    <span className="reports-breadcrumbs-separator">/</span>
+                  </React.Fragment>
+                ))}
+                <span>{currentCategoryInfo.name}</span>
+              </div>
+            )}
             {loading ? (
               <div className="reports-loading">
                 <Spin size="large" />
               </div>
-            ) : filteredReports.length === 0 ? (
+            ) : visibleReportCount === 0 ? (
               <div className="reports-empty">
                 <Empty
                   description={
@@ -357,15 +406,21 @@ function ReportsList({ currentCategory }) {
                 )}
               </div>
             ) : (
-              <div className="reports-grid" data-test="ReportsGrid">
-                {filteredReports.map((report) => (
-                  <ReportCard
-                    key={report.id}
-                    report={report}
-                    onToggleFavorite={handleToggleFavorite}
-                  />
-                ))}
-              </div>
+              reportGroups.map((group) => (
+                <div key={group.key} className="reports-group">
+                  {group.title && (
+                    <h5 className="reports-group-title" data-test={`ReportsGroup-${group.key}`}>
+                      <FolderOutlined className="m-r-5" />
+                      <Link href={group.href}>{group.title}</Link>
+                    </h5>
+                  )}
+                  <div className="reports-grid" data-test="ReportsGrid">
+                    {group.reports.map((report) => (
+                      <ReportCard key={report.id} report={report} onToggleFavorite={handleToggleFavorite} />
+                    ))}
+                  </div>
+                </div>
+              ))
             )}
           </Layout.Content>
         </Layout>

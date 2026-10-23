@@ -146,6 +146,19 @@ class Widget {
       return Promise.resolve();
     }
 
+    // A query with a parameter that has no value can't run (Query.prepareQueryResultExecution would
+    // only return a "missing value for … parameter" error), so don't start it: the widget shows which
+    // values to choose instead, and runs once the viewer applies them.
+    this.awaitingParameters = this.getQuery()
+      .getParameters()
+      .getMissing();
+    if (this.awaitingParameters.length > 0) {
+      this.loading = false;
+      this.data = undefined;
+      this.queryResult = undefined;
+      return Promise.resolve();
+    }
+
     // Both `this.data` and `this.queryResult` are query result objects;
     // `this.data` is last loaded query result;
     // `this.queryResult` is currently loading query result;

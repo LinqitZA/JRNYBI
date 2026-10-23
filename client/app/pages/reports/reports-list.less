@@ -33,6 +33,30 @@
     gap: 16px;
   }
 
+  // Path to the selected folder, above its reports
+  .reports-breadcrumbs {
+    margin-bottom: 12px;
+    font-size: 13px;
+    color: #6b7280;
+
+    .reports-breadcrumbs-separator {
+      margin: 0 6px;
+      color: #cbd5e1;
+    }
+  }
+
+  // One group per sub-folder when a folder lists its whole subtree
+  .reports-group + .reports-group {
+    margin-top: 24px;
+  }
+
+  .reports-group-title {
+    margin: 0 0 12px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #374151;
+  }
+
   .report-card {
     background: #fff;
     border: 1px solid #e2e8f0;

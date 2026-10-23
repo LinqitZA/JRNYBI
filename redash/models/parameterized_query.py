@@ -17,20 +17,36 @@ def _pluck_name_and_value(default_column, row):
     return {"name": row[name_column], "value": str(row[value_column])}
 
 
-def _load_result(query_id, org):
+def _is_rls_data_source(data_source):
+    """jrny_pg injects the viewer's JRNY claims (SET LOCAL) before every query, so results differ per
+    user and are cached per user (the hash includes user_id); see redash/tasks/queries/execution.py."""
+    return data_source.type == "jrny_pg"
+
+
+def _load_result(query_id, org, user=None):
     from redash import models
 
     query = models.Query.get_by_id_and_org(query_id, org)
 
-    if query.data_source:
-        query_result = models.QueryResult.get_by_id_and_org(query.latest_query_data_id, org)
-        return query_result.data
-    else:
+    if not query.data_source:
         raise QueryDetachedFromDataSourceError(query_id)
 
+    if _is_rls_data_source(query.data_source):
+        # An RLS query never has a shared latest result (results are stored per user), and serving one
+        # user's rows to another would break entity scoping. Run the lookup as the viewing user instead.
+        if user is None:
+            raise DropdownValuesUnavailableError(query_id, "values can only be loaded for a viewing user")
+        data, error = query.data_source.query_runner.run_query(query.query_text, user)
+        if error:
+            raise DropdownValuesUnavailableError(query_id, error)
+        return data
 
-def dropdown_values(query_id, org):
-    data = _load_result(query_id, org)
+    query_result = models.QueryResult.get_by_id_and_org(query.latest_query_data_id, org)
+    return query_result.data
+
+
+def dropdown_values(query_id, org, user=None):
+    data = _load_result(query_id, org, user)
     first_column = data["columns"][0]["name"]
     pluck = partial(_pluck_name_and_value, first_column)
     return list(map(pluck, data["rows"]))
@@ -115,9 +131,12 @@ def _is_value_within_options(value, dropdown_options, allow_list=False):
 
 
 class ParameterizedQuery:
-    def __init__(self, template, schema=None, org=None):
+    def __init__(self, template, schema=None, org=None, user=None):
         self.schema = schema or []
         self.org = org
+        # The viewing user: query-type parameters on RLS data sources are validated against the
+        # dropdown values that user can see.
+        self.user = user
         self.template = template
         self.query = template
         self.parameters = {}
@@ -159,7 +178,7 @@ class ParameterizedQuery:
             "enum": lambda value: _is_value_within_options(value, enum_options, allow_multiple_values),
             "query": lambda value: _is_value_within_options(
                 value,
-                [v["value"] for v in dropdown_values(query_id, self.org)],
+                [v["value"] for v in dropdown_values(query_id, self.org, user=self.user)],
                 allow_multiple_values,
             ),
             "date": _is_date,
@@ -209,3 +228,14 @@ class QueryDetachedFromDataSourceError(Exception):
         super(QueryDetachedFromDataSourceError, self).__init__(
             "This query is detached from any data source. Please select a different query."
         )
+
+
+
+class DropdownValuesUnavailableError(QueryDetachedFromDataSourceError):
+    """The dropdown query's values could not be loaded (no viewing user, or the lookup failed).
+    A subclass of QueryDetachedFromDataSourceError so every existing caller handles it the same way
+    (HTTP 400 in the handlers; logged and skipped in scheduled refreshes and hash updates)."""
+
+    def __init__(self, query_id, reason):
+        self.query_id = query_id
+        Exception.__init__(self, "Dropdown query {} could not be loaded: {}".format(query_id, reason))

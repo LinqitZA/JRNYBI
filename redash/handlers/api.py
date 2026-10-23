@@ -106,6 +106,7 @@ from redash.handlers.jrny_report_categories import (
     JRNYReportCategoryListResource,
     JRNYReportCategoryResource,
 )
+from redash.handlers.jrny_excel_export import JRNYExcelExportResource
 from redash.utils import json_dumps
 
 
@@ -322,6 +323,11 @@ api.add_org_resource(
     JRNYReportCategoryResource,
     "/api/jrny/report-categories/<category_id>",
     endpoint="jrny_report_category",
+)
+api.add_org_resource(
+    JRNYExcelExportResource,
+    "/api/jrny/excel-export",
+    endpoint="jrny_excel_export",
 )
 
 # Feature #219: insight-digest subscriptions (Tableau-Pulse-style emails).

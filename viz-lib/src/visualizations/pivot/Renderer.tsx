@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { get, find, pick, map, mapValues } from "lodash";
 import PivotTableUI from "react-pivottable/PivotTableUI";
 import TableRenderers from "react-pivottable/TableRenderers";
 import { RendererPropTypes } from "@/visualizations/prop-types";
 import { formatColumnValue } from "@/lib/utils";
+import { pivotExportGrid, ExportGridSource } from "@/lib/export-grid";
 import createPlotlyComponent from "react-plotly.js/factory";
 import createPlotlyRenderers from "react-pivottable/PlotlyRenderers";
 import { Plotly } from "@/visualizations/chart/plotly";
@@ -13,6 +14,7 @@ import "./renderer.less";
 
 const Plot = createPlotlyComponent(Plotly);
 const PlotlyRenderers = createPlotlyRenderers(Plot);
+const RENDERERS = Object.assign({}, TableRenderers, PlotlyRenderers);
 
 const VALID_OPTIONS = [
   "rows",
@@ -40,9 +42,32 @@ function formatRows({ rows, columns }: any) {
   );
 }
 
-export default function Renderer({ data, options, onOptionsChange }: any) {
+export default function Renderer({ data, options, onOptionsChange, exportRef }: any) {
   const [config, setConfig] = useState({ ...options });
   const dataRows = useMemo(() => formatRows(data), [data]);
+
+  // "Download as Excel (as shown)": getGrid always reads the latest render's
+  // config (including pivot-control changes) and data.
+  const exportStateRef = useRef({ config, dataRows, options });
+  exportStateRef.current = { config, dataRows, options };
+
+  useEffect(() => {
+    if (!exportRef) return undefined;
+    const source: ExportGridSource = {
+      getGrid: () => {
+        const { config: current, dataRows: rows, options: currentOptions } = exportStateRef.current;
+        // PivotTableUI falls back to its first renderer ("Table") for an unknown name.
+        const rendererName = current.rendererName in RENDERERS ? current.rendererName : undefined;
+        // Totals visibility follows the same options the CSS reads below.
+        const rendererOptions = get(currentOptions, "rendererOptions", current.rendererOptions);
+        return pivotExportGrid({ ...current, rendererName, rendererOptions }, rows);
+      },
+    };
+    exportRef.current = source;
+    return () => {
+      if (exportRef.current === source) exportRef.current = null;
+    };
+  }, [exportRef]);
 
   useEffect(() => {
     setConfig({ ...options });

@@ -70,6 +70,15 @@ export default class QueryBasedParameterInput extends React.Component {
     if (this.props.value !== prevProps.value) {
       this.setValue(this.props.value);
     }
+    // A dashboard rebuilds its parameter objects whenever a widget finishes loading, and the rebuilt
+    // parameter has lost the pending value proposed in _loadOptions (the first option, for an empty
+    // parameter). Propose it again, or "Apply Changes" vanishes while the dropdown still shows a value.
+    if (this.props.parameter !== prevProps.parameter && !isEmpty(this.state.options)) {
+      const updatedValue = this.setValue(this.props.value);
+      if (!isEqual(updatedValue, this.props.value)) {
+        this.props.onSelect(updatedValue);
+      }
+    }
     // Cascading: reload options when parent parameter value changes
     if (this.props.cascadeKey !== prevProps.cascadeKey) {
       this._loadOptions(this.props.queryId, true);

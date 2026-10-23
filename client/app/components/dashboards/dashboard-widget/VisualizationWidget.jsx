@@ -20,10 +20,12 @@ import ExpandedWidgetDialog from "@/components/dashboards/ExpandedWidgetDialog";
 import EditParameterMappingsDialog from "@/components/dashboards/EditParameterMappingsDialog";
 import VisualizationRenderer from "@/components/visualizations/VisualizationRenderer";
 import SkeletonWidget from "@/components/dashboards/SkeletonWidget";
+import { canExportAsShown, buildExportTitle } from "@/lib/excelAsShown";
+import { exportVisualizationAsShown } from "@/services/excelExport";
 
 import Widget from "./Widget";
 
-function visualizationWidgetMenuOptions({ widget, canEditDashboard, onParametersEdit }) {
+function visualizationWidgetMenuOptions({ widget, canEditDashboard, onParametersEdit, onDownloadAsShown }) {
   const canViewQuery = currentUser.hasPermission("view_query");
   const canEditParameters = canEditDashboard && !isEmpty(invoke(widget, "query.getParametersDefs"));
   const widgetQueryResult = widget.getQueryResult();
@@ -31,6 +33,10 @@ function visualizationWidgetMenuOptions({ widget, canEditDashboard, onParameters
 
   const downloadLink = fileType => widgetQueryResult.getLink(widget.getQuery().id, fileType);
   const downloadName = fileType => widgetQueryResult.getName(widget.getQuery().name, fileType);
+  const canDownloadAsShown = canExportAsShown({
+    visualizationType: widget.visualization && widget.visualization.type,
+    isQueryResultEmpty,
+  });
   return compact([
     <Menu.Item key="download_csv" disabled={isQueryResultEmpty}>
       {!isQueryResultEmpty ? (
@@ -58,6 +64,9 @@ function visualizationWidgetMenuOptions({ widget, canEditDashboard, onParameters
       ) : (
         "Download as Excel File"
       )}
+    </Menu.Item>,
+    <Menu.Item key="download_excel_as_shown" disabled={!canDownloadAsShown} onClick={onDownloadAsShown}>
+      Download as Excel (as shown)
     </Menu.Item>,
     (canViewQuery || canEditParameters) && <Menu.Divider key="divider" />,
     canViewQuery && (
@@ -265,6 +274,8 @@ class VisualizationWidget extends React.Component {
       localParameters: props.widget.getLocalParameters(),
       localFilters: props.filters,
     };
+    // "Download as Excel (as shown)": the pivot/table Renderer sets current = { getGrid } while mounted.
+    this.exportRef = React.createRef();
   }
 
   componentDidMount() {
@@ -280,6 +291,19 @@ class VisualizationWidget extends React.Component {
 
   expandWidget = () => {
     ExpandedWidgetDialog.showModal({ widget: this.props.widget, filters: this.state.localFilters });
+  };
+
+  downloadAsShown = () => {
+    const { widget } = this.props;
+    const query = widget.getQuery();
+    exportVisualizationAsShown(this.exportRef, {
+      // A widget is one query's visualization, so its query name is the report's name; adding the
+      // visualization name ("Report", "Pivot Table", ...) only lengthens the file name.
+      title: buildExportTitle(query && query.name, null),
+      // the query's parameter objects hold the values the widget's result was run with
+      // (dashboard- and widget-level values are written through to them)
+      parameters: query ? query.getParametersDefs(false) : [],
+    });
   };
 
   editParameterMappings = () => {
@@ -299,6 +323,19 @@ class VisualizationWidget extends React.Component {
 
   renderVisualization() {
     const { widget, filters } = this.props;
+    // Widget.load doesn't run a query that still has empty parameters; say what to choose instead of
+    // showing a "missing value" error.
+    if (widget.awaitingParameters && widget.awaitingParameters.length > 0) {
+      const names = widget.awaitingParameters.join(", ");
+      return (
+        <div className="body-row-auto scrollbox">
+          <div className="alert alert-info m-5" data-test="WidgetAwaitingParameters">
+            Choose a value for <strong>{names}</strong> above, then click <strong>Apply Changes</strong> to run
+            this report.
+          </div>
+        </div>
+      );
+    }
     const widgetQueryResult = widget.getQueryResult();
     const widgetStatus = widgetQueryResult && widgetQueryResult.getStatus();
     switch (widgetStatus) {
@@ -324,6 +361,7 @@ class VisualizationWidget extends React.Component {
               filters={filters}
               onFiltersChange={this.onLocalFiltersChange}
               context="widget"
+              exportRef={this.exportRef}
               widgetId={widget.id}
               widgetName={
                 widget.getQuery && widget.getQuery() ? widget.getQuery().name : undefined
@@ -362,6 +400,7 @@ class VisualizationWidget extends React.Component {
           widget,
           canEditDashboard: canEdit,
           onParametersEdit: this.editParameterMappings,
+          onDownloadAsShown: this.downloadAsShown,
         })}
         header={
           <VisualizationWidgetHeader

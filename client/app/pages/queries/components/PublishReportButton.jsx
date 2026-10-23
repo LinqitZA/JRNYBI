@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import PropTypes from "prop-types";
 import Button from "antd/lib/button";
 import Modal from "antd/lib/modal";
@@ -6,6 +6,7 @@ import Select from "antd/lib/select";
 import notification from "@/services/notification";
 import { axios } from "@/services/axios";
 import navigateTo from "@/components/ApplicationArea/navigateTo";
+import { buildCategoryTree, flattenTree, ancestorIds } from "@/lib/reportCategoryTree";
 
 function PublishReportModal({ visible, onClose, visualization, query }) {
   const [categories, setCategories] = useState([]);
@@ -35,6 +36,16 @@ function PublishReportModal({ visible, onClose, visualization, query }) {
         });
     }
   }, [visible, visualization]);
+
+  // Folders depth first, indented in the list; the chosen one shows its full "Parent / Child" path.
+  const categoryOptions = useMemo(() => {
+    const tree = buildCategoryTree(categories);
+    return flattenTree(tree).map(({ category, depth }) => ({
+      category,
+      depth,
+      path: [...ancestorIds(tree, category.id).map((id) => tree.byId[id].category.name), category.name].join(" / "),
+    }));
+  }, [categories]);
 
   const handlePublish = useCallback(async () => {
     if (!selectedCategory) {
@@ -131,11 +142,16 @@ function PublishReportModal({ visible, onClose, visualization, query }) {
           value={selectedCategory || undefined}
           onChange={setSelectedCategory}
           loading={categoriesLoading}
-          disabled={categoriesLoading}>
-          {categories.map((cat) => (
-            <Select.Option key={cat.id} value={cat.id}>
-              <span style={{ marginRight: 6, color: cat.color || "#6b7280" }}>&#9679;</span>
-              {cat.name}
+          disabled={categoriesLoading}
+          showSearch
+          optionFilterProp="label"
+          optionLabelProp="label">
+          {categoryOptions.map(({ category: cat, depth, path }) => (
+            <Select.Option key={cat.id} value={cat.id} label={path}>
+              <span style={{ paddingLeft: depth * 16 }}>
+                <span style={{ marginRight: 6, color: cat.color || "#6b7280" }}>&#9679;</span>
+                {cat.name}
+              </span>
             </Select.Option>
           ))}
         </Select>

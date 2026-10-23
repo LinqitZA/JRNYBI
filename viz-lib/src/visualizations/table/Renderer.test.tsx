@@ -9,11 +9,14 @@
 
 import React from "react";
 import enzyme from "enzyme";
+import { act } from "react-dom/test-utils";
 
 // Mock the SheetJS-backed excel-export utility so feature #212 tests don't
 // poke at File / Blob APIs missing in the jsdom test env. We just want to
 // observe that the button click calls downloadExcel with the right args.
+// The real type/format helpers stay: the "as shown" grid builder uses them.
 jest.mock("@/lib/excel-export", () => ({
+  ...jest.requireActual("@/lib/excel-export"),
   downloadExcel: jest.fn(),
 }));
 import { downloadExcel } from "@/lib/excel-export";
@@ -239,5 +242,316 @@ describe("Visualizations -> Table -> Renderer (AG Grid)", () => {
     expect(columnDefs[0].colId).toBe("__expand");
     expect(columnDefs[0].pinned).toBe("left");
     expect(columnDefs[0].width).toBe(40);
+  });
+});
+
+describe("Visualizations -> Table -> Renderer exportRef (Download as Excel as shown)", () => {
+  const data = {
+    columns: [
+      { name: "id", type: "integer" },
+      { name: "name", type: "string" },
+      { name: "revenue", type: "float" },
+      { name: "_helper", type: "string" },
+    ],
+    rows: [
+      { id: 1, name: "Alpha", revenue: 1234.5, _helper: "x" },
+      { id: 2, name: "Bravo", revenue: 67.89, _helper: "y" },
+      { id: 3, name: "Charlie", revenue: 4200, _helper: "z" },
+    ],
+  };
+  const columns = [
+    { name: "id", visible: true, order: 0, displayAs: "number", title: "ID" },
+    { name: "name", visible: true, order: 1, displayAs: "string", title: "Customer", allowSearch: true },
+    { name: "revenue", visible: true, order: 2, displayAs: "number", title: "Revenue", numberFormat: "0,0.00" },
+    { name: "_helper", visible: false, order: 3, displayAs: "string" },
+  ];
+
+  const tick = () => act(() => new Promise<void>((resolve) => setTimeout(resolve, 20)));
+
+  function mountWithRef(options: any = {}) {
+    const exportRef: any = { current: null };
+    const resolved = getOptions({ columns, ...options }, data);
+    const el = enzyme.mount(<Renderer data={data} options={resolved} exportRef={exportRef} />);
+    return { el, exportRef };
+  }
+
+  const firstCol = (grid: any) => grid.rows.map((r: any) => r[0].v);
+
+  test("exports the displayed columns and rows; clears the ref on unmount", async () => {
+    const { el, exportRef } = mountWithRef();
+    await tick();
+    const grid = exportRef.current.getGrid();
+    expect(grid.header_rows).toBe(1);
+    expect(grid.rows[0]).toEqual([
+      { v: "ID", t: "s", s: "header" },
+      { v: "Customer", t: "s", s: "header" },
+      { v: "Revenue", t: "s", s: "header" },
+    ]);
+    expect(grid.rows[1]).toEqual([
+      { v: 1, t: "n", z: "0,0", s: "body" },
+      { v: "Alpha", t: "s", s: "body" },
+      { v: 1234.5, t: "n", z: "0,0.00", s: "body" },
+    ]);
+    expect(grid.rows).toHaveLength(4);
+    el.unmount();
+    expect(exportRef.current).toBeNull();
+  });
+
+  test("follows the grid's sort, moved columns and search", async () => {
+    const { el, exportRef } = mountWithRef();
+    await tick();
+    const api = (el.find("AgGridReact").first().instance() as any).api;
+    act(() => {
+      api.applyColumnState({ state: [{ colId: "revenue", sort: "desc" }] });
+      api.moveColumns(["revenue"], 0);
+    });
+    let grid = exportRef.current.getGrid();
+    expect(grid.rows[0].map((c: any) => c.v)).toEqual(["Revenue", "ID", "Customer"]);
+    expect(firstCol(grid)).toEqual(["Revenue", 4200, 1234.5, 67.89]);
+
+    act(() => {
+      el.find("input")
+        .first()
+        .simulate("change", { target: { value: "bra" } });
+    });
+    await tick();
+    grid = exportRef.current.getGrid();
+    expect(grid.rows.map((r: any) => r[2].v)).toEqual(["Customer", "Bravo"]);
+  });
+
+  test("text figures with excelNumber are exported as numbers (both Excel exports)", async () => {
+    (downloadExcel as jest.Mock).mockClear();
+    const figData = {
+      columns: [{ name: "actual", type: "string" }],
+      rows: [{ actual: "(1,234.50)" }, { actual: "" }],
+    };
+    const exportRef: any = { current: null };
+    const opts = getOptions(
+      { columns: [{ name: "actual", title: "Actual", displayAs: "string", excelNumber: "#,##0.00;(#,##0.00)" }] },
+      figData
+    );
+    const el = enzyme.mount(<Renderer data={figData} options={opts} exportRef={exportRef} />);
+    await tick();
+    expect(exportRef.current.getGrid().rows[1]).toEqual([
+      { v: -1234.5, t: "n", z: "#,##0.00;(#,##0.00)", s: "body" },
+    ]);
+    el.find('[data-test="TableExportExcel"]').first().simulate("click");
+    const exported = (downloadExcel as jest.Mock).mock.calls[0][0];
+    expect(exported[0].excelNumber).toBe("#,##0.00;(#,##0.00)");
+  });
+
+  test("a plain table has no row outline", async () => {
+    const { exportRef } = mountWithRef();
+    await tick();
+    expect(exportRef.current.getGrid().row_outline).toBeUndefined();
+  });
+
+  test("skips the detail-row expander column", async () => {
+    const { exportRef } = mountWithRef({ detailQuery: { queryId: 7, keyColumn: "id" } });
+    await tick();
+    const grid = exportRef.current.getGrid();
+    expect(grid.rows[0].map((c: any) => c.v)).toEqual(["ID", "Customer", "Revenue"]);
+    expect(grid.rows).toHaveLength(4);
+  });
+
+  test("narrow card view falls back to visible columns and the card search", async () => {
+    const Original = (global as any).ResizeObserver;
+    (global as any).ResizeObserver = class {
+      cb: any;
+      constructor(cb: any) {
+        this.cb = cb;
+      }
+      observe() {
+        this.cb([{ contentRect: { width: 300 } }]);
+      }
+      unobserve() {
+        // nothing to stop
+      }
+      disconnect() {
+        // nothing to stop
+      }
+    };
+    try {
+      const { el, exportRef } = mountWithRef();
+      await tick();
+      el.update();
+      expect(el.find('[data-test="TableVisualizationCardList"]').exists()).toBe(true);
+      act(() => {
+        el.find("input")
+          .first()
+          .simulate("change", { target: { value: "char" } });
+      });
+      const grid = exportRef.current.getGrid();
+      expect(grid.rows[0].map((c: any) => c.v)).toEqual(["ID", "Customer", "Revenue"]);
+      expect(firstCol(grid)).toEqual(["ID", 3]);
+    } finally {
+      (global as any).ResizeObserver = Original;
+    }
+  });
+
+  test("no rows → no grid", () => {
+    const exportRef: any = { current: null };
+    enzyme.mount(
+      <Renderer
+        data={{ columns: data.columns, rows: [] }}
+        options={getOptions({ columns }, data)}
+        exportRef={exportRef}
+      />
+    );
+    expect(exportRef.current === null || exportRef.current.getGrid() === null).toBe(true);
+  });
+});
+
+describe("Visualizations -> Table -> Renderer row tree (rowTree option)", () => {
+  // G = group (1), D = description (2), C = code (3), T = always-shown total (9).
+  const levels = [1, 2, 3, 3, 2, 3, 9, 1, 2, 3, 1, 9];
+  const names = ["G1", "D1", "C1", "C2", "D2", "C3", "T", "G2", "D3", "C4", "G3", "T2"];
+  const data = {
+    columns: [
+      { name: "name", type: "string" },
+      { name: "_row_level", type: "integer" },
+    ],
+    rows: levels.map((l, i) => ({ name: names[i], _row_level: l })),
+  };
+  const columns = [
+    { name: "name", visible: true, order: 0, displayAs: "string", title: "Name" },
+    { name: "_row_level", visible: false, order: 1, displayAs: "string" },
+  ];
+  const rowTree = { levelColumn: "_row_level", depth: 3 };
+
+  const tick = () => act(() => new Promise<void>((resolve) => setTimeout(resolve, 20)));
+
+  function mountTree(options: any = {}, rows: any = data) {
+    const exportRef: any = { current: null };
+    const resolved = getOptions({ columns, rowTree, ...options }, rows);
+    const el = enzyme.mount(<Renderer data={rows} options={resolved} exportRef={exportRef} />);
+    return { el, exportRef };
+  }
+
+  const shown = (el: any) => {
+    const api = (el.find("AgGridReact").first().instance() as any).api;
+    const out: string[] = [];
+    api.forEachNodeAfterFilterAndSort((n: any) => out.push(n.data.name));
+    return out;
+  };
+  const toggle = (el: any, name: string) => {
+    act(() => {
+      el.find(`button[data-test="TableTreeToggle"][data-row-index=${names.indexOf(name)}]`).first().simulate("click");
+    });
+    el.update();
+  };
+  const COLLAPSED = ["G1", "T", "G2", "G3", "T2"];
+
+  test("opens collapsed: groups and always-shown totals only", async () => {
+    const { el } = mountTree();
+    await tick();
+    el.update();
+    expect(shown(el)).toEqual(COLLAPSED);
+  });
+
+  test("drills down group → description → code and back up", async () => {
+    const { el } = mountTree();
+    await tick();
+    el.update();
+    toggle(el, "G1");
+    expect(shown(el)).toEqual(["G1", "D1", "D2", "T", "G2", "G3", "T2"]);
+    toggle(el, "D1");
+    expect(shown(el)).toEqual(["G1", "D1", "C1", "C2", "D2", "T", "G2", "G3", "T2"]);
+    toggle(el, "G1");
+    expect(shown(el)).toEqual(COLLAPSED);
+    // re-expanding shows the descriptions collapsed again
+    toggle(el, "G1");
+    expect(shown(el)).toEqual(["G1", "D1", "D2", "T", "G2", "G3", "T2"]);
+  });
+
+  test("clicking a cell of an expandable row toggles it", async () => {
+    const { el } = mountTree();
+    await tick();
+    el.update();
+    const grid: any = el.find("AgGridReact").first();
+    act(() => {
+      grid.prop("onCellClicked")({ data: { ...data.rows[7], __rowIndex: 7 }, column: null });
+    });
+    el.update();
+    expect(shown(el)).toEqual(["G1", "T", "G2", "D3", "G3", "T2"]);
+  });
+
+  test("Expand all / Collapse all", async () => {
+    const { el } = mountTree();
+    await tick();
+    el.update();
+    act(() => {
+      el.find('[data-test="TableTreeExpandAll"]').first().simulate("click");
+    });
+    el.update();
+    expect(shown(el)).toEqual(names);
+    act(() => {
+      el.find('[data-test="TableTreeCollapseAll"]').first().simulate("click");
+    });
+    el.update();
+    expect(shown(el)).toEqual(COLLAPSED);
+  });
+
+  test("only rows with children get a toggle; sorting is off", async () => {
+    const { el } = mountTree();
+    await tick();
+    el.update();
+    const toggles = el.find('button[data-test="TableTreeToggle"]').map((b: any) => b.prop("data-row-index"));
+    expect(toggles).toEqual([0, 7]);
+    const defs = el.find("AgGridReact").first().prop("columnDefs") as any[];
+    expect(defs[0].colId).toBe("__tree");
+    expect(defs.every((d: any) => !d.sortable)).toBe(true);
+  });
+
+  test("new data starts collapsed again", async () => {
+    const { el } = mountTree();
+    await tick();
+    el.update();
+    toggle(el, "G1");
+    const resolved = getOptions({ columns, rowTree }, data);
+    act(() => {
+      el.setProps({ data: { ...data, rows: data.rows.map((r: any) => ({ ...r })) }, options: resolved });
+    });
+    await tick();
+    el.update();
+    expect(shown(el)).toEqual(COLLAPSED);
+  });
+
+  test("expanding shows children on the visible pages (pagination over shown rows)", async () => {
+    const { el } = mountTree({ itemsPerPage: 3 });
+    await tick();
+    el.update();
+    toggle(el, "G1");
+    const api = (el.find("AgGridReact").first().instance() as any).api;
+    expect(api.paginationGetRowCount()).toBe(7);
+  });
+
+  test("without rowTree, or without the level column, every row shows and there are no toggles", async () => {
+    const plain = mountTree({ rowTree: undefined });
+    await tick();
+    plain.el.update();
+    expect(shown(plain.el)).toEqual(names);
+    expect(plain.el.find('[data-test="TableTreeExpandAll"]')).toHaveLength(0);
+    expect((plain.el.find("AgGridReact").first().prop("columnDefs") as any[])[0].colId).toBe("name");
+
+    const noLevel = { columns: [{ name: "name", type: "string" }], rows: names.map((n) => ({ name: n })) };
+    const broken = mountTree({}, noLevel);
+    await tick();
+    broken.el.update();
+    expect(shown(broken.el)).toEqual(names);
+    expect(broken.el.find('button[data-test="TableTreeToggle"]')).toHaveLength(0);
+  });
+
+  test("Excel exports every row, whatever is expanded", async () => {
+    (downloadExcel as jest.Mock).mockClear();
+    const { el, exportRef } = mountTree();
+    await tick();
+    el.update();
+    const grid = exportRef.current.getGrid();
+    expect(grid.rows.map((r: any) => r[0].v)).toEqual(["Name", ...names]);
+    // Excel row groups, opening collapsed: header and totals 0, groups 0, descriptions 1, codes 2.
+    expect(grid.row_outline).toEqual({ levels: [0, 0, 1, 2, 2, 1, 2, 0, 0, 1, 2, 0, 0], collapsed: true });
+    el.find('[data-test="TableExportExcel"]').first().simulate("click");
+    expect((downloadExcel as jest.Mock).mock.calls[0][1]).toEqual(data.rows);
   });
 });

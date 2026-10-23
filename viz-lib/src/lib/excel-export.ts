@@ -35,6 +35,12 @@ export type RedashDisplayAs =
 export interface ExcelColumn {
   /** Field name in each row record. */
   name: string;
+  /**
+   * Excel number format for a text column whose values are figures formatted
+   * in SQL ("(1,234.50)", "12.5%"): they are exported as numbers in this
+   * format (parseFormattedNumber); blanks stay empty, other text stays text.
+   */
+  excelNumber?: string;
   /** Header label shown in row 1. Falls back to `name`. */
   title?: string;
   /** Renderer type — drives the SheetJS cell type mapping. */
@@ -166,10 +172,38 @@ function coerceDate(value: any): Date | null {
   return null;
 }
 
+/**
+ * A figure formatted as text → its number: "(8,355,186.77)" → -8355186.77,
+ * "1,200" → 1200, "-12.5%" → -0.125. Blank or anything else → null.
+ */
+export function parseFormattedNumber(value: any): number | null {
+  if (typeof value === "number") return isFinite(value) ? value : null;
+  if (typeof value !== "string") return null;
+  let t = value.trim();
+  let sign = 1;
+  if (t.startsWith("(") && t.endsWith(")")) {
+    sign = -1;
+    t = t.slice(1, -1).trim();
+  }
+  let scale = 1;
+  if (t.endsWith("%")) {
+    scale = 100;
+    t = t.slice(0, -1).trim();
+  }
+  t = t.replace(/,/g, "");
+  if (!/^-?\d+(\.\d+)?$/.test(t)) return null;
+  return (sign * Number(t)) / scale;
+}
+
 function buildCell(rawValue: any, column: ExcelColumn): XLSX.CellObject {
   if (rawValue === null || rawValue === undefined || rawValue === "") {
     // Empty cell — type 's' with empty value so SheetJS doesn't emit anything weird.
     return { t: "s", v: "" } as XLSX.CellObject;
+  }
+
+  if (column.excelNumber) {
+    const figure = parseFormattedNumber(rawValue);
+    if (figure !== null) return { t: "n", v: figure, z: column.excelNumber } as XLSX.CellObject;
   }
 
   const type = displayAsToCellType(column.displayAs);

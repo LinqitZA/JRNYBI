@@ -16,8 +16,12 @@ JSONB settings under the key ``report_categories``.  Each object has:
       "name":        "Display Name",
       "icon":        "antd-icon-name",
       "color":       "#hex",
-      "description": "Short helper text"
+      "description": "Short helper text",
+      "parent":      "parent-category-id" or null (top-level folder)
   }
+
+Folders nest through ``parent`` (rules in redash/utils/report_category_tree.py). Categories stored
+before folders existed have no ``parent`` and are read as top-level.
 
 The GET endpoint is available to any authenticated user.
 All mutation endpoints require admin permission.
@@ -33,6 +37,7 @@ from redash.handlers.base import BaseResource
 from redash.models import db
 from redash.permissions import require_admin
 from redash.settings.organization import settings as org_settings
+from redash.utils.report_category_tree import child_ids, normalise_parent, tree_error
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +49,10 @@ _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 def _get_categories(org):
     """Return the current report_categories list for *org*."""
     stored = org.settings.get("settings", {}).get("report_categories")
-    if stored is not None:
-        return stored
-    # Fall back to the default defined in the org_settings registry
-    return list(org_settings.get("report_categories", []))
+    if stored is None:
+        # Fall back to the default defined in the org_settings registry
+        stored = org_settings.get("report_categories", [])
+    return [{**c, "parent": c.get("parent")} for c in stored]
 
 
 def _save_categories(org, categories):
@@ -88,6 +93,12 @@ def _validate_category(data, existing_ids=None, is_update=False):
     if len(description) > 256:
         errors.append("description must be 256 characters or fewer")
 
+    try:
+        parent = normalise_parent(data.get("parent"))
+    except ValueError as exc:
+        errors.append(str(exc))
+        parent = None
+
     if errors:
         return None, "; ".join(errors)
 
@@ -97,6 +108,7 @@ def _validate_category(data, existing_ids=None, is_update=False):
         "icon": icon,
         "color": color,
         "description": description,
+        "parent": parent,
     }, None
 
 
@@ -118,6 +130,8 @@ class JRNYReportCategoryListResource(BaseResource):
         existing_ids = {c["id"] for c in categories}
 
         clean, error = _validate_category(data, existing_ids=existing_ids)
+        if not error:
+            error = tree_error(categories + [clean])
         if error:
             return {"error": error}, 400
 
@@ -148,6 +162,10 @@ class JRNYReportCategoryListResource(BaseResource):
             seen_ids.add(clean["id"])
             clean_list.append(clean)
 
+        error = tree_error(clean_list)
+        if error:
+            return {"error": error}, 400
+
         _save_categories(self.current_org, clean_list)
 
         self.record_event({
@@ -177,11 +195,15 @@ class JRNYReportCategoryResource(BaseResource):
             return {"error": f"Category '{category_id}' not found"}, 404
 
         data = request.get_json(force=True, silent=True) or {}
-        # Preserve the original id
+        # Preserve the original id, and the parent when the body leaves it out (older clients)
         data["id"] = category_id
+        if "parent" not in data:
+            data["parent"] = categories[target_idx]["parent"]
 
         other_ids = {c["id"] for c in categories if c["id"] != category_id}
         clean, error = _validate_category(data, existing_ids=other_ids, is_update=True)
+        if not error:
+            error = tree_error(categories[:target_idx] + [clean] + categories[target_idx + 1 :])
         if error:
             return {"error": error}, 400
 
@@ -199,6 +221,8 @@ class JRNYReportCategoryResource(BaseResource):
     @require_admin
     def delete(self, category_id):
         categories = _get_categories(self.current_org)
+        if child_ids(categories, category_id):
+            return {"error": f"Category '{category_id}' has sub-folders: move or delete them first"}, 400
         original_len = len(categories)
         categories = [c for c in categories if c["id"] != category_id]
 

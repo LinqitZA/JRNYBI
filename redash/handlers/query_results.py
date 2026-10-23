@@ -196,7 +196,7 @@ class QueryResultDropdownResource(BaseResource):
         query = get_object_or_404(models.Query.get_by_id_and_org, query_id, self.current_org)
         require_access(query.data_source, current_user, view_only)
         try:
-            return dropdown_values(query_id, self.current_org)
+            return dropdown_values(query_id, self.current_org, user=self.current_user)
         except QueryDetachedFromDataSourceError as e:
             abort(400, message=str(e))
 
@@ -211,7 +211,10 @@ class QueryDropdownsResource(BaseResource):
             dropdown_query = get_object_or_404(models.Query.get_by_id_and_org, dropdown_query_id, self.current_org)
             require_access(dropdown_query.data_source, current_user, view_only)
 
-        return dropdown_values(dropdown_query_id, self.current_org)
+        try:
+            return dropdown_values(dropdown_query_id, self.current_org, user=self.current_user)
+        except QueryDetachedFromDataSourceError as e:
+            abort(400, message=str(e))
 
 
 class QueryResultResource(BaseResource):
@@ -267,8 +270,11 @@ class QueryResultResource(BaseResource):
             should_apply_auto_limit = query.options.get("apply_auto_limit", False)
 
         if has_access(query, self.current_user, allow_executing_with_view_only_permissions):
+            parameterized = query.parameterized
+            # Query-type parameters on RLS data sources are checked against what this user can see.
+            parameterized.user = self.current_user
             return run_query(
-                query.parameterized,
+                parameterized,
                 parameter_values,
                 query.data_source,
                 query_id,

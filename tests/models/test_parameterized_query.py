@@ -307,3 +307,78 @@ class TestParameterizedQuery(TestCase):
     def test_dropdown_values_raises_when_query_is_detached_from_data_source(self, _):
         with pytest.raises(QueryDetachedFromDataSourceError):
             dropdown_values(1, None)
+
+
+def _rls_lookup_query(run_query_result):
+    """A saved lookup query on a jrny_pg (RLS) data source whose runner returns `run_query_result`."""
+    runner = namedtuple("Runner", "run_query")(
+        run_query=__import__("mock").MagicMock(return_value=run_query_result)
+    )
+    data_source = namedtuple("DataSource", "type query_runner")("jrny_pg", runner)
+    query = namedtuple("Query", "id data_source query_text latest_query_data_id")(
+        7, data_source, "SELECT name FROM reps", None
+    )
+    return query, runner
+
+
+class TestDropdownValuesOnRLSDataSources(TestCase):
+    """JRNYBI caches query results per user (the hash includes user_id), so a jrny_pg query's shared
+    latest_query_data_id is never set. Dropdown values must come from running the lookup query as
+    the viewing user, never from a shared result (CLAUDE.md security invariant 2)."""
+
+    def test_runs_the_lookup_query_as_the_viewing_user(self):
+        query, runner = _rls_lookup_query(
+            ({"columns": [{"name": "Sales Person"}], "rows": [{"Sales Person": "Grant Catto"}]}, None)
+        )
+        user = object()
+        with patch("redash.models.Query.get_by_id_and_org", return_value=query):
+            values = dropdown_values(7, None, user=user)
+        self.assertEqual(values, [{"name": "Grant Catto", "value": "Grant Catto"}])
+        runner.run_query.assert_called_once_with("SELECT name FROM reps", user)
+
+    def test_never_reads_a_shared_result(self):
+        query, _ = _rls_lookup_query(({"columns": [{"name": "x"}], "rows": []}, None))
+        with patch("redash.models.Query.get_by_id_and_org", return_value=query), patch(
+            "redash.models.QueryResult.get_by_id_and_org"
+        ) as shared:
+            dropdown_values(7, None, user=object())
+        shared.assert_not_called()
+
+    def test_without_a_user_it_raises_a_handled_error_and_runs_nothing(self):
+        query, runner = _rls_lookup_query(({"columns": [], "rows": []}, None))
+        with patch("redash.models.Query.get_by_id_and_org", return_value=query):
+            with pytest.raises(QueryDetachedFromDataSourceError) as e:
+                dropdown_values(7, None)
+        runner.run_query.assert_not_called()
+        self.assertIn("viewing user", str(e.value))
+
+    def test_a_failed_lookup_raises_a_handled_error(self):
+        query, _ = _rls_lookup_query((None, "permission denied"))
+        with patch("redash.models.Query.get_by_id_and_org", return_value=query):
+            with pytest.raises(QueryDetachedFromDataSourceError) as e:
+                dropdown_values(7, None, user=object())
+        self.assertIn("permission denied", str(e.value))
+
+    def test_other_data_sources_keep_the_shared_latest_result(self):
+        runner = __import__("mock").MagicMock()
+        data_source = namedtuple("DataSource", "type query_runner")("pg", runner)
+        query = namedtuple("Query", "id data_source query_text latest_query_data_id")(7, data_source, "SELECT 1", 99)
+        result = namedtuple("QueryResult", "data")({"columns": [{"name": "a"}], "rows": [{"a": 1}]})
+        with patch("redash.models.Query.get_by_id_and_org", return_value=query), patch(
+            "redash.models.QueryResult.get_by_id_and_org", return_value=result
+        ):
+            values = dropdown_values(7, None, user=object())
+        self.assertEqual(values, [{"name": 1, "value": "1"}])
+        runner.run_query.assert_not_called()
+
+    def test_parameterized_query_validates_a_query_parameter_as_its_user(self):
+        user = object()
+        schema = [{"name": "rep", "type": "query", "queryId": 7}]
+        query = ParameterizedQuery("SELECT {{rep}}", schema, user=user)
+        with patch(
+            "redash.models.parameterized_query.dropdown_values",
+            return_value=[{"name": "Grant Catto", "value": "Grant Catto"}],
+        ) as values:
+            query.apply({"rep": "Grant Catto"})
+        self.assertEqual(values.call_args.kwargs.get("user"), user)
+        self.assertEqual(query.text, "SELECT Grant Catto")

@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Tabs from "antd/lib/tabs";
 import Spin from "antd/lib/spin";
+import Collapse from "antd/lib/collapse";
 import {
   ShoppingCartOutlined,
   DollarOutlined,
@@ -21,6 +22,7 @@ import {
 
 import Link from "@/components/Link";
 import { axios } from "@/services/axios";
+import { buildCategoryTree, assignReports, subtreeReports } from "@/lib/reportCategoryTree";
 
 import "./ReportsDashboard.less";
 
@@ -67,9 +69,47 @@ function EmptyCategory() {
   );
 }
 
+function ReportsGrid({ reports }) {
+  return (
+    <div className="reports-grid">
+      {reports.map((dash) => (
+        <DashboardButton key={dash.id} dashboard={dash} />
+      ))}
+    </div>
+  );
+}
+
+// A folder's contents, SSRS order: its sub-folders first (collapsible, recursive), then its own reports.
+function FolderContents({ node, byCategory, counts }) {
+  const ownReports = byCategory[node.id] || [];
+  const subFolders = node.children.filter((child) => counts[child.id] > 0);
+  return (
+    <>
+      {subFolders.length > 0 && (
+        <Collapse className="reports-subfolders" bordered={false}>
+          {subFolders.map((child) => (
+            <Collapse.Panel
+              key={child.id}
+              header={
+                <span className="reports-tab-label">
+                  <CategoryIcon icon={child.category.icon} color={child.category.color} size={14} />
+                  <span className="reports-tab-name">{child.category.name}</span>
+                  <span className="reports-folder-count">({counts[child.id]})</span>
+                </span>
+              }>
+              <FolderContents node={child} byCategory={byCategory} counts={counts} />
+            </Collapse.Panel>
+          ))}
+        </Collapse>
+      )}
+      {ownReports.length > 0 && <ReportsGrid reports={ownReports} />}
+    </>
+  );
+}
+
 export default function ReportsDashboard() {
   const [categories, setCategories] = useState([]);
-  const [dashboards, setDashboards] = useState({});
+  const [dashboards, setDashboards] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -94,26 +134,8 @@ export default function ReportsDashboard() {
 
         if (cancelled) return;
 
-        // Group dashboards by category
-        const grouped = {};
-        cats.forEach((cat) => {
-          grouped[cat.id] = [];
-        });
-
-        allDashboards.forEach((dash) => {
-          const tags = dash.tags || [];
-          cats.forEach((cat) => {
-            if (tags.includes(cat.id) || tags.includes(`report:${cat.id}`)) {
-              if (!grouped[cat.id]) {
-                grouped[cat.id] = [];
-              }
-              grouped[cat.id].push(dash);
-            }
-          });
-        });
-
         setCategories(cats);
-        setDashboards(grouped);
+        setDashboards(allDashboards);
       } catch (err) {
         // Silently handle errors - component just won't show data
         console.warn("Failed to load reports dashboard:", err);
@@ -129,6 +151,18 @@ export default function ReportsDashboard() {
       cancelled = true;
     };
   }, []);
+
+  // Folder tree; a dashboard belongs to its first report:<id> tag. Bare tags (e.g. "sales") still
+  // count for top-level folders only, as before folders could nest.
+  const { tree, byCategory, counts } = useMemo(() => {
+    const builtTree = buildCategoryTree(categories);
+    const assigned = assignReports(builtTree, dashboards, { bareTagTopLevel: true }).byCategory;
+    const subtreeCounts = {};
+    Object.keys(builtTree.byId).forEach((id) => {
+      subtreeCounts[id] = subtreeReports(builtTree, assigned, id).length;
+    });
+    return { tree: builtTree, byCategory: assigned, counts: subtreeCounts };
+  }, [categories, dashboards]);
 
   if (loading) {
     return (
@@ -158,23 +192,20 @@ export default function ReportsDashboard() {
             View All
           </Link>
         </div>
-        <Tabs defaultActiveKey={categories[0]?.id} className="reports-tabs">
-          {categories.map((cat) => (
+        <Tabs defaultActiveKey={tree.roots[0]?.id} className="reports-tabs">
+          {tree.roots.map((node) => (
             <TabPane
-              key={cat.id}
+              key={node.id}
               tab={
                 <span className="reports-tab-label">
-                  <CategoryIcon icon={cat.icon} color={cat.color} />
-                  <span className="reports-tab-name">{cat.name}</span>
+                  <CategoryIcon icon={node.category.icon} color={node.category.color} />
+                  <span className="reports-tab-name">{node.category.name}</span>
+                  <span className="reports-folder-count">({counts[node.id]})</span>
                 </span>
               }>
               <div className="reports-tab-content">
-                {(dashboards[cat.id] || []).length > 0 ? (
-                  <div className="reports-grid">
-                    {dashboards[cat.id].map((dash) => (
-                      <DashboardButton key={dash.id} dashboard={dash} />
-                    ))}
-                  </div>
+                {counts[node.id] > 0 ? (
+                  <FolderContents node={node} byCategory={byCategory} counts={counts} />
                 ) : (
                   <EmptyCategory />
                 )}

@@ -63,6 +63,8 @@ function QuerySource(props) {
   const queryFlags = useQueryFlags(query, dataSource);
   const [parameters, areParametersDirty, updateParametersDirtyFlag] = useQueryParameters(query);
   const [selectedVisualization, setSelectedVisualization] = useVisualizationTabHandler(query.visualizations);
+  // "Download as Excel (as shown)": the selected visualization's Renderer fills it; the ⋮ menu reads it
+  const exportRef = useRef(null);
   const { QueryEditor, SchemaBrowser } = getEditorComponents(dataSource && dataSource.type);
   const isMobile = !useMedia({ minWidth: 768 });
 
@@ -460,6 +462,7 @@ function QuerySource(props) {
                       showNewVisualizationButton={queryFlags.canEdit && queryResultData.status === ExecutionStatus.DONE}
                       canDeleteVisualizations={queryFlags.canEdit}
                       selectedTab={selectedVisualization}
+                      exportRef={exportRef}
                       onChangeTab={setSelectedVisualization}
                       onAddVisualization={addVisualization}
                       onDeleteVisualization={deleteVisualization}
@@ -486,6 +489,7 @@ function QuerySource(props) {
                 query={query}
                 queryResult={queryResult}
                 selectedVisualization={selectedVisualization}
+                exportRef={exportRef}
                 isQueryExecuting={isQueryExecuting}
                 showEditVisualizationButton={!queryFlags.isNew && queryFlags.canEdit}
                 onEditVisualization={editVisualization}

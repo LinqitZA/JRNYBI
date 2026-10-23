@@ -95,6 +95,7 @@ export default function QueryVisualizationTabs({
   refreshButton,
   canRefresh,
   query,
+  exportRef,
   ...props
 }) {
   const visualizations = useMemo(
@@ -166,6 +167,7 @@ export default function QueryVisualizationTabs({
               visualization={visualization}
               queryResult={queryResult}
               context="query"
+              exportRef={exportRef}
               filters={filters}
               onFiltersChange={setFilters}
             />
@@ -198,6 +200,8 @@ QueryVisualizationTabs.propTypes = {
   refreshButton: PropTypes.node,
   canRefresh: PropTypes.bool,
   query: PropTypes.object, // eslint-disable-line react/forbid-prop-types
+  // "Download as Excel (as shown)": only the selected tab is mounted (destroyInactiveTabPane), so one ref is enough
+  exportRef: PropTypes.shape({ current: PropTypes.any }), // eslint-disable-line react/forbid-prop-types
 };
 
 QueryVisualizationTabs.defaultProps = {
@@ -212,4 +216,5 @@ QueryVisualizationTabs.defaultProps = {
   refreshButton: null,
   canRefresh: true,
   query: null,
+  exportRef: null,
 };
