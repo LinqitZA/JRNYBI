@@ -5078,6 +5078,56 @@ def create_dashboard(client, dash_def):
     return result
 
 
+# Redash's dashboard grid, from client/app/config/dashboard-grid-options.js.
+GRID_COLUMNS = 12
+GRID_DEFAULT_SIZE_Y = 3
+
+# Widget definitions above are authored against a six-column mental model:
+# width 6 means "a full row", 3 means "half", 2 means "a third". Redash's grid
+# is twice that, so every authored width is doubled to get real grid columns.
+GRID_COLUMNS_PER_AUTHORED_WIDTH = 2
+
+
+class WidgetLayout:
+    """Packs widgets left-to-right across Redash's twelve-column grid.
+
+    Without this every widget was stored as `{"position": {"autoHeight": true}}`
+    — no col/row/sizeX at all — so the frontend fell back to its default of
+    `Math.round(columns / 2)`, i.e. exactly HALF the grid, for every widget on
+    every dashboard. A thirteen-column table then showed about five columns and
+    silently clipped the rest, which is what "the report is cut off halfway"
+    was: the authored `width` never reached Redash, because it was sent as a
+    top-level `width` field that the widgets API ignores.
+    """
+
+    def __init__(self):
+        self.col = 0
+        self.row = 0
+
+    def next_position(self, authored_width):
+        size_x = authored_width * GRID_COLUMNS_PER_AUTHORED_WIDTH
+        size_x = max(1, min(GRID_COLUMNS, size_x))
+
+        if self.col + size_x > GRID_COLUMNS:
+            self.col = 0
+            self.row += GRID_DEFAULT_SIZE_Y
+
+        position = {
+            "col": self.col,
+            "row": self.row,
+            "sizeX": size_x,
+            "sizeY": GRID_DEFAULT_SIZE_Y,
+            "autoHeight": True,
+        }
+
+        self.col += size_x
+        if self.col >= GRID_COLUMNS:
+            self.col = 0
+            self.row += GRID_DEFAULT_SIZE_Y
+
+        return position
+
+
 def add_widget(client, dashboard_id, visualization_id, width=6, options=None):
     """Add a widget to a dashboard."""
     payload = {
@@ -5259,7 +5309,9 @@ def seed_reports(base_url=None, api_key=None, data_source_id=None):
             "slug": result.get("slug"),
         }
 
-        # Add widgets
+        # Add widgets. The layout cursor advances only for widgets that are
+        # actually created, so a skipped query does not leave a hole in the grid.
+        layout = WidgetLayout()
         for widget_def in dash_def["widgets"]:
             query_key = widget_def["query_key"]
             vis_index = widget_def["vis_index"]
@@ -5279,7 +5331,13 @@ def seed_reports(base_url=None, api_key=None, data_source_id=None):
                 continue
 
             visualization_id = vis_ids[vis_index]
-            add_widget(client, dashboard_id, visualization_id, width=width)
+            add_widget(
+                client,
+                dashboard_id,
+                visualization_id,
+                width=width,
+                options={"position": layout.next_position(width)},
+            )
 
         # Publish the dashboard (with tags if defined)
         publish_dashboard(client, dashboard_id, tags=dash_def.get("tags"))

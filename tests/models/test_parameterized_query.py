@@ -311,9 +311,7 @@ class TestParameterizedQuery(TestCase):
 
 def _rls_lookup_query(run_query_result):
     """A saved lookup query on a jrny_pg (RLS) data source whose runner returns `run_query_result`."""
-    runner = namedtuple("Runner", "run_query")(
-        run_query=__import__("mock").MagicMock(return_value=run_query_result)
-    )
+    runner = namedtuple("Runner", "run_query")(run_query=__import__("mock").MagicMock(return_value=run_query_result))
     data_source = namedtuple("DataSource", "type query_runner")("jrny_pg", runner)
     query = namedtuple("Query", "id data_source query_text latest_query_data_id")(
         7, data_source, "SELECT name FROM reps", None
@@ -382,3 +380,30 @@ class TestDropdownValuesOnRLSDataSources(TestCase):
             query.apply({"rep": "Grant Catto"})
         self.assertEqual(values.call_args.kwargs.get("user"), user)
         self.assertEqual(query.text, "SELECT Grant Catto")
+
+
+class TestUnsetOptionalFilter(TestCase):
+    """An empty value means "no filter": every seeded query/enum parameter defaults to "" and its SQL is
+    written as ('{{ x }}' = '' OR col = '{{ x }}')."""
+
+    def test_query_parameter_accepts_an_empty_value_without_loading_options(self):
+        schema = [{"name": "category", "type": "query", "queryId": 7}]
+        query = ParameterizedQuery("SELECT 1 WHERE ('{{category}}' = '' OR c = '{{category}}')", schema)
+        with patch("redash.models.parameterized_query.dropdown_values") as values:
+            query.apply({"category": ""})
+        values.assert_not_called()
+        self.assertEqual({"category": ""}, query.parameters)
+
+    def test_enum_parameter_accepts_an_empty_value(self):
+        schema = [{"name": "category", "type": "enum", "enumOptions": "Bearings\nAbrasives"}]
+        query = ParameterizedQuery("SELECT 1 WHERE '{{category}}' = ''", schema)
+        query.apply({"category": ""})
+        self.assertEqual({"category": ""}, query.parameters)
+
+    def test_a_value_outside_the_options_is_still_rejected(self):
+        # "" is the only addition; anything else must still come from the options, which is what keeps
+        # these parameters injection-safe.
+        schema = [{"name": "category", "type": "enum", "enumOptions": "Bearings\nAbrasives"}]
+        query = ParameterizedQuery("SELECT 1 WHERE '{{category}}' = ''", schema)
+        with pytest.raises(InvalidParameterError):
+            query.apply({"category": "'; DROP TABLE users; --"})

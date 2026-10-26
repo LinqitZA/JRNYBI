@@ -18,6 +18,42 @@ os.environ["REDASH_RATELIMIT_ENABLED"] = "true"
 
 os.environ["REDASH_ENFORCE_CSRF"] = "false"
 
+
+def _refuse_to_run_against_a_live_database():
+    """Guard: BaseTestCase truncates every table between tests.
+
+    Upstream isolates Redis for tests (above) but says nothing about Postgres —
+    it just assumes you pointed REDASH_DATABASE_URL somewhere disposable. Inside
+    a deployed container that variable is already set to the LIVE application
+    database, so running pytest there silently destroys every query, dashboard,
+    widget and user. That happened here: 77 queries and 32 dashboards were wiped
+    and had to be re-seeded.
+
+    So require the target database to name itself as a test database. Set
+    REDASH_ALLOW_DESTRUCTIVE_TESTS=true to override deliberately.
+    """
+    if os.environ.get("REDASH_ALLOW_DESTRUCTIVE_TESTS", "").lower() == "true":
+        return
+
+    url = os.environ.get("REDASH_DATABASE_URL", "")
+    if not url:
+        return
+
+    dbname = url.rsplit("/", 1)[-1].split("?")[0]
+    if "test" in dbname.lower():
+        return
+
+    raise RuntimeError(
+        "Refusing to run tests against database '{}': the test suite truncates "
+        "every table between tests and this does not look like a test database. "
+        "Point REDASH_DATABASE_URL at one whose name contains 'test' (e.g. "
+        "postgresql://jrnybi:...@jrnybi-postgres:5432/jrnybi_test), or set "
+        "REDASH_ALLOW_DESTRUCTIVE_TESTS=true if you really mean it.".format(dbname)
+    )
+
+
+_refuse_to_run_against_a_live_database()
+
 from redash import limiter, redis_connection  # noqa: E402
 from redash.app import create_app  # noqa: E402
 from redash.models import db  # noqa: E402

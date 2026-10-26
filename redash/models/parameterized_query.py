@@ -124,6 +124,23 @@ def _is_date_range(obj):
     return _is_date(obj["start"]) and _is_date(obj["end"])
 
 
+def _is_unset_optional_filter(value):
+    """An optional dropdown filter nobody has chosen a value for.
+
+    The seeded JRNY reports are written so that an empty value means "no filter":
+
+        AND ('{{ category }}' = '' OR il.product_category = '{{ category }}')
+
+    and all 24 query and 3 enum parameters in seed/jrny_reports.py ship "" as their default. The client
+    sends that "" as-is for query parameters (QueryBasedDropdownParameter only treats null as empty),
+    and scheduled refreshes, alerts and API calls apply the stored default server-side; rejecting it
+    fails the report with "parameter values are incompatible with their definitions". "" is one
+    constant carrying no user input, so accepting it keeps the injection guarantee of
+    dropdown-restricted parameters, and it is checked before the dropdown lookup, so it runs no query.
+    """
+    return value == ""
+
+
 def _is_value_within_options(value, dropdown_options, allow_list=False):
     if isinstance(value, list):
         return allow_list and set(map(str, value)).issubset(set(dropdown_options))
@@ -175,8 +192,10 @@ class ParameterizedQuery:
             "text": lambda value: isinstance(value, str),
             "text-pattern": lambda value: _is_regex_pattern(value, regex),
             "number": _is_number,
-            "enum": lambda value: _is_value_within_options(value, enum_options, allow_multiple_values),
-            "query": lambda value: _is_value_within_options(
+            "enum": lambda value: _is_unset_optional_filter(value)
+            or _is_value_within_options(value, enum_options, allow_multiple_values),
+            "query": lambda value: _is_unset_optional_filter(value)
+            or _is_value_within_options(
                 value,
                 [v["value"] for v in dropdown_values(query_id, self.org, user=self.user)],
                 allow_multiple_values,
@@ -228,7 +247,6 @@ class QueryDetachedFromDataSourceError(Exception):
         super(QueryDetachedFromDataSourceError, self).__init__(
             "This query is detached from any data source. Please select a different query."
         )
-
 
 
 class DropdownValuesUnavailableError(QueryDetachedFromDataSourceError):

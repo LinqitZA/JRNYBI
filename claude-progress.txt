@@ -4451,3 +4451,22 @@ Later again (AQ): column option excelNumber (an Excel format) exports text figur
 ("(1,234.50)", "12.5%") as numbers in both Excel exports (lib/excel-export.ts parseFormattedNumber,
 buildCell; lib/export-grid.ts tableCell; Renderer passes it). Tests: excel-export +3, export-grid +1, Renderer +1.
 Then: rowTree.test.ts +1 (level-0 label row above the first group, Month On Month (Drill Down)).
+
+## 2026-10-26 -- Merge of PR #1 (fix/query-dropdown-per-user-results) into main, on merge/aq-pr1
+Keeps all of AQ's work (per-user dropdowns, Excel export, report folders, table/pivot rendering,
+CLAUDE.md charter) and restores what the PR's merge of main had dropped but is still needed:
+- tests/__init__.py: live-DB guard back (pytest refuses a REDASH_DATABASE_URL whose name lacks "test").
+- seed/jrny_reports.py: WidgetLayout back (seeded widgets get real col/row/sizeX instead of half width).
+- redash/models/parameterized_query.py: "" accepted again for query/enum parameters ("no filter"; all
+  27 seeded query/enum parameters default to "" and the client sends it for query params). Checked
+  before the dropdown lookup, so it runs no query. AQ's per-user dropdown loading is unchanged.
+  Tests: TestUnsetOptionalFilter (+3) in tests/models/test_parameterized_query.py. The old
+  test_dropdown_values_rls.py tested the replaced salted-hash lookup; AQ's TestDropdownValuesOnRLS-
+  DataSources covers per-user loading instead.
+- CLAUDE.md.old: the previous prompt, which CLAUDE.md refers to but was not committed.
+Verification (throwaway postgres jrnybi_test + redis on a private docker network, jrnybi:latest image):
+backend 992 passed / 22 failed, the same 22 fail on main (946 passed); client jest 197 passed;
+viz-lib 406 passed / 21 failed, the same 21 fail on main. ruff + black clean on changed Python files.
+Not verified through the dev UI.
+Deploy impact: JRNYBI image rebuild (as PR #1). No metadata migrations, no env vars. Seed change only
+affects dashboards created by a future seed run (existing ones are skipped by name). Rollback: previous image.
